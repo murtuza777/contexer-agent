@@ -83,6 +83,10 @@ async def test_autonomous_loop_end_to_end(local_web_app):
 
     adapter.send_prompt = AsyncMock(side_effect=_send_prompt_side_effect)
 
+    from contexer.workflow.criteria import GoalAnalyzer
+    from contexer.workflow.planner import EngineeringPlanner
+    from contexer.repair.repair import RepairEngine
+
     observer = PlaywrightObserver(headless=True)
     verifier = Verifier()  # Deterministic criteria verification
     loop = AutonomousLoop(
@@ -90,6 +94,9 @@ async def test_autonomous_loop_end_to_end(local_web_app):
         observer=observer,
         verifier=verifier,
         max_attempts=3,
+        goal_analyzer=GoalAnalyzer(llm_provider=None),
+        planner=EngineeringPlanner(llm_provider=None),
+        repair_engine=RepairEngine(llm_provider=None),
     )
 
     goal = "Create a landing page with a 'Get Started' button."

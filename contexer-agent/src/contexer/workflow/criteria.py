@@ -77,7 +77,11 @@ class GoalAnalyzer:
                         acceptance_criteria=criteria,
                     )
             except Exception as exc:
-                logger.warning("LLM goal analysis failed: %s; using dynamic rule-based analysis", exc)
+                err_msg = str(exc)
+                if "429" in err_msg or "rate limit" in err_msg.lower():
+                    logger.info("LLM quota reached; using dynamic rule-based analysis.")
+                else:
+                    logger.warning("LLM goal analysis unavailable; using dynamic rule-based analysis")
 
         # Dynamic fallback: decompose goal into structured criteria
         return self._dynamic_rule_analysis(goal)

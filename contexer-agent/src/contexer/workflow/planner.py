@@ -102,7 +102,11 @@ class EngineeringPlanner:
                     steps=steps,
                 )
             except Exception as e:
-                logger.warning("LLM plan generation failed: %s; falling back to dynamic plan", e)
+                err_msg = str(e)
+                if "429" in err_msg or "rate limit" in err_msg.lower():
+                    logger.info("LLM quota reached; falling back to dynamic plan.")
+                else:
+                    logger.warning("LLM plan generation unavailable; falling back to dynamic plan")
 
         # Fallback dynamic plan
         return EngineeringPlan(

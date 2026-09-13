@@ -109,6 +109,15 @@ class AutonomousLoop:
 
         scope_prompt = self.project_manager.format_scope_prompt(target_proj)
 
+        # Intelligently resolve effective app_url:
+        # If target project is scratch / sandbox or contains index.html (and is not the Next.js website),
+        # automatically target the sandbox's actual index.html if default localhost:3000 was supplied.
+        if target_proj.name != "website":
+            index_path = target_proj.path / "index.html"
+            if index_path.exists() or target_proj.project_type.value == "scratch":
+                if app_url == "http://localhost:3000" or not app_url:
+                    app_url = f"file:///{target_proj.path.as_posix()}/index.html"
+
         # 1. Header display
         self.console.print()
         header_text = (
@@ -215,6 +224,12 @@ class AutonomousLoop:
         all_diffs = list(exec_res.diff)
 
         while attempt <= self.max_attempts:
+            # If observing a scratch/static project, ensure app_url points to the created index.html
+            if target_proj.name != "website":
+                index_path = target_proj.path / "index.html"
+                if index_path.exists() and (app_url == "http://localhost:3000" or not app_url.startswith("http")):
+                    app_url = f"file:///{target_proj.path.as_posix()}/index.html"
+
             # Playwright observation
             self.console.print(f"[bold yellow]● Playwright Observation (Attempt {attempt}/{self.max_attempts})[/bold yellow]")
             self.console.print(f"  [cyan]›[/cyan] Navigating to {app_url}...")

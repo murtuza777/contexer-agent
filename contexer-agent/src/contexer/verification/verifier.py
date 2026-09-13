@@ -217,7 +217,11 @@ class Verifier:
                 summary=str(data.get("summary", "")),
             )
         except Exception as exc:
-            logger.warning("LLM verification evaluation failed: %s; using strict fallback", exc)
+            err_msg = str(exc)
+            if "429" in err_msg or "rate limit" in err_msg.lower():
+                logger.info("LLM quota reached; using strict evidence fallback.")
+            else:
+                logger.warning("LLM verification evaluation unavailable; using strict fallback")
             return self._strict_fallback(
                 goal=goal,
                 observation=observation,
@@ -258,7 +262,7 @@ class Verifier:
                 else:
                     missing_reqs.append(f"'{req}'")
 
-        # Goal keywords (excluding common meta-words)
+        # Goal keywords (excluding common UI/meta-words)
         meta_stop_words = {
             "a", "an", "the", "with", "and", "or", "for", "to", "in", "of",
             "at", "by", "from", "up", "about", "into", "over", "after",
@@ -267,6 +271,8 @@ class Verifier:
             "webpage", "application", "site", "view", "interface", "using",
             "that", "this", "some", "more", "user", "should", "must", "have",
             "need", "needed", "needs", "app", "work", "works",
+            "button", "buttons", "component", "components", "element", "elements",
+            "control", "controls", "section", "sections",
         }
         goal_keywords = [
             w.lower() for w in re.findall(r'[a-zA-Z0-9_\-]+', goal)
