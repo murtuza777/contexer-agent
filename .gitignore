@@ -29,6 +29,8 @@ lerna-debug.log*
 .env.test.local
 .env.production.local
 *.env.*
+!.env.example
+
 
 # Python virtual environment & cache
 __pycache__/
@@ -58,6 +60,9 @@ wheels/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # OS / Editor files
 .DS_Store
@@ -70,3 +75,11 @@ Thumbs.db
 # Tool & browser artifacts
 .playwright-mcp/
 /*.png
+
+# Contexer scratch sandboxes & local runtime artifacts
+sandbox/
+sandbox*/
+temp_box/
+.contexer/
+
+
