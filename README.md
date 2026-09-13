@@ -220,9 +220,7 @@ If any criterion fails (e.g. JavaScript reference error on filter click or missi
 
 ## Demo
 
-🎥 Demo video: [VIDEO LINK WILL BE ADDED]
-
-*(Recording in progress; link will be updated before submission deadline)*
+🎥 Demo video: https://drive.google.com/file/d/1JY83zeOhzG795Fzvxcxr2AD82umNfUXQ/view?usp=drive_link
 
 ---
 
