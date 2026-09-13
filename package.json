@@ -1,0 +1,13 @@
+{
+  "name": "contexer-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contexer Autonomous Engineering Agent Workspace",
+  "scripts": {
+    "dev": "npm --prefix website run dev",
+    "build": "npm --prefix website run build",
+    "start": "npm --prefix website run start",
+    "lint": "npm --prefix website run lint",
+    "typecheck": "npm --prefix website run typecheck"
+  }
+}
