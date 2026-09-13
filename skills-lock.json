@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "autonomous-loops": {
+      "source": "affaan-m/ecc",
+      "sourceType": "github",
+      "skillPath": "skills/autonomous-loops/SKILL.md",
+      "computedHash": "e00040c9d35182538078928a80b5c2b2480d35ccf4405b4fb51aa290d57f80f3"
+    },
+    "langgraph-persistence": {
+      "source": "langchain-ai/langchain-skills",
+      "sourceType": "github",
+      "skillPath": "config/skills/langgraph-persistence/SKILL.md",
+      "computedHash": "7538756e423b3da5ce25b6c7f99070792214a9c7a51510e9579a40a190e88ccd"
+    },
+    "tdd": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/tdd/SKILL.md",
+      "computedHash": "c1ed8cd854c64d4d226097255d3fa662dae4a758a1462fadd63cc10e413d88d7"
+    }
+  }
+}
