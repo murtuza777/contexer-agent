@@ -92,3 +92,51 @@ async def test_verifier_passes_with_real_observable_evidence():
     assert result.passed is True
     assert len(result.failures) == 0
     assert len(result.evidence) > 0
+
+
+@pytest.mark.anyio
+async def test_verifier_distinct_goals_evaluated_accurately():
+    """Verify distinct user goals produce appropriate rejection/acceptance without hardcoding."""
+    verifier = Verifier()
+
+    # Observation of a contact form
+    contact_obs = BrowserObservation(
+        url="http://localhost:3000",
+        success=True,
+        status_code=200,
+        page_title="Contact Us",
+        visible_text="Get in touch with our team. Send message. Contact form.",
+        headings=["h1: Contact Us"],
+        interactive_elements=['form: "Contact Form"', 'input: "Email"', 'button: "Send Message"'],
+        html='<form id="contact-form"><input type="email" placeholder="Email"/><button type="submit">Send Message</button></form>',
+    )
+
+    dark_mode_analysis = GoalAnalysis(
+        goal="add dark mode toggle to the website",
+        acceptance_criteria=[
+            AcceptanceCriterion(
+                id="crit-darkmode",
+                description="Dark mode toggle button exists",
+                verification_method="dom_inspection",
+            ),
+        ],
+    )
+
+    # Must FAIL because contact form is not dark mode
+    dark_result = await verifier.verify("add dark mode toggle to the website", contact_obs, dark_mode_analysis)
+    assert dark_result.passed is False
+
+    contact_analysis = GoalAnalysis(
+        goal="add a contact form",
+        acceptance_criteria=[
+            AcceptanceCriterion(
+                id="crit-contact",
+                description="Contact form and submit button exist",
+                verification_method="dom_inspection",
+            ),
+        ],
+    )
+
+    # Must PASS because contact form satisfies contact criteria
+    contact_result = await verifier.verify("add a contact form", contact_obs, contact_analysis)
+    assert contact_result.passed is True
