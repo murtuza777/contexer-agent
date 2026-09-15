@@ -72,11 +72,11 @@ Inside the `contexer` REPL:
 - **`workflow/`**: Autonomous loop orchestrating inspection, planning, execution, verification, and repair.
 - **`mcp/`**: Official GitHub MCP Server runner and client.
 
-## Milestone Status
+## Product Roadmap Status
 
-- [x] Milestone 1: Public landing page, web architecture, and design system (`website/`)
-- [x] Milestone 2: Antigravity project skills (`.agents/skills/`)
-- [x] Milestone 3: Generic Python agent harness/runtime (`contexer-agent/`)
-- [x] Milestone 4: Verification engine & Playwright headless browser observation
-- [x] Milestone 5: Self-repair loop & OpenCode integration
-- [x] Milestone 6: Official GitHub MCP Server integration (read-only)
+- [x] Phase 1: Housekeeping & dead code cleanup (audit verified, dead bootstrap code removed)
+- [ ] Phase 2: Domain realignment & ghost module population (`intent/`, `planner/`, `tasks/`)
+- [ ] Phase 3: Generic coding-agent abstraction (`contexer.coding_agent`)
+- [ ] Phase 4: Structured assertion verifier & failure diagnosis rebuild
+- [ ] Phase 5: Durable run state persistence (`.contexer/runs.db`)
+- [ ] Phase 6: LangGraph workflow orchestration state machine

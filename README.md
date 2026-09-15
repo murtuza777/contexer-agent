@@ -143,7 +143,7 @@ The real architecture implemented in this repository:
 
 ## Multi-App Architecture
 
-Built for the **Multi-App AI Agent Hackathon by Lemma**, Contexer functions as an orchestration meta-agent that coordinates multiple specialized external applications and runtimes:
+Contexer functions as an orchestration meta-agent that coordinates multiple specialized external applications and runtimes:
 
 | External Application | Protocol / Interface | What Contexer Sends | What Contexer Receives | Why It Is Needed |
 | :--- | :--- | :--- | :--- | :--- |
