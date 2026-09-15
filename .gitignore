@@ -79,7 +79,6 @@ Thumbs.db
 # Contexer scratch sandboxes & local runtime artifacts
 sandbox/
 sandbox*/
-temp_box/
 .contexer/
 
 
