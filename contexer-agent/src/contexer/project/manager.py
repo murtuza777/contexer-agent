@@ -1,4 +1,9 @@
-"""Project workspace manager for Contexer."""
+"""Project workspace manager for Contexer.
+
+Provides workspace scoping and directory protection to isolate OpenCode
+execution boundaries and protect the Contexer agent repository from mutation.
+Scheduled for full integration into the Context Engine in Phase 2.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +20,7 @@ PROTECTED_DIR_NAMES = {"contexer-agent", "src", "tests", ".git", ".venv", ".agen
 
 
 class ProjectManager:
-    """Manages user target projects and scratch sandboxes."""
+    """Manages user target projects, application directories, and scratch sandboxes."""
 
     def __init__(
         self,
