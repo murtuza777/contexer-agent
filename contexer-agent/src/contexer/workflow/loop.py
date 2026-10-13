@@ -1,4 +1,4 @@
-"""Dynamic, goal-driven autonomous engineering loop orchestrating OpenCode, Playwright, and Verifier."""
+"""Autonomous engineering loop: goal → criteria → plan → coding agent → browser verification → repair."""
 
 from __future__ import annotations
 
@@ -6,27 +6,36 @@ import logging
 import time
 from pathlib import Path
 from typing import Any, Optional
+
 from pydantic import BaseModel, Field
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 
-from contexer.config.settings import load_config
 from contexer.llm.base import LLMProvider
-from contexer.llm.factory import create_llm_provider
 from contexer.observer.models import BrowserObservation
 from contexer.observer.playwright import PlaywrightObserver
-from contexer.opencode.adapter import OpenCodeAdapter
+from contexer.opencode.adapter import CodingAgent
 from contexer.opencode.models import ExecutionStatus, OpenCodeDiffItem
 from contexer.project.manager import ProjectManager
 from contexer.project.models import Project
 from contexer.repair.repair import RepairEngine
-from contexer.verification.models import GoalAnalysis, VerificationResult
+from contexer.verification.models import GoalAnalysis, VerificationResult, format_contract
 from contexer.verification.verifier import Verifier
+from contexer.workflow.app_server import StaticAppServer
 from contexer.workflow.criteria import GoalAnalyzer
 from contexer.workflow.inspector import RepositoryContext, RepositoryInspector
 from contexer.workflow.planner import EngineeringPlan, EngineeringPlanner
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_DEV_SERVER_URL = "http://localhost:3000"
+
+_METHOD_TAGS = {
+    "assertion": "[green]proven[/]",
+    "judgment": "[yellow]LLM-judged[/]",
+    "heuristic": "[yellow]heuristic[/]",
+}
 
 
 class AutonomousLoopResult(BaseModel):
@@ -51,12 +60,12 @@ class AutonomousLoopResult(BaseModel):
 class AutonomousLoop:
     """Executes the autonomous engineering loop:
 
-    Goal -> GoalAnalyzer -> RepoInspector -> Planner -> OpenCode -> Playwright -> Verifier -> Repair
+    Inspect -> Criteria (executable checks) -> Plan -> Coding agent -> Observe -> Verify -> Repair
     """
 
     def __init__(
         self,
-        adapter: OpenCodeAdapter,
+        adapter: Optional[CodingAgent] = None,
         observer: Optional[PlaywrightObserver] = None,
         verifier: Optional[Verifier] = None,
         max_attempts: int = 3,
@@ -68,14 +77,6 @@ class AutonomousLoop:
         planner: Optional[EngineeringPlanner] = None,
         repair_engine: Optional[RepairEngine] = None,
     ) -> None:
-        if llm_provider is None:
-            try:
-                cfg = load_config()
-                if cfg.openrouter_api_key:
-                    llm_provider = create_llm_provider(cfg)
-            except Exception as e:
-                logger.debug("Could not auto-create LLM provider for loop: %s", e)
-
         self.llm_provider = llm_provider
         self.adapter = adapter
         self.observer = observer or PlaywrightObserver()
@@ -91,103 +92,138 @@ class AutonomousLoop:
     async def run(
         self,
         goal: str,
-        app_url: str,
+        app_url: Optional[str] = None,
         criteria: Optional[GoalAnalysis] = None,
         project: Optional[Project] = None,
         project_dir: Optional[str | Path] = None,
     ) -> AutonomousLoopResult:
-        """Run the full dynamic autonomous loop with strict evidence verification."""
+        """Run the full loop. ``app_url=None`` lets Contexer serve or locate the app itself."""
+        if self.adapter is None:
+            raise ValueError("AutonomousLoop.run requires a coding agent adapter; use verify_only() without one")
         start_time = time.monotonic()
+        target_proj = self._resolve_project(project, project_dir)
+        repo_context = self.inspector.inspect(target_proj.path)
+        resolved_url, server = self._resolve_app_url(app_url, repo_context, target_proj)
+        try:
+            return await self._run(goal, resolved_url, criteria, target_proj, repo_context, start_time)
+        finally:
+            if server:
+                server.stop()
 
-        # 0. Resolve target project workspace
-        if project:
-            target_proj = project
-        elif project_dir:
-            target_proj = self.project_manager.set_active_project(project_dir)
-        else:
-            target_proj = self.project_manager.active_project
+    async def verify_only(
+        self,
+        goal: str,
+        app_url: Optional[str] = None,
+        criteria: Optional[GoalAnalysis] = None,
+        project: Optional[Project] = None,
+        project_dir: Optional[str | Path] = None,
+    ) -> AutonomousLoopResult:
+        """Verify the current state of the application against the goal, without any code changes."""
+        start_time = time.monotonic()
+        target_proj = self._resolve_project(project, project_dir)
+        repo_context = self.inspector.inspect(target_proj.path)
+        resolved_url, server = self._resolve_app_url(app_url, repo_context, target_proj)
+        try:
+            self._print_header("Contexer Verification", goal, target_proj, resolved_url)
+            self._print_inspection(repo_context)
 
+            def result(**extra: Any) -> AutonomousLoopResult:
+                return AutonomousLoopResult(
+                    goal=goal,
+                    app_url=resolved_url,
+                    attempts=1,
+                    project_name=target_proj.name,
+                    project_dir=str(target_proj.path),
+                    duration_seconds=time.monotonic() - start_time,
+                    **extra,
+                )
+
+            # Observe first: criteria for an existing UI must use the names it actually has.
+            observation = await self._observe(resolved_url, "")
+            if not observation.success:
+                self._print_outcome(False, None, target_proj, resolved_url, start_time, attempts=None)
+                return result(passed=False, observation=observation, error=observation.error)
+
+            analysis = await self._derive_criteria(goal, repo_context, criteria, observation.ui_snapshot)
+            verification = await self._verify(goal, observation, analysis, repo_context)
+            self._print_outcome(verification.passed, verification, target_proj, resolved_url, start_time, attempts=None)
+            return result(
+                passed=verification.passed,
+                analysis=analysis,
+                verification=verification,
+                observation=observation,
+            )
+        finally:
+            if server:
+                server.stop()
+
+    async def _run(
+        self,
+        goal: str,
+        app_url: str,
+        criteria: Optional[GoalAnalysis],
+        target_proj: Project,
+        repo_context: RepositoryContext,
+        start_time: float,
+    ) -> AutonomousLoopResult:
+        assert self.adapter is not None
         scope_prompt = self.project_manager.format_scope_prompt(target_proj)
 
-        # Intelligently resolve effective app_url:
-        # If target project is scratch / sandbox or contains index.html (and is not the Next.js website),
-        # automatically target the sandbox's actual index.html if default localhost:3000 was supplied.
-        if target_proj.name != "website":
-            index_path = target_proj.path / "index.html"
-            if index_path.exists() or target_proj.project_type.value == "scratch":
-                if app_url == "http://localhost:3000" or not app_url:
-                    app_url = f"file:///{target_proj.path.as_posix()}/index.html"
+        self._print_header("Contexer Autonomous Loop", goal, target_proj, app_url)
+        self._print_inspection(repo_context)
+        ui_snapshot = await self._capture_current_ui(app_url, repo_context) if criteria is None else ""
+        analysis = await self._derive_criteria(goal, repo_context, criteria, ui_snapshot)
 
-        # 1. Header display
-        self.console.print()
-        header_text = (
-            f"[bold bright_cyan]Goal:[/]     {goal}\n"
-            f"[bold bright_cyan]Project:[/]  {target_proj.name} ({target_proj.project_type.value}) -> [dim]{target_proj.path}[/dim]\n"
-            f"[bold bright_cyan]Target:[/]   {app_url}"
-        )
-        self.console.print(Panel(header_text, title="Contexer Autonomous Loop", border_style="bright_cyan"))
-        self.console.print()
-
-        # 2. Inspect Target Repository
-        self.console.print("[bold yellow]● Inspecting Target Repository[/bold yellow]")
-        repo_context = self.inspector.inspect(target_proj.path)
-        self.console.print(f"  [green]✓[/green] Detected Stack: [bright_cyan]{repo_context.framework}[/]")
-        if repo_context.entry_points:
-            self.console.print(f"  [green]✓[/green] Entrypoints: {', '.join(repo_context.entry_points)}")
-        self.console.print(f"  [green]✓[/green] Existing files: {len(repo_context.key_files)} files")
-        self.console.print()
-
-        # 3. Dynamic Goal Understanding & Criteria Generation
-        self.console.print("[bold yellow]● Understanding Goal & Deriving Acceptance Criteria[/bold yellow]")
-        analysis = criteria
-        if not analysis:
-            with self.console.status("  [dim]Decomposing goal into verifiable acceptance criteria...[/dim]"):
-                analysis = await self.goal_analyzer.analyze(goal, repo_context)
-
-        self.console.print(f"  [green]✓[/green] Derived {len(analysis.acceptance_criteria)} acceptance criteria:")
-        for c in analysis.acceptance_criteria:
-            self.console.print(f"    [dim]• [{c.id}]:[/dim] {c.description} [dim]({c.verification_method})[/dim]")
-        self.console.print()
-
-        # 4. Dynamic Engineering Plan Formulation
         self.console.print("[bold yellow]● Generating Engineering Plan[/bold yellow]")
         with self.console.status("  [dim]Formulating implementation plan...[/dim]"):
             plan = await self.planner.create_plan(goal, repo_context, analysis)
-        self.console.print(f"  [green]✓[/green] Strategy: [cyan]{plan.approach}[/]")
+        self.console.print(f"  [green]✓[/green] Strategy: [cyan]{escape(plan.approach)}[/]")
         for s in plan.steps:
-            target_str = f" [dim]({', '.join(s.target_files)})[/dim]" if s.target_files else ""
-            self.console.print(f"    [dim]{s.step_number}.[/dim] {s.title}{target_str}")
+            target_str = f" [dim]({escape(', '.join(s.target_files))})[/dim]" if s.target_files else ""
+            self.console.print(f"    [dim]{s.step_number}.[/dim] {escape(s.title)}{target_str}")
         self.console.print()
 
-        # 5. Create OpenCode Session
         session = await self.adapter.create_session(
             title=f"Contexer: {goal[:30]}",
             directory=str(target_proj.path),
         )
         session_id = session.id
 
-        # 6. Dispatch Initial Engineering Task
-        self.console.print("[bold yellow]● OpenCode Execution[/bold yellow]")
-        self.console.print("  [cyan]›[/cyan] Dispatching engineering plan to OpenCode...")
+        def result(passed: bool, attempts: int, **extra: Any) -> AutonomousLoopResult:
+            return AutonomousLoopResult(
+                goal=goal,
+                app_url=app_url,
+                passed=passed,
+                attempts=attempts,
+                project_name=target_proj.name,
+                project_dir=str(target_proj.path),
+                session_id=session_id,
+                analysis=analysis,
+                plan=plan,
+                duration_seconds=time.monotonic() - start_time,
+                **extra,
+            )
 
-        criteria_prompt = "\n".join(f"- [{c.id}]: {c.description}" for c in analysis.acceptance_criteria)
-        plan_prompt = plan.format_plan()
+        self.console.print("[bold yellow]● Coding Agent Execution[/bold yellow]")
+        self.console.print("  [cyan]›[/cyan] Dispatching plan and executable acceptance contract...")
 
         initial_prompt = (
             f"{scope_prompt}\n"
             f"You are an expert engineer implementing a task.\n\n"
             f"Original Goal: {goal}\n\n"
             f"Project Context:\n{repo_context.format_summary()}\n\n"
-            f"Acceptance Criteria to Satisfy:\n{criteria_prompt}\n\n"
-            f"Engineering Plan:\n{plan_prompt}\n\n"
+            f"Acceptance Criteria:\n{format_contract(analysis.acceptance_criteria)}\n\n"
+            f"Engineering Plan:\n{plan.format_plan()}\n\n"
             f"CRITICAL REQUIREMENTS:\n"
             f"1. Implement all necessary code changes to completely satisfy ALL acceptance criteria.\n"
-            f"2. All created or modified files MUST be placed inside the target directory.\n"
-            f"3. Ensure the code compiles and runs cleanly without syntax or runtime errors.\n"
-            f"4. Create any missing files (HTML, CSS, JS, React/Next.js components) required to make the feature work."
+            f"2. The 'do:'/'expect:' lines are executed verbatim in a real browser to verify your work. "
+            f"Use the exact accessible names, visible texts, labels, placeholders and data-testid values they reference.\n"
+            f"3. All created or modified files MUST be placed inside the target directory.\n"
+            f"4. The page must load without uncaught exceptions or console errors.\n"
+            f"5. Create any missing files (HTML, CSS, JS, components) required to make the feature work."
         )
 
-        with self.console.status("  [dim]OpenCode is executing the engineering plan...[/dim]"):
+        with self.console.status("  [dim]Coding agent is executing the engineering plan...[/dim]"):
             exec_res = await self.adapter.send_prompt(
                 session_id=session_id,
                 prompt=initial_prompt,
@@ -196,132 +232,38 @@ class AutonomousLoop:
             )
 
         if exec_res.status != ExecutionStatus.COMPLETED:
-            err = exec_res.error or "OpenCode execution failed"
-            self.console.print(f"  [red]✗[/red] OpenCode error: {err}")
-            return AutonomousLoopResult(
-                goal=goal,
-                app_url=app_url,
-                passed=False,
-                attempts=1,
-                project_name=target_proj.name,
-                project_dir=str(target_proj.path),
-                session_id=session_id,
-                analysis=analysis,
-                plan=plan,
-                error=err,
-                duration_seconds=time.monotonic() - start_time,
-            )
+            err = exec_res.error or "Coding agent execution failed"
+            self.console.print(f"  [red]✗[/red] Coding agent error: {escape(err)}")
+            return result(False, 1, error=err)
 
         self.console.print(f"  [green]✓[/green] Implementation complete ({exec_res.duration_seconds:.1f}s)")
         if exec_res.diff:
             self.console.print(f"  [dim]Files modified: {len(exec_res.diff)}[/dim]")
         self.console.print()
 
-        # 7. Autonomous Observation & Strict Verification Loop
         attempt = 1
         last_observation: Optional[BrowserObservation] = None
         last_verification: Optional[VerificationResult] = None
         all_diffs = list(exec_res.diff)
 
         while attempt <= self.max_attempts:
-            # If observing a scratch/static project, ensure app_url points to the created index.html
-            if target_proj.name != "website":
-                index_path = target_proj.path / "index.html"
-                if index_path.exists() and (app_url == "http://localhost:3000" or not app_url.startswith("http")):
-                    app_url = f"file:///{target_proj.path.as_posix()}/index.html"
-
-            # Playwright observation
-            self.console.print(f"[bold yellow]● Playwright Observation (Attempt {attempt}/{self.max_attempts})[/bold yellow]")
-            self.console.print(f"  [cyan]›[/cyan] Navigating to {app_url}...")
-            with self.console.status(f"  [dim]Inspecting live application at {app_url}...[/dim]"):
-                observation = await self.observer.observe(app_url)
+            observation = await self._observe(app_url, f" (Attempt {attempt}/{self.max_attempts})")
             last_observation = observation
 
             if not observation.success:
-                self.console.print(f"  [red]✗[/red] Application unreachable: {observation.error}")
                 self.console.print("    [red]Cannot verify goal because application is offline or unreachable.[/red]")
                 self.console.print()
-                return AutonomousLoopResult(
-                    goal=goal,
-                    app_url=app_url,
-                    passed=False,
-                    attempts=attempt,
-                    project_name=target_proj.name,
-                    project_dir=str(target_proj.path),
-                    session_id=session_id,
-                    analysis=analysis,
-                    plan=plan,
-                    observation=observation,
-                    diff=all_diffs,
-                    error=observation.error,
-                    duration_seconds=time.monotonic() - start_time,
-                )
+                return result(False, attempt, observation=observation, diff=all_diffs, error=observation.error)
 
-            self.console.print(f"  [green]✓[/green] Application loaded (Title: '{observation.page_title or 'Untitled'}')")
-            if observation.headings:
-                self.console.print(f"  [green]✓[/green] Observed Headings: {', '.join(observation.headings[:3])}")
-            if observation.interactive_elements:
-                self.console.print(f"  [green]✓[/green] Interactive Controls: {len(observation.interactive_elements)} detected")
-            self.console.print()
-
-            # Dynamic Verification
-            self.console.print("[bold yellow]● Dynamic Verification[/bold yellow]")
-            with self.console.status("  [dim]Evaluating observed DOM, elements, and text against criteria...[/dim]"):
-                verification = await self.verifier.verify(goal, observation, analysis, repo_context)
+            verification = await self._verify(goal, observation, analysis, repo_context)
             last_verification = verification
-
-            # Render individual criteria evaluations
-            if verification.criteria_results:
-                for cr in verification.criteria_results:
-                    mark = "[green]✓[/green]" if cr.passed else "[red]✗[/red]"
-                    self.console.print(f"  {mark} [{cr.criterion_id}]: {cr.description}")
-                    if cr.evidence:
-                        self.console.print(f"    [dim]Evidence: {cr.evidence}[/dim]")
-            self.console.print()
-
             if verification.passed:
-                self.console.print(f"  [bold green]✓ Goal Verified![/] (Confidence: {verification.confidence:.2f})")
-                for ev in verification.evidence[:3]:
-                    self.console.print(f"    [dim]• {ev}[/dim]")
-                self.console.print()
-
-                self.console.print(
-                    Panel(
-                        f"[bold green]Contexer verified all acceptance criteria in {attempt} attempt(s)![/bold green]\n"
-                        f"Project: {target_proj.name} ({target_proj.path})\n"
-                        f"Target:  {app_url}\n"
-                        f"Summary: {verification.summary or 'Outcome confirmed with positive evidence.'}\n"
-                        f"Duration: {time.monotonic() - start_time:.1f}s",
-                        title="COMPLETE",
-                        border_style="green",
-                    )
-                )
-                return AutonomousLoopResult(
-                    goal=goal,
-                    app_url=app_url,
-                    passed=True,
-                    attempts=attempt,
-                    project_name=target_proj.name,
-                    project_dir=str(target_proj.path),
-                    session_id=session_id,
-                    analysis=analysis,
-                    plan=plan,
-                    verification=verification,
-                    observation=observation,
-                    diff=all_diffs,
-                    duration_seconds=time.monotonic() - start_time,
-                )
-
-            # Verification failed
-            self.console.print(f"  [bold red]✗ Verification Failed:[/] {verification.reason}")
-            for fail in verification.failures[:3]:
-                self.console.print(f"    [red]• {fail}[/red]")
-            self.console.print()
+                self._print_outcome(True, verification, target_proj, app_url, start_time, attempts=attempt)
+                return result(True, attempt, verification=verification, observation=observation, diff=all_diffs)
 
             if attempt >= self.max_attempts:
                 break
 
-            # 8. Dynamic Diagnosis & Self-Repair Phase
             self.console.print(f"[bold yellow]● Diagnosis & Self-Repair (Attempt {attempt}/{self.max_attempts})[/bold yellow]")
             with self.console.status("  [dim]Diagnosing failures and generating targeted fix instructions...[/dim]"):
                 diagnosis = await self.repair_engine.diagnose_failure(
@@ -330,7 +272,7 @@ class AutonomousLoop:
                     result=verification,
                     diffs=all_diffs,
                 )
-            self.console.print(f"  [cyan]›[/cyan] Diagnosis: {diagnosis}")
+            self.console.print(f"  [cyan]›[/cyan] Diagnosis: {escape(diagnosis)}")
 
             repair_prompt = self.repair_engine.generate_repair_prompt(
                 goal=goal,
@@ -340,9 +282,9 @@ class AutonomousLoop:
                 scope_instruction=scope_prompt,
                 diagnosis=diagnosis,
             )
-            self.console.print("  [cyan]›[/cyan] Sending targeted repair prompt to OpenCode...")
+            self.console.print("  [cyan]›[/cyan] Sending targeted repair prompt to coding agent...")
 
-            with self.console.status("  [dim]OpenCode is applying the repair fix...[/dim]"):
+            with self.console.status("  [dim]Coding agent is applying the repair...[/dim]"):
                 repair_res = await self.adapter.send_prompt(
                     session_id=session_id,
                     prompt=repair_prompt,
@@ -351,38 +293,183 @@ class AutonomousLoop:
                 )
 
             if repair_res.status != ExecutionStatus.COMPLETED:
-                self.console.print(f"  [red]✗[/red] Repair execution failed: {repair_res.error}")
+                self.console.print(f"  [red]✗[/red] Repair execution failed: {escape(repair_res.error or '')}")
             else:
-                self.console.print(f"  [green]✓[/green] Fix applied by OpenCode ({repair_res.duration_seconds:.1f}s)")
+                self.console.print(f"  [green]✓[/green] Fix applied ({repair_res.duration_seconds:.1f}s)")
                 if repair_res.diff:
                     all_diffs.extend(repair_res.diff)
             self.console.print()
 
             attempt += 1
 
-        # Max attempts reached without satisfying criteria
-        self.console.print(
-            Panel(
-                f"[bold red]Verification failed after {self.max_attempts} attempts.[/bold red]\n"
-                f"Project: {target_proj.name} ({target_proj.path})\n"
-                f"Reason:  {last_verification.reason if last_verification else 'Acceptance criteria not met'}\n"
-                f"Summary: {last_verification.summary if last_verification else 'Missing observable evidence'}",
-                title="FAILED",
-                border_style="red",
-            )
-        )
-        return AutonomousLoopResult(
-            goal=goal,
-            app_url=app_url,
-            passed=False,
-            attempts=self.max_attempts,
-            project_name=target_proj.name,
-            project_dir=str(target_proj.path),
-            session_id=session_id,
-            analysis=analysis,
-            plan=plan,
+        self._print_outcome(False, last_verification, target_proj, app_url, start_time, attempts=self.max_attempts)
+        return result(
+            False,
+            self.max_attempts,
             verification=last_verification,
             observation=last_observation,
             diff=all_diffs,
-            duration_seconds=time.monotonic() - start_time,
         )
+
+    # -- target resolution ----------------------------------------------------
+
+    def _resolve_project(self, project: Optional[Project], project_dir: Optional[str | Path]) -> Project:
+        if project:
+            return project
+        if project_dir:
+            return self.project_manager.set_active_project(project_dir)
+        return self.project_manager.active_project
+
+    def _resolve_app_url(
+        self,
+        app_url: Optional[str],
+        repo_context: RepositoryContext,
+        project: Project,
+    ) -> tuple[str, Optional[StaticAppServer]]:
+        """An explicit URL always wins; static projects are served locally; otherwise assume a dev server."""
+        if app_url:
+            return app_url, None
+        if repo_context.is_static_site:
+            server = StaticAppServer(project.path)
+            return server.start(), server
+        self.console.print(
+            f"[dim]No --url given and '{escape(project.name)}' needs a dev server; "
+            f"observing {DEFAULT_DEV_SERVER_URL}. Start the app there or pass --url.[/dim]"
+        )
+        return DEFAULT_DEV_SERVER_URL, None
+
+    # -- phases -----------------------------------------------------------------
+
+    async def _derive_criteria(
+        self,
+        goal: str,
+        repo_context: RepositoryContext,
+        criteria: Optional[GoalAnalysis],
+        ui_snapshot: str = "",
+    ) -> GoalAnalysis:
+        self.console.print("[bold yellow]● Deriving Acceptance Criteria & Executable Checks[/bold yellow]")
+        analysis = criteria
+        if not analysis:
+            with self.console.status("  [dim]Compiling goal into executable acceptance checks...[/dim]"):
+                analysis = await self.goal_analyzer.analyze(goal, repo_context, ui_snapshot)
+
+        if analysis.generated_by == "rules" and self.llm_provider is not None:
+            self.console.print("  [yellow]![/yellow] LLM unavailable; using rule-based criteria")
+        checked = sum(1 for c in analysis.acceptance_criteria if c.check)
+        grounding = " (locators grounded in the current UI)" if ui_snapshot and analysis.generated_by == "llm" else ""
+        self.console.print(
+            f"  [green]✓[/green] {len(analysis.acceptance_criteria)} criteria, "
+            f"{checked} with executable browser checks{grounding}:"
+        )
+        for c in analysis.acceptance_criteria:
+            kind = "check" if c.check else "judged"
+            self.console.print(f"    [dim]•[/dim] [bold]{escape(c.id)}[/bold] {escape(c.description)} [dim]({kind})[/dim]")
+            if c.check:
+                for line in c.check.describe_lines():
+                    self.console.print(f"        [dim]{escape(line)}[/dim]")
+        self.console.print()
+        return analysis
+
+    async def _capture_current_ui(self, app_url: str, repo_context: RepositoryContext) -> str:
+        """Snapshot an existing app's UI so checks reuse its real names; empty for new projects."""
+        if not repo_context.key_files:
+            return ""
+        with self.console.status("  [dim]Capturing current UI to ground check locators...[/dim]"):
+            observation = await self.observer.observe(app_url, screenshot=False)
+        return observation.ui_snapshot if observation.success else ""
+
+    async def _observe(self, app_url: str, attempt_label: str) -> BrowserObservation:
+        self.console.print(f"[bold yellow]● Browser Observation{attempt_label}[/bold yellow]")
+        self.console.print(f"  [cyan]›[/cyan] Navigating to {escape(app_url)}...")
+        with self.console.status(f"  [dim]Inspecting live application at {escape(app_url)}...[/dim]"):
+            observation = await self.observer.observe(app_url)
+
+        if not observation.success:
+            self.console.print(f"  [red]✗[/red] Application unreachable: {escape(observation.error or '')}")
+            return observation
+
+        self.console.print(f"  [green]✓[/green] Application loaded (Title: '{escape(observation.page_title or 'Untitled')}')")
+        if observation.headings:
+            self.console.print(f"  [green]✓[/green] Observed Headings: {escape(', '.join(observation.headings[:3]))}")
+        if observation.interactive_elements:
+            self.console.print(f"  [green]✓[/green] Interactive Controls: {len(observation.interactive_elements)} detected")
+        self.console.print()
+        return observation
+
+    async def _verify(
+        self,
+        goal: str,
+        observation: BrowserObservation,
+        analysis: GoalAnalysis,
+        repo_context: RepositoryContext,
+    ) -> VerificationResult:
+        self.console.print("[bold yellow]● Verification[/bold yellow]")
+        with self.console.status("  [dim]Executing acceptance checks in the browser...[/dim]"):
+            verification = await self.verifier.verify(goal, observation, analysis, repo_context)
+
+        for cr in verification.criteria_results:
+            blocked = cr.check_result is not None and cr.check_result.blocked
+            mark = "[green]✓[/green]" if cr.passed else ("[yellow]?[/yellow]" if blocked else "[red]✗[/red]")
+            tag = "[yellow]blocked[/]" if blocked else _METHOD_TAGS.get(cr.method, cr.method)
+            self.console.print(f"  {mark} [bold]{escape(cr.criterion_id)}[/bold] {escape(cr.description)} [dim]·[/dim] {tag}")
+            if cr.check_result and not cr.passed:
+                color = "yellow" if blocked else "red"
+                for line in cr.check_result.failure_report().splitlines()[1:14]:
+                    self.console.print(f"      [{color}]{escape(line.rstrip())}[/{color}]")
+            elif cr.evidence:
+                self.console.print(f"      [dim]{escape(cr.evidence)}[/dim]")
+        self.console.print()
+        return verification
+
+    # -- rendering ----------------------------------------------------------------
+
+    def _print_header(self, title: str, goal: str, project: Project, app_url: str) -> None:
+        self.console.print()
+        header_text = (
+            f"[bold bright_cyan]Goal:[/]     {escape(goal)}\n"
+            f"[bold bright_cyan]Project:[/]  {escape(project.name)} ({project.project_type.value}) -> [dim]{escape(str(project.path))}[/dim]\n"
+            f"[bold bright_cyan]Target:[/]   {escape(app_url)}"
+        )
+        self.console.print(Panel(header_text, title=title, border_style="bright_cyan"))
+        self.console.print()
+
+    def _print_inspection(self, repo_context: RepositoryContext) -> None:
+        self.console.print("[bold yellow]● Inspecting Target Repository[/bold yellow]")
+        self.console.print(f"  [green]✓[/green] Detected Stack: [bright_cyan]{escape(repo_context.framework)}[/]")
+        if repo_context.entry_points:
+            self.console.print(f"  [green]✓[/green] Entrypoints: {escape(', '.join(repo_context.entry_points))}")
+        self.console.print(f"  [green]✓[/green] Existing files: {len(repo_context.key_files)} files")
+        self.console.print()
+
+    def _print_outcome(
+        self,
+        passed: bool,
+        verification: Optional[VerificationResult],
+        project: Project,
+        app_url: str,
+        start_time: float,
+        attempts: Optional[int],
+    ) -> None:
+        duration = time.monotonic() - start_time
+        summary = escape(verification.summary) if verification else "No verification result"
+        if passed:
+            headline = (
+                f"Contexer verified all acceptance criteria in {attempts} attempt(s)!"
+                if attempts
+                else "The application satisfies all acceptance criteria."
+            )
+            body = f"[bold green]{headline}[/bold green]\n"
+            title, style = "COMPLETE", "green"
+        else:
+            headline = f"Verification failed after {attempts} attempts." if attempts else "The application does not satisfy the goal."
+            reason = escape(verification.reason) if verification else "Acceptance criteria not met"
+            body = f"[bold red]{headline}[/bold red]\nReason:   {reason}\n"
+            title, style = "FAILED", "red"
+        confidence = f"{verification.confidence:.2f}" if verification else "n/a"
+        body += (
+            f"Verdicts: {summary} (confidence {confidence})\n"
+            f"Project:  {escape(project.name)} ({escape(str(project.path))})\n"
+            f"Target:   {escape(app_url)}\n"
+            f"Duration: {duration:.1f}s"
+        )
+        self.console.print(Panel(body, title=title, border_style=style))

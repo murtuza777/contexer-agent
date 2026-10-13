@@ -8,7 +8,7 @@ from typing import Optional
 from contexer.llm.base import LLMProvider
 from contexer.observer.models import BrowserObservation
 from contexer.opencode.models import OpenCodeDiffItem
-from contexer.verification.models import GoalAnalysis, VerificationResult
+from contexer.verification.models import GoalAnalysis, VerificationResult, format_contract
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +84,24 @@ class RepairEngine:
         if diagnosis:
             diagnosis_section = f"\nDiagnostic Guidance:\n{diagnosis}\n"
 
+        contract_section = ""
+        if analysis:
+            failed_ids = {r.criterion_id for r in result.criteria_results if not r.passed}
+            failed_checks = [c for c in analysis.acceptance_criteria if c.id in failed_ids and c.check]
+            if failed_checks:
+                contract_section = (
+                    "\nChecks That Must Pass (executed verbatim in a real browser; use the exact names, "
+                    "texts and data-testid values they reference):\n"
+                    f"{format_contract(failed_checks)}\n"
+                )
+
         prefix = f"{scope_instruction}\n\n" if scope_instruction else ""
         return (
             f"{prefix}"
             f"The previous implementation failed automated browser verification.\n\n"
             f"Original Goal:\n{goal}\n\n"
             f"Failed Criteria:\n{failures_list}\n"
+            f"{contract_section}"
             f"{diagnosis_section}"
             f"\nObserved Evidence:\n{evidence_list}"
             f"{errors_section}\n\n"
