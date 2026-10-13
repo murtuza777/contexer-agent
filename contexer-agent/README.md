@@ -12,12 +12,12 @@ User Intent → Contexer CLI → Autonomous Loop → OpenCode (Coding Agent)
      └──── Repair Engine ← Verifier ← Playwright (Observation)
 ```
 
-1. **Interactive Shell**: Typer + Rich REPL with slash commands (`/help`, `/status`, `/project`, `/opencode`, `/loop`, `/github`, `/exit`).
+1. **Interactive Shell**: Typer + Rich REPL with slash commands (`/help`, `/status`, `/project`, `/opencode`, `/loop`, `/verify`, `/github`, `/exit`).
 2. **Provider Abstraction**: OpenRouter, Google Gemini, and OpenAI-compatible streaming LLM completions with structured tool calls.
 3. **Workspace Tools & Safety**: File inspection/editing, read-only Git operations, bounded shell execution, and approval policies (`on-request`, `auto`, `never`).
 4. **OpenCode Integration**: Async HTTP client and adapter interfacing with local OpenCode server (`http://127.0.0.1:4096`) for session management, prompt execution, and git diffs.
 5. **Playwright Observation**: Headless browser automation capturing DOM structure, visible headings, interactive elements, console logs, network errors, and visual screenshots.
-6. **Dynamic Verification & Self-Repair**: Decomposes user intent into acceptance criteria, verifies criteria against browser observations, diagnoses runtime failures, and dispatches repair prompts back to OpenCode.
+6. **Executable Verification & Self-Repair**: Compiles user intent into acceptance criteria with executable browser checks (click / fill / expect), hands them to the coding agent as the contract, runs them in real Chromium, and sends expected-vs-actual failures back for repair. Every verdict is labelled `proven` (check executed), `LLM-judged`, or `heuristic`. See [docs/roadmap.md](docs/roadmap.md#phase-4--executable-acceptance-checks-done).
 7. **Official GitHub MCP Server**: Enforced read-only integration supporting stdio binary and Docker container execution for safe repository inspection.
 
 ## Quick Start
@@ -50,6 +50,9 @@ Configure `OPENROUTER_API_KEY` and optionally `OPENROUTER_MODEL` in `.env` (see 
 Inside the `contexer` REPL:
 
 * `/loop <goal> [--url <url>] [--dir <path>]` — Run the full autonomous loop (Goal → OpenCode → Playwright → Verifier → Repair).
+* `/verify <goal> [--url <url>] [--dir <path>]` — Verify the running app against a goal with executable browser checks, without changing code.
+
+Without `--url`, static projects are served on a local HTTP port automatically; other projects are observed at `http://localhost:3000` (start the dev server first).
 * `/opencode [status | run <prompt>]` — Interact directly with the local OpenCode execution engine.
 * `/github` — Verify official GitHub MCP Server connection, tool discovery, and read-only mode.
 * `/project [status | list | set <name> | new <name> | reset]` — Inspect and switch target projects or scratch sandboxes.
@@ -67,7 +70,7 @@ Inside the `contexer` REPL:
 - **`project/`**: Workspace manager detecting project stacks and protecting the Contexer agent itself.
 - **`opencode/`**: HTTP adapter and async client for OpenCode execution engine.
 - **`observer/`**: Playwright headless browser observer.
-- **`verification/`**: Evidence-based acceptance criteria verifier.
+- **`verification/`**: Executable check DSL (`checks.py`), Playwright check runner (`runner.py`), and the verifier that combines proven, judged, and heuristic verdicts.
 - **`repair/`**: Failure diagnosis and repair prompt synthesizer.
 - **`workflow/`**: Autonomous loop orchestrating inspection, planning, execution, verification, and repair.
 - **`mcp/`**: Official GitHub MCP Server runner and client.
@@ -77,6 +80,8 @@ Inside the `contexer` REPL:
 - [x] Phase 1: Housekeeping & dead code cleanup (audit verified, dead bootstrap code removed)
 - [ ] Phase 2: Domain realignment & ghost module population (`intent/`, `planner/`, `tasks/`)
 - [ ] Phase 3: Generic coding-agent abstraction (`contexer.coding_agent`)
-- [ ] Phase 4: Structured assertion verifier & failure diagnosis rebuild
+- [x] Phase 4: Structured assertion verifier & failure diagnosis rebuild (executable checks, `/verify`)
 - [ ] Phase 5: Durable run state persistence (`.contexer/runs.db`)
 - [ ] Phase 6: LangGraph workflow orchestration state machine
+
+The plan for the remaining phases, including recommended re-sequencing, is in [docs/roadmap.md](docs/roadmap.md).
