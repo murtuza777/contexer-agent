@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import re
 from typing import Optional
 from pydantic import BaseModel, Field
 
 from contexer.llm.base import LLMProvider
+from contexer.llm.structured import parse_json_object
 from contexer.verification.models import GoalAnalysis
 from contexer.workflow.inspector import RepositoryContext
 
@@ -81,12 +80,7 @@ class EngineeringPlanner:
                     prompt=prompt,
                     system_instruction="You are a software architect. Return ONLY valid JSON.",
                 )
-                raw = response.text.strip()
-                if raw.startswith("```"):
-                    raw = re.sub(r"^```[a-z]*\n?", "", raw)
-                    raw = re.sub(r"\n?```$", "", raw)
-
-                data = json.loads(raw)
+                data = parse_json_object(response.text, expect_key="steps")
                 steps = [
                     PlanStep(
                         step_number=item.get("step_number", i + 1),
