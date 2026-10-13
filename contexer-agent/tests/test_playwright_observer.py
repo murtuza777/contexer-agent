@@ -26,3 +26,31 @@ async def test_playwright_observe_unreachable_url():
     obs = await observer.observe("http://127.0.0.1:59999/nonexistent", timeout=2.0, screenshot=False)
     assert obs.success is False
     assert obs.error is not None
+
+
+@pytest.mark.anyio
+async def test_console_warnings_are_not_errors():
+    observer = PlaywrightObserver(headless=True)
+    page = (
+        "data:text/html,<html><body><h1>Hi</h1><script>"
+        "console.warn('deprecated prop');console.error('payment widget failed');"
+        "</script></body></html>"
+    )
+    obs = await observer.observe(page, timeout=10.0, screenshot=False)
+    assert obs.console_errors == ["[error] payment widget failed"]
+    assert obs.console_warnings == ["[warning] deprecated prop"]
+
+
+@pytest.mark.anyio
+async def test_ui_snapshot_lists_locator_vocabulary():
+    observer = PlaywrightObserver(headless=True)
+    page = (
+        "data:text/html,<html><body><h1>My Tasks</h1>"
+        "<input placeholder='What needs doing?'><button aria-label='Add task'>+</button>"
+        "<span data-testid='remaining-count'>2</span></body></html>"
+    )
+    obs = await observer.observe(page, timeout=10.0, screenshot=False)
+    assert 'heading "My Tasks"' in obs.ui_snapshot
+    assert 'button "Add task"' in obs.ui_snapshot  # accessible name, not the "+" glyph
+    assert '[data-testid="remaining-count"] text="2"' in obs.ui_snapshot
+    assert 'placeholder="What needs doing?"' in obs.ui_snapshot

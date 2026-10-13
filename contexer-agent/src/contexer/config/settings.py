@@ -40,7 +40,9 @@ class ContexerConfig:
     opencode_model_provider: str = DEFAULT_OPENCODE_MODEL_PROVIDER
     opencode_model_id: str = DEFAULT_OPENCODE_MODEL_ID
     opencode_timeout: float = 120.0
-    app_url: str = "http://localhost:3000"
+    # None means "not configured": static projects are served locally,
+    # others are expected on a dev server (see workflow.loop).
+    app_url: Optional[str] = None
 
     # -- harness safety ---------------------------------------------------
     # AgentForge-inspired policy boundary.  Only the generic harness uses
@@ -118,7 +120,7 @@ def load_config(env_file: Optional[str | Path] = None) -> ContexerConfig:
     except ValueError:
         opencode_timeout = 120.0
 
-    app_url = os.environ.get("CONTEXER_APP_URL", "http://localhost:3000").strip()
+    app_url = os.environ.get("CONTEXER_APP_URL", "").strip()
 
     raw_gh_token = (
         os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
@@ -160,7 +162,7 @@ def load_config(env_file: Optional[str | Path] = None) -> ContexerConfig:
         opencode_model_provider=opencode_model_provider if opencode_model_provider else DEFAULT_OPENCODE_MODEL_PROVIDER,
         opencode_model_id=opencode_model_id if opencode_model_id else DEFAULT_OPENCODE_MODEL_ID,
         opencode_timeout=opencode_timeout,
-        app_url=app_url if app_url else "http://localhost:3000",
+        app_url=app_url or None,
         github_mcp_enabled=github_mcp_enabled,
         github_token=github_token,
         github_mcp_read_only=github_mcp_read_only,

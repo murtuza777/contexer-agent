@@ -14,9 +14,12 @@ class BrowserObservation(BaseModel):
     visible_text: str = ""
     html: str = ""
     console_errors: list[str] = Field(default_factory=list)
+    console_warnings: list[str] = Field(default_factory=list)
     page_errors: list[str] = Field(default_factory=list)
     interactive_elements: list[str] = Field(default_factory=list)
     headings: list[str] = Field(default_factory=list)
+    # ARIA tree + data-testids + placeholders; grounds locators in checks.
+    ui_snapshot: str = ""
     status_code: Optional[int] = None
     screenshot_path: Optional[str] = None
     screenshot_base64: Optional[str] = None

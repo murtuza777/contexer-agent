@@ -22,6 +22,12 @@ class RepositoryContext(BaseModel):
     dependencies: list[str] = Field(default_factory=list)
     scripts: dict[str, str] = Field(default_factory=dict)
     summary: str = ""
+    # True when the project has no server-side runtime (no package.json or
+    # Python project files) and can be served as plain files.
+    is_static_site: bool = False
+    # Bounded excerpt of front-end entry points, so acceptance checks can
+    # locate elements an existing app creates dynamically.
+    source_excerpt: str = ""
 
     def format_summary(self) -> str:
         """Format context into concise summary string for LLM prompts."""
@@ -57,6 +63,7 @@ class RepositoryInspector:
                 project_path=str(path),
                 framework="New Empty Project",
                 summary="Empty directory ready for new project initialization.",
+                is_static_site=True,
             )
 
         # 1. Check Node.js / JavaScript projects
@@ -88,6 +95,7 @@ class RepositoryInspector:
         # 2. Check Python projects
         pyproject = path / "pyproject.toml"
         reqs = path / "requirements.txt"
+        is_static_site = not (pkg_json.exists() or pyproject.exists() or reqs.exists() or (path / "manage.py").exists())
         if pyproject.exists() or reqs.exists():
             text = ""
             if pyproject.exists():
@@ -156,4 +164,33 @@ class RepositoryInspector:
             dependencies=dependencies,
             scripts=scripts,
             summary=summary,
+            is_static_site=is_static_site,
+            source_excerpt=_source_excerpt(path, entry_points, key_files),
         )
+
+
+SOURCE_EXCERPT_MAX_CHARS = 8000
+_FRONTEND_SUFFIXES = {".html", ".js", ".mjs", ".jsx", ".ts", ".tsx", ".vue", ".svelte"}
+
+
+def _source_excerpt(root: Path, entry_points: list[str], key_files: list[str]) -> str:
+    """Entry points first, then other front-end files, within a fixed character budget."""
+    candidates = entry_points + [
+        f for f in key_files if not f.endswith(".d.ts") and ".config." not in Path(f).name
+    ]
+    parts: list[str] = []
+    used = 0
+    for rel in dict.fromkeys(candidates):
+        if Path(rel).suffix not in _FRONTEND_SUFFIXES:
+            continue
+        budget = SOURCE_EXCERPT_MAX_CHARS - used
+        if budget < 200:
+            break
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        chunk = text if len(text) <= budget else text[:budget] + "\n... (truncated)"
+        parts.append(f"--- {rel} ---\n{chunk}")
+        used += len(chunk)
+    return "\n".join(parts)

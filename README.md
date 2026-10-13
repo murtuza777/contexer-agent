@@ -87,14 +87,14 @@ DONE         Diagnose
 
 1. **User Intent**: The user provides a high-level outcome (e.g., *"Build an interactive product catalog with search, filter, and responsive grid"*).
 2. **Context & Inspection**: Contexer inspects the project directory structure, detecting frameworks (Next.js, static HTML/JS), entrypoints, and key files.
-3. **Plan & Criteria Formulation**: Contexer decomposes the intent into formal acceptance criteria and a structured, multi-step engineering plan.
-4. **OpenCode Execution**: Contexer creates an isolated OpenCode session and dispatches the task. OpenCode writes or modifies the files on disk.
-5. **Application Runtime**: The application serves the updated code on a local port.
+3. **Plan & Executable Criteria**: Contexer compiles the intent into acceptance criteria, each with an **executable browser check** (steps such as *click "Add to cart"* followed by expectations such as *the cart count text changes*), plus a multi-step engineering plan. For existing apps, check locators are grounded in the live UI's accessibility tree.
+4. **OpenCode Execution**: Contexer creates an isolated OpenCode session and dispatches the task **with the checks as its contract**. OpenCode writes or modifies the files on disk.
+5. **Application Runtime**: Static projects are served by Contexer on a local HTTP port; other projects are observed on their dev server (`--url`).
 6. **Playwright Observation**: Contexer launches a headless Playwright instance, navigates to the live application URL, captures the DOM tree, detects interactive controls (buttons, links, inputs), tracks console logs, and flags HTTP network errors.
-7. **Dynamic Verification**: Contexer checks whether each acceptance criterion is satisfied by actual runtime evidence (e.g., DOM elements, text content, absence of runtime console errors).
+7. **Executable Verification**: Each check runs in a fresh Chromium context: Contexer performs the steps, then evaluates the expectations with auto-retry. Pass/fail comes from the browser, not from a model's opinion. Only criteria that cannot be checked mechanically fall back to LLM judgment, and every verdict is labelled `proven`, `LLM-judged`, or `heuristic`.
 8. **Pass or Self-Repair**:
    - If all criteria pass, the task is marked **DONE**.
-   - If verification fails, Contexer's **Repair Engine** diagnoses the specific runtime failure and synthesizes a focused repair prompt sent directly back to OpenCode. The loop repeats until verification passes or max attempts are reached.
+   - If verification fails, Contexer's **Repair Engine** sends OpenCode the failing checks with *expected vs. actual* values and any uncaught exceptions. The loop repeats until verification passes or max attempts are reached.
 
 ---
 
@@ -134,7 +134,7 @@ The real architecture implemented in this repository:
                                          Playwright Observer (DOM,
                                           Console, Network, Shot)
                                                      ↓
-                                            Verifier (Evidence Check)
+                                Check Runner + Verifier (executed checks)
                                                      ↓
                                          Repair Engine (Self-Repair)
 ```
@@ -173,48 +173,62 @@ Target:  http://127.0.0.1:8080
   ✓ Detected Stack: Static Web (HTML/CSS/JS)
   ✓ Existing files: 0 files
 
-● Understanding Goal & Deriving Acceptance Criteria
-  ✓ Derived 4 acceptance criteria:
-    • [CRIT-1]: Product catalog grid with items, prices, and images (dom_inspection)
-    • [CRIT-2]: Interactive category filtering controls (button_interaction)
-    • [CRIT-3]: Add to cart action with visual counter update (event_verification)
-    • [CRIT-4]: Clean runtime execution with zero uncaught console errors (console_log_check)
+● Deriving Acceptance Criteria & Executable Checks
+  ✓ 4 criteria, 4 with executable browser checks:
+    • crit-1 Product grid shows at least 6 products with prices (check)
+        expect: at least 6 × [data-testid="product-card"]
+    • crit-2 Category filter narrows the grid (check)
+        do:     click button "Electronics"
+        expect: at most 3 × [data-testid="product-card"]
+    • crit-3 Add to cart updates the cart counter (check)
+        do:     click button "Add to cart"
+        expect: text of [data-testid="cart-count"] contains "1" and changes
+    • crit-runtime Application loads without uncaught JavaScript exceptions or console errors (check)
+        expect: no uncaught exceptions or console errors
 
 ● Generating Engineering Plan
-  ✓ Strategy: Scaffold semantic HTML5 layout, Tailwind/CSS styling, and interactive vanilla JS cart state.
-    1. Create index.html with nav, hero, product grid, and cart drawer.
-    2. Create style.css with modern typography, dark-first color palette, and card layout.
-    3. Create script.js with products data, filtering logic, and cart counter.
+  ✓ Strategy: Semantic HTML5 layout, CSS grid, and vanilla JS cart state.
+    1. Create index.html with nav, product grid, and cart badge.
+    2. Create style.css with card layout.
+    3. Create script.js with product data, filtering, and cart counter.
 
-● OpenCode Execution
-  › Dispatching engineering plan to OpenCode...
+● Coding Agent Execution
+  › Dispatching plan and executable acceptance contract...
   ✓ Implementation complete (14.2s)
-  Files modified: 3 (index.html, style.css, script.js)
 
-● Playwright Observation (Attempt 1/3)
-  › Navigating to http://127.0.0.1:8080...
-  ✓ Application loaded (Title: 'NexusMart - Premium Ecommerce')
-  ✓ Observed Headings: Discover Extraordinary Things, Featured Products, Customer Reviews
-  ✓ Interactive Controls: 12 detected (buttons, filter chips, cart toggle)
+● Verification (Attempt 1/3)
+  ✓ crit-1 Product grid shows at least 6 products with prices · proven
+  ✓ crit-2 Category filter narrows the grid · proven
+  ✗ crit-3 Add to cart updates the cart counter · proven
+        expected: text of [data-testid="cart-count"] contains "1" and changes
+        actual:   "0" → "0"
+        uncaught exception: cart is not defined
+  ✓ crit-runtime Application loads without uncaught JavaScript exceptions or console errors · proven
 
-● Dynamic Verification
-  ✓ [CRIT-1]: Product catalog grid with items, prices, and images
-    Evidence: Found 6 product cards with .product-card selector and price tags.
-  ✓ [CRIT-2]: Interactive category filtering controls
-    Evidence: Found category buttons: All, Electronics, Lifestyle.
-  ✓ [CRIT-3]: Add to cart action with visual counter update
-    Evidence: Cart badge element present with initial count '0'.
-  ✓ [CRIT-4]: Clean runtime execution with zero uncaught console errors
-    Evidence: Browser console reported 0 errors and 0 unhandled rejections.
-
-✓ Goal Verified! (Confidence: 0.95)
-[COMPLETE] Contexer verified all acceptance criteria in 1 attempt!
+● Diagnosis & Self-Repair (Attempt 1/3)
+  › Sending targeted repair prompt to coding agent...
 ```
 
-If any criterion fails (e.g. JavaScript reference error on filter click or missing element), Contexer triggers the **Repair Phase**:
-1. Diagnoses the error: *"Category filter buttons lack event listeners because script.js was loaded before DOM content."*
-2. Dispatches targeted repair instruction to OpenCode session: *"Wrap initialization in DOMContentLoaded or move script tag to body end."*
-3. Observes the application again via Playwright and verifies the fix.
+*(Illustrative trace.)* Note what changed from snapshot-based verification: a cart badge that *exists* with count `0` used to satisfy "Add to cart updates the counter". Now the check clicks the button and the browser reports that the count did not change.
+
+### Real output: a bug a page snapshot cannot see
+
+Actual `verify_only` output (live `openrouter/free` model) for a todo app whose "Complete" button strikes the task through but throws `refesh is not defined` and never updates the count. Nothing is wrong at page load. The same contract, derived from the correct version of the app, passes that version 4/4:
+
+```text
+● Verification
+  ✓ crit-1 User can add a new task and the remaining count updates · proven
+  ✗ crit-2 User can mark a task as complete and the remaining count updates · proven
+        expected: text of [data-testid="remaining-count"] equals "0"
+        actual:   "1"
+        uncaught exception: refesh is not defined
+  ✗ crit-3 Remaining count reflects number of incomplete tasks · proven
+        expected: text of [data-testid="remaining-count"] equals "1"
+        actual:   "2"
+        uncaught exception: refesh is not defined
+  ✓ crit-runtime Application loads without uncaught JavaScript exceptions or console errors · proven
+Reason: [crit-2] expected text of [data-testid="remaining-count"] equals "0", got "1"; ...
+```
 
 ---
 
@@ -289,6 +303,7 @@ Inside the Contexer REPL, the following slash commands are available:
 | `/project` | `/p`, `/workspace` | Inspect and manage target projects (`/project list`, `/project set <name>`, `/project new <name>`, `/project reset`). |
 | `/opencode` | `/oc` | Check OpenCode server health or run targeted prompts (`/opencode status`, `/opencode run <prompt>`). |
 | `/loop` | `/auto`, `/build` | Run the complete autonomous loop (`/loop <goal> [--url <url>] [--dir <path>]`). |
+| `/verify` | `/check` | Verify the running app against a goal with executable browser checks, without changing code (`/verify <goal> [--url <url>] [--dir <path>]`). |
 | `/github` | `/gh`, `/mcp` | Check official GitHub MCP server connection, tool discovery, and read-only enforcement. |
 | `/clear` | `/cls` | Clear the terminal screen. |
 | `/version` | `/v` | Show version information (`contexer v0.1.0`). |
@@ -313,7 +328,7 @@ Within the REPL:
 * **Safety & Tool Execution**: Bounded filesystem tools, read-only git operations, safe command execution, and configurable approval policies (`on-request`, `auto`, `never`).
 * **OpenCode Integration**: HTTP client connecting to OpenCode server, session management, prompt dispatch, timeout controls, and diff extraction.
 * **Playwright Headless Observer**: Headless browser automation capturing DOM titles, headings, interactive element trees, browser console errors, HTTP failures, and full-page screenshots.
-* **Dynamic Acceptance Verifier**: Criteria generation from user intent, evidence gathering from live DOM and console, and verifiable assertion matching.
+* **Executable Acceptance Checks**: Goals are compiled into browser checks (steps + expectations) that Playwright executes in isolated contexts; failures report expected vs. actual. LLM judgment is used only for criteria without a check, and every verdict is labelled with how it was reached.
 * **Self-Repair Engine**: Discrepancy diagnosis between runtime observations and acceptance criteria, producing targeted repair prompts for OpenCode.
 * **Autonomous Engineering Loop**: End-to-end orchestration (`Goal → Inspector → Criteria → Planner → OpenCode → Playwright → Verifier → Repair → Complete`).
 * **Official GitHub MCP Server**: Read-only integration supporting stdio binary and Docker container execution with tool discovery.
@@ -340,14 +355,17 @@ Within the REPL:
 ✓ Tool runtime & safety approval policies
 ✓ OpenCode integration & execution adapter
 ✓ Playwright headless browser observation
-✓ Dynamic acceptance criteria & evidence verifier
+✓ Executable acceptance checks (contract-first, browser-proven verdicts, /verify)
 ✓ Autonomous self-repair loop
 ✓ Official GitHub MCP server integration (read-only)
+→ Coding-agent abstraction + second adapter (Claude Code), independent diffs
+→ Dev-server lifecycle for Node/Python projects
+→ Run persistence + replaying saved checks as regression tests
 → Interactive human-in-the-loop repair checkpoints
-→ Persistent conversation and state checkpoints
-→ Additional coding agent adapters (Claude Code, Codex)
-→ Multi-modal visual diffing
+→ Multi-modal visual checks
 ```
+
+The detailed plan, with sequencing rationale, is in [contexer-agent/docs/roadmap.md](contexer-agent/docs/roadmap.md).
 
 ---
 

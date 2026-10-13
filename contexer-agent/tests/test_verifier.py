@@ -140,3 +140,181 @@ async def test_verifier_distinct_goals_evaluated_accurately():
     # Must PASS because contact form satisfies contact criteria
     contact_result = await verifier.verify("add a contact form", contact_obs, contact_analysis)
     assert contact_result.passed is True
+
+
+# -- executable checks take precedence over judgment --------------------------------
+
+from contexer.verification.checks import Check, CheckResult, Expectation, ExpectationOutcome, Locator  # noqa: E402
+from contexer.verification.runner import CheckRunner  # noqa: E402
+
+
+class FakeRunner(CheckRunner):
+    """Returns scripted pass/fail per criterion instead of driving a browser."""
+
+    def __init__(self, outcomes: dict[str, bool]) -> None:
+        super().__init__()
+        self.outcomes = outcomes
+        self.calls: list[list[str]] = []
+
+    async def run(self, url, checks):  # type: ignore[override]
+        self.calls.append([cid for cid, _ in checks])
+        results = []
+        for cid, check in checks:
+            passed = self.outcomes[cid]
+            results.append(
+                CheckResult(
+                    criterion_id=cid,
+                    passed=passed,
+                    outcomes=[
+                        ExpectationOutcome(
+                            description=check.expect[0].describe(),
+                            passed=passed,
+                            actual='"1"' if passed else '"0"',
+                        )
+                    ],
+                )
+            )
+        return results
+
+
+LOADED = BrowserObservation(
+    url="http://127.0.0.1:8000/",
+    success=True,
+    status_code=200,
+    page_title="Shop",
+    visible_text="Shop. Add to cart. Cart 0.",
+)
+
+
+def _checked(cid: str) -> AcceptanceCriterion:
+    return AcceptanceCriterion(
+        id=cid,
+        description=f"{cid} behaviour",
+        check=Check(expect=[Expectation(kind="text", target=Locator(test_id="cart-count"), contains="1")]),
+    )
+
+
+@pytest.mark.anyio
+async def test_asserted_criteria_never_reach_the_llm(fake_llm) -> None:
+    llm = fake_llm()  # no scripted replies: any call is a bug
+    runner = FakeRunner({"crit-1": True, "crit-2": True})
+    analysis = GoalAnalysis(goal="cart", acceptance_criteria=[_checked("crit-1"), _checked("crit-2")])
+
+    result = await Verifier(llm_provider=llm, runner=runner).verify("cart", LOADED, analysis)
+
+    assert result.passed is True
+    assert llm.prompts == []
+    assert runner.calls == [["crit-1", "crit-2"]]
+    assert [r.method for r in result.criteria_results] == ["assertion", "assertion"]
+    assert result.confidence == 1.0
+    assert result.summary == "2/2 proven in browser"
+
+
+@pytest.mark.anyio
+async def test_assertion_failure_carries_expected_and_actual() -> None:
+    analysis = GoalAnalysis(goal="cart", acceptance_criteria=[_checked("crit-cart")])
+
+    result = await Verifier(runner=FakeRunner({"crit-cart": False})).verify("cart", LOADED, analysis)
+
+    assert result.passed is False
+    assert result.confidence == 1.0
+    assert result.criteria_results[0].method == "assertion"
+    assert result.criteria_results[0].check_result is not None
+    assert any('expected: text of [data-testid="cart-count"] contains "1"' in f for f in result.failures)
+    assert any('actual:   "0"' in f for f in result.failures)
+    assert result.reason.startswith("[crit-cart] expected")
+
+
+@pytest.mark.anyio
+async def test_only_unasserted_criteria_are_judged_by_llm(fake_llm) -> None:
+    llm = fake_llm(
+        "Here is my verdict:\n```json\n"
+        '{"passed": true, "confidence": 0.8, "reason": "looks right",'
+        ' "criteria_results": [{"criterion_id": "crit-look", "description": "Modern look",'
+        ' "passed": true, "evidence": "Clean layout"}]}\n```'
+    )
+    analysis = GoalAnalysis(
+        goal="cart",
+        acceptance_criteria=[
+            AcceptanceCriterion(id="crit-look", description="Modern look"),
+            _checked("crit-cart"),
+        ],
+    )
+
+    result = await Verifier(llm_provider=llm, runner=FakeRunner({"crit-cart": True})).verify("cart", LOADED, analysis)
+
+    assert result.passed is True
+    assert len(llm.prompts) == 1
+    assert "crit-look" in llm.prompts[0] and "crit-cart" not in llm.prompts[0]
+    assert [(r.criterion_id, r.method) for r in result.criteria_results] == [
+        ("crit-look", "judgment"),
+        ("crit-cart", "assertion"),
+    ]
+    assert result.confidence == 0.8
+    assert result.summary == "1/1 proven in browser, 1/1 judged by LLM"
+
+
+@pytest.mark.anyio
+async def test_llm_overall_veto_fails_verification(fake_llm) -> None:
+    llm = fake_llm(
+        '{"passed": false, "reason": "Page is unrelated to the goal",'
+        ' "criteria_results": [{"criterion_id": "crit-look", "passed": true}]}'
+    )
+    analysis = GoalAnalysis(goal="shop", acceptance_criteria=[AcceptanceCriterion(id="crit-look", description="Shop")])
+
+    result = await Verifier(llm_provider=llm, runner=FakeRunner({})).verify("shop", LOADED, analysis)
+
+    assert result.passed is False
+    assert result.reason == "Page is unrelated to the goal"
+
+
+@pytest.mark.anyio
+async def test_unparseable_llm_reply_falls_back_to_labelled_heuristics(fake_llm) -> None:
+    llm = fake_llm("I think it is fine!")
+    analysis = GoalAnalysis(
+        goal="build a shop",
+        acceptance_criteria=[AcceptanceCriterion(id="crit-products", description="Product catalog is visible")],
+    )
+
+    result = await Verifier(llm_provider=llm, runner=FakeRunner({})).verify("build a shop", LOADED, analysis)
+
+    assert [r.method for r in result.criteria_results] == ["heuristic"]
+    assert result.confidence == pytest.approx(0.6)
+
+
+class BlockingRunner(CheckRunner):
+    """crit-blocked cannot perform its steps; crit-broken runs and fails."""
+
+    async def run(self, url, checks):  # type: ignore[override]
+        results = []
+        for cid, _ in checks:
+            if cid == "crit-blocked":
+                results.append(CheckResult(criterion_id=cid, passed=False, failed_step="step 1 'click checkbox \"x\"'", blocked=True))
+            else:
+                results.append(
+                    CheckResult(
+                        criterion_id=cid,
+                        passed=False,
+                        outcomes=[ExpectationOutcome(description="count", passed=False, actual='"1"')],
+                    )
+                )
+        return results
+
+
+@pytest.mark.anyio
+async def test_blocked_check_is_inconclusive_not_proof() -> None:
+    analysis = GoalAnalysis(goal="todo", acceptance_criteria=[_checked("crit-blocked")])
+    result = await Verifier(runner=BlockingRunner()).verify("todo", LOADED, analysis)
+
+    assert result.passed is False
+    assert result.confidence == 0.5
+    assert result.summary == "0/1 proven in browser (1 blocked)"
+
+
+@pytest.mark.anyio
+async def test_reproduced_failure_outranks_blocked_check() -> None:
+    analysis = GoalAnalysis(goal="todo", acceptance_criteria=[_checked("crit-blocked"), _checked("crit-broken")])
+    result = await Verifier(runner=BlockingRunner()).verify("todo", LOADED, analysis)
+
+    assert result.confidence == 1.0
+    assert result.reason.startswith("[crit-broken]")
