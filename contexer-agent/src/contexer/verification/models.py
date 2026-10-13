@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
+
+from contexer.verification.checks import Check, CheckResult
+
+# How a criterion's verdict was reached, strongest first:
+#   assertion — an executable check ran in a real browser
+#   judgment  — an LLM judged it from a DOM/text snapshot
+#   heuristic — keyword evidence only (no LLM available)
+VerdictMethod = Literal["assertion", "judgment", "heuristic"]
 
 
 class AcceptanceCriterion(BaseModel):
@@ -12,6 +20,7 @@ class AcceptanceCriterion(BaseModel):
     id: str
     description: str
     verification_method: str = "dom_inspection"  # e.g. "dom_inspection", "visual_check", "interactive_test", "console_check"
+    check: Optional[Check] = None
 
 
 class GoalAnalysis(BaseModel):
@@ -20,6 +29,8 @@ class GoalAnalysis(BaseModel):
     goal: str
     summary: str = ""
     acceptance_criteria: list[AcceptanceCriterion] = Field(default_factory=list)
+    # Who wrote the criteria: the LLM, the rule-based fallback, or the caller.
+    generated_by: Literal["llm", "rules", "user"] = "user"
     # Backward-compatible fields
     required_text: list[str] = Field(default_factory=list)
     expected_title: Optional[str] = None
@@ -30,6 +41,16 @@ class GoalAnalysis(BaseModel):
 AcceptanceCriteria = GoalAnalysis
 
 
+def format_contract(criteria: list[AcceptanceCriterion]) -> str:
+    """Render criteria and their executable checks as the coding agent's contract."""
+    lines: list[str] = []
+    for c in criteria:
+        lines.append(f"- [{c.id}] {c.description}")
+        if c.check:
+            lines.extend(f"    {line}" for line in c.check.describe_lines())
+    return "\n".join(lines)
+
+
 class CriterionResult(BaseModel):
     """Evaluation result for an individual acceptance criterion."""
 
@@ -37,6 +58,8 @@ class CriterionResult(BaseModel):
     description: str
     passed: bool
     evidence: str = ""
+    method: VerdictMethod = "judgment"
+    check_result: Optional[CheckResult] = None
 
 
 class VerificationResult(BaseModel):
