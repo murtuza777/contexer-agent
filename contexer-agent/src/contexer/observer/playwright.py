@@ -4,12 +4,68 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from contexer.observer.models import BrowserObservation
 
+if TYPE_CHECKING:
+    from playwright.async_api import ConsoleMessage, Page
+
 logger = logging.getLogger(__name__)
+
+# Resources whose absence the browser reports as a console error but which say
+# nothing about whether the application works.
+_IGNORED_RESOURCE_SUFFIXES = ("/favicon.ico",)
+
+
+def record_console_error(msg: ConsoleMessage, sink: list[str]) -> None:
+    """Append genuine console errors to ``sink``; warnings and favicon 404s are not failures."""
+    if msg.type != "error":
+        return
+    location_url = (msg.location or {}).get("url", "")
+    if location_url.endswith(_IGNORED_RESOURCE_SUFFIXES):
+        return
+    sink.append(f"[error] {msg.text}")
+
+
+UI_SNAPSHOT_MAX_CHARS = 4000
+
+_LOCATOR_EXTRAS_JS = """() => {
+    const out = [];
+    document.querySelectorAll('[data-testid]').forEach(el => {
+        const text = (el.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 40);
+        out.push(`[data-testid="${el.getAttribute('data-testid')}"] text="${text}"`);
+    });
+    document.querySelectorAll('input[placeholder], textarea[placeholder]').forEach(el => {
+        out.push(`placeholder="${el.getAttribute('placeholder')}"`);
+    });
+    return out.slice(0, 60);
+}"""
+
+
+async def capture_ui_snapshot(page: Page) -> str:
+    """Locator vocabulary of the rendered page: ARIA tree plus test ids and placeholders.
+
+    The ARIA tree comes from the same accessible-name computation that
+    ``get_by_role`` matches against, so names copied from it resolve.
+    """
+    parts: list[str] = []
+    try:
+        parts.append(await page.locator("body").aria_snapshot(timeout=3000))
+    except Exception as e:
+        logger.debug("ARIA snapshot unavailable: %s", e)
+    try:
+        extras = await page.evaluate(_LOCATOR_EXTRAS_JS)
+        if isinstance(extras, list) and extras:
+            parts.append("\n".join(f"- {item}" for item in extras))
+    except Exception as e:
+        logger.debug("Locator extras unavailable: %s", e)
+    snapshot = "\n".join(p for p in parts if p).strip()
+    if len(snapshot) > UI_SNAPSHOT_MAX_CHARS:
+        snapshot = snapshot[:UI_SNAPSHOT_MAX_CHARS] + "\n- ... (truncated)"
+    return snapshot
 
 
 class PlaywrightObserver:
@@ -29,6 +85,7 @@ class PlaywrightObserver:
         from playwright.async_api import async_playwright, Error as PlaywrightError
 
         console_errors: list[str] = []
+        console_warnings: list[str] = []
         page_errors: list[str] = []
 
         try:
@@ -41,10 +98,11 @@ class PlaywrightObserver:
                     )
                     page = await context.new_page()
 
+                    page.on("console", lambda msg: record_console_error(msg, console_errors))
                     page.on(
                         "console",
-                        lambda msg: console_errors.append(f"[{msg.type}] {msg.text}")
-                        if msg.type in ("error", "warning")
+                        lambda msg: console_warnings.append(f"[warning] {msg.text}")
+                        if msg.type == "warning"
                         else None,
                     )
                     page.on(
@@ -96,6 +154,8 @@ class PlaywrightObserver:
                     except Exception as e:
                         logger.debug("Failed to extract interactive elements: %s", e)
 
+                    ui_snapshot = await capture_ui_snapshot(page)
+
                     # Extract headings
                     headings: list[str] = []
                     try:
@@ -120,7 +180,7 @@ class PlaywrightObserver:
 
                             out_dir = Path(screenshot_dir) if screenshot_dir else Path(".contexer") / "screenshots"
                             out_dir.mkdir(parents=True, exist_ok=True)
-                            file_name = f"observation_{int(timeout)}.png"
+                            file_name = f"observation_{time.strftime('%Y%m%d-%H%M%S')}_{time.monotonic_ns() % 1_000_000:06d}.png"
                             save_path = out_dir / file_name
                             save_path.write_bytes(shot_bytes)
                             shot_path_str = str(save_path.resolve())
@@ -133,8 +193,10 @@ class PlaywrightObserver:
                         visible_text=visible_text.strip(),
                         html=html,
                         console_errors=console_errors,
+                        console_warnings=console_warnings,
                         page_errors=page_errors,
                         interactive_elements=interactive_elements,
+                        ui_snapshot=ui_snapshot,
                         headings=headings,
                         status_code=status_code,
                         screenshot_path=shot_path_str,
