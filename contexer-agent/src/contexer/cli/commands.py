@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
     from contexer.cli.repl import ContexerApp
+    from contexer.project.models import Project
+    from contexer.workflow.loop import AutonomousLoop
 
 from contexer import __version__
 
@@ -385,19 +387,12 @@ def _cmd_project(app: ContexerApp, args: str) -> Optional[bool]:
     return None
 
 
-def _cmd_loop(app: ContexerApp, args: str) -> Optional[bool]:
-    """Execute autonomous engineering loop (Goal -> OpenCode -> Playwright -> Verifier -> Repair)."""
-    import asyncio
+def _parse_goal_args(app: ContexerApp, args: str, usage: str) -> Optional[tuple[str, Optional[str], Project]]:
+    """Parse ``<goal> [--url <url>] [--dir <path>]``; prints usage/errors and returns None on failure."""
     import re
-    from contexer.opencode.adapter import OpenCodeAdapter
-    from contexer.observer.playwright import PlaywrightObserver
     from contexer.project.manager import ProjectManager
-    from contexer.verification.verifier import Verifier
-    from contexer.workflow.loop import AutonomousLoop
 
     ui = app.ui
-    config = app.config
-
     mgr = getattr(app, "project_manager", None)
     if not mgr:
         mgr = ProjectManager()
@@ -405,11 +400,11 @@ def _cmd_loop(app: ContexerApp, args: str) -> Optional[bool]:
 
     raw = args.strip()
     if not raw:
-        ui.print_warning("Usage: /loop <goal> [--url <url>] [--dir <path>]")
+        ui.print_warning(f"Usage: {usage}")
         return None
 
     # Parse optional --url argument
-    app_url = getattr(config, "app_url", "http://localhost:3000")
+    app_url: Optional[str] = getattr(app.config, "app_url", None)
     goal = raw
     url_match = re.search(r'(?:--url|-u)\s+([^\s]+)', raw)
     if url_match:
@@ -431,36 +426,53 @@ def _cmd_loop(app: ContexerApp, args: str) -> Optional[bool]:
             return None
 
     if not goal:
-        ui.print_warning("Usage: /loop <goal> [--url <url>] [--dir <path>]")
+        ui.print_warning(f"Usage: {usage}")
         return None
+    return goal, app_url, target_proj
 
-    server_url = getattr(config, "opencode_server_url", "http://127.0.0.1:4096")
-    provider = getattr(config, "opencode_model_provider", None) or "opencode"
-    model_id = getattr(config, "opencode_model_id", None) or "nemotron-3.5-lightning-free"
 
+def _build_loop(app: ContexerApp, with_coding_agent: bool) -> AutonomousLoop:
     from contexer.llm.factory import create_llm_provider
+    from contexer.observer.playwright import PlaywrightObserver
+    from contexer.opencode.adapter import OpenCodeAdapter
+    from contexer.workflow.loop import AutonomousLoop
+
+    config = app.config
     llm_provider = None
     try:
         llm_provider = getattr(app.agent, "llm", None) or create_llm_provider(config)
     except Exception:
         pass
 
-    adapter = OpenCodeAdapter(
-        base_url=server_url,
-        timeout=getattr(config, "opencode_timeout", 120.0),
-        model_provider=provider,
-        model_id=model_id,
-    )
-    observer = PlaywrightObserver(headless=True)
-    loop = AutonomousLoop(
+    adapter = None
+    if with_coding_agent:
+        adapter = OpenCodeAdapter(
+            base_url=getattr(config, "opencode_server_url", "http://127.0.0.1:4096"),
+            timeout=getattr(config, "opencode_timeout", 120.0),
+            model_provider=getattr(config, "opencode_model_provider", None) or "opencode",
+            model_id=getattr(config, "opencode_model_id", None) or "nemotron-3.5-lightning-free",
+        )
+    return AutonomousLoop(
         adapter=adapter,
-        observer=observer,
+        observer=PlaywrightObserver(headless=True),
         max_attempts=3,
-        console=ui.console,
-        project_manager=mgr,
+        console=app.ui.console,
+        project_manager=app.project_manager,
         llm_provider=llm_provider,
     )
 
+
+def _cmd_loop(app: ContexerApp, args: str) -> Optional[bool]:
+    """Execute autonomous engineering loop (Goal -> OpenCode -> Playwright -> Verifier -> Repair)."""
+    import asyncio
+
+    ui = app.ui
+    parsed = _parse_goal_args(app, args, "/loop <goal> [--url <url>] [--dir <path>]")
+    if parsed is None:
+        return None
+    goal, app_url, target_proj = parsed
+
+    loop = _build_loop(app, with_coding_agent=True)
     try:
         asyncio.run(loop.run(goal=goal, app_url=app_url, project=target_proj))
     except KeyboardInterrupt:
@@ -470,6 +482,31 @@ def _cmd_loop(app: ContexerApp, args: str) -> Optional[bool]:
     except Exception as exc:
         ui.console.print()
         ui.print_error(f"Autonomous loop error: {exc}")
+        ui.console.print()
+
+    return None
+
+
+def _cmd_verify(app: ContexerApp, args: str) -> Optional[bool]:
+    """Verify the running application against a goal without changing any code."""
+    import asyncio
+
+    ui = app.ui
+    parsed = _parse_goal_args(app, args, "/verify <goal> [--url <url>] [--dir <path>]")
+    if parsed is None:
+        return None
+    goal, app_url, target_proj = parsed
+
+    loop = _build_loop(app, with_coding_agent=False)
+    try:
+        asyncio.run(loop.verify_only(goal=goal, app_url=app_url, project=target_proj))
+    except KeyboardInterrupt:
+        ui.console.print()
+        ui.print_warning("Verification interrupted by user.")
+        ui.console.print()
+    except Exception as exc:
+        ui.console.print()
+        ui.print_error(f"Verification error: {exc}")
         ui.console.print()
 
     return None
@@ -573,6 +610,11 @@ COMMANDS: dict[str, CommandDef] = {
         help_text="Run autonomous loop (OpenCode + Playwright + Verifier + Repair)",
         aliases=("auto", "build"),
     ),
+    "verify": CommandDef(
+        name="verify",
+        help_text="Verify the running app against a goal with executable browser checks (no code changes)",
+        aliases=("check",),
+    ),
     "github": CommandDef(
         name="github",
         help_text="Verify GitHub MCP Server connection, read-only status, and tools",
@@ -590,6 +632,7 @@ _HANDLERS: dict[str, Callable[..., Optional[bool]]] = {
     "project": _cmd_project,
     "opencode": _cmd_opencode,
     "loop": _cmd_loop,
+    "verify": _cmd_verify,
     "github": _cmd_github,
 }
 

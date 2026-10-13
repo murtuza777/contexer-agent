@@ -23,7 +23,7 @@ class TestContexerConfig:
         assert config.openrouter_api_key is None
         assert config.openrouter_site_url is None
         assert config.openrouter_app_name == "Contexer"
-        assert config.app_url == "http://localhost:3000"
+        assert config.app_url is None
 
     def test_custom_values(self) -> None:
         config = ContexerConfig(

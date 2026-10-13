@@ -111,9 +111,20 @@ class TestCommandRouter:
     def test_dispatch_prefix_expansion(self) -> None:
         app = self._make_app()
         router = CommandRouter()
-        # /ver should uniquely expand to /version
-        result = router.dispatch(app, "/ver")
+        # /vers uniquely expands to /version (/ver is ambiguous with /verify)
+        with patch.object(app.ui, "print_info") as print_info:
+            result = router.dispatch(app, "/vers")
         assert result is None  # version prints but continues
+        print_info.assert_called_once()
+        assert "contexer v" in print_info.call_args.args[0]
+
+    def test_dispatch_ambiguous_prefix_does_not_run_a_command(self) -> None:
+        app = self._make_app()
+        router = CommandRouter()
+        with patch.object(app.ui, "print_info") as print_info, patch.object(app.ui, "print_warning") as warn:
+            router.dispatch(app, "/ver")
+        print_info.assert_not_called()
+        assert "Ambiguous" in warn.call_args.args[0]
 
     def test_dispatch_non_slash_ignored(self) -> None:
         app = self._make_app()
@@ -222,6 +233,29 @@ class TestCommandRouter:
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs["goal"] == "Add button"
         assert call_kwargs["app_url"] == "http://localhost:4000"
+
+    @patch("contexer.workflow.loop.AutonomousLoop.verify_only")
+    def test_verify_command_runs_without_coding_agent(self, mock_verify) -> None:
+        from contexer.workflow.loop import AutonomousLoopResult
+        mock_verify.return_value = AutonomousLoopResult(goal="g", app_url="u", passed=True, attempts=1)
+        app = self._make_app()
+        router = CommandRouter()
+        with patch("contexer.opencode.adapter.OpenCodeAdapter.__init__") as adapter_init:
+            result = router.dispatch(app, "/check Add button --url http://localhost:5173")
+        assert result is None
+        adapter_init.assert_not_called()
+        call_kwargs = mock_verify.call_args[1]
+        assert call_kwargs["goal"] == "Add button"
+        assert call_kwargs["app_url"] == "http://localhost:5173"
+
+    @patch("contexer.workflow.loop.AutonomousLoop.verify_only")
+    def test_verify_without_url_lets_contexer_resolve_it(self, mock_verify) -> None:
+        from contexer.workflow.loop import AutonomousLoopResult
+        mock_verify.return_value = AutonomousLoopResult(goal="g", app_url="u", passed=True, attempts=1)
+        app = self._make_app()
+        app.config.app_url = None
+        CommandRouter().dispatch(app, "/verify Add button")
+        assert mock_verify.call_args[1]["app_url"] is None
 
     @patch("contexer.workflow.loop.AutonomousLoop.run")
     def test_loop_command_with_dir(self, mock_run) -> None:
