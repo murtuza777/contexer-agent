@@ -319,7 +319,12 @@ class CheckRunner:
 def _locate(page: Page, loc: Locator) -> PWLocator:
     if loc.role:
         role = cast(Any, loc.role)
-        return page.get_by_role(role, name=loc.name) if loc.name else page.get_by_role(role)
+        if not loc.name:
+            return page.get_by_role(role)
+        # The accessible name wins over visible text (aria-label="Delete Buy milk"
+        # on a button showing "×"). A check naming what the user *sees* should
+        # still find it, so a role element whose visible text matches counts too.
+        return page.get_by_role(role, name=loc.name).or_(page.get_by_role(role).filter(has_text=loc.name))
     if loc.text:
         return page.get_by_text(loc.text)
     if loc.label:

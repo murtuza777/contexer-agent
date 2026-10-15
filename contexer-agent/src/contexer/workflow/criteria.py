@@ -58,6 +58,9 @@ Expectations (all must hold):
 Comparators: "equals", "contains" (case-insensitive), "matches" (regex), "changed" (vs. before the steps ran).
 
 Rules:
+- Every check runs alone, in a fresh browser, on the freshly loaded app. Include every step that creates the state it
+  checks (add the items, fill the form) — never rely on another check having run first.
+- A role locator's "name" is the accessible name: an aria-label wins over the visible text.
 - Verify behaviour by interacting, not just by presence: click "Add to cart", then expect the cart count text to change.
 - One behaviour per check. Keep expectations implementation-agnostic
   (theme toggle: body background-color changed — not a guessed class name).

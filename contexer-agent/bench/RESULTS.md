@@ -36,6 +36,11 @@ covers checks that survived that filter.
 | --- | --- | --- | --- | --- | --- | --- |
 | Baseline | 0/6 ¹ | 4/6 | 5/6 | **9/18 (50%)** | — | 0/80 |
 | Edge-case guidance ² | 0/6 ³ | 5/6 | 6/6 | **11/18 (61%)** | invalid ³ | 0/112 |
+| + JSON mode and timeout (todo and notes only) | 4/6 | — | — | — | **6/6** | 0/41 |
+| + `checked` expectation, "don't invent behaviour" rule (all four apps) | 3/6 | **6/6** | 5/6 | 14/18 (78%) | 2/6 ⁴ | 0/156 |
+
+⁴ Notes stopped being held out once its run-3 diagnosis shaped the prompt
+rule. From this row on, its numbers count like the others.
 
 ¹ The model returned no parseable JSON on both attempts, so the analyzer fell
 back to rule-based checks. The CLI now flags such drafts as weak before
@@ -50,6 +55,42 @@ criteria. The newly caught bugs are shop `total-ignores-quantity` and signup
 ³ The model wrote checks, but most failed on the **correct** app (todo 5 of 7,
 notes 6 of 6) and were dropped. Writing wrong checks, not missing checks, is
 now the main failure mode; see the diagnosis below.
+
+### Diagnosis: why compiled checks failed on correct code
+
+The third run recorded each dropped check, one per app:
+
+- **todo:** the check asserted `attribute "checked" equals "checked"` after
+  ticking a box. The `checked` attribute reflects only the initial markup and
+  never changes on a click, so the check could never pass. The format had no
+  way to say "is checked". **Fixed:** `checked` and `unchecked` expectations
+  were added, and the attribute form is rewritten to them during validation.
+- **notes:** the check asserted that unpinning a note "restores the original
+  order", meaning oldest first. The app shows newest first and the goal never
+  said otherwise, so this was invented behaviour. **Fixed** with a prompt rule:
+  assert only what the goal states or the UI shows.
+
+The same run caught 6 of 6 bugs on the held-out notes app and 4 of 6 on todo.
+Comparing it with the second run shows how much one model call varies under
+`openrouter/free`. Read the rows as directions, not rates.
+
+The fourth run (all four apps, 16 of 24 caught) dropped 9 compiled checks.
+Their causes:
+
+- **Checks that depend on each other** (notes 6, probably signup 1). The model
+  wrote checks as a sequence: "unpin the note" without creating it, or "3
+  notes" assuming earlier checks had run. Every check starts on a freshly
+  loaded page. **Fixed** with a prompt rule: each check creates its own state.
+- **Visible text vs accessible name** (todo 2). The model clicked button
+  "×", but the button's accessible name is its `aria-label`, "Delete Buy
+  milk". **Fixed** in two ways:
+  - a prompt rule;
+  - a role locator now also matches a role element whose visible text
+    matches. That only adds what a user can see, so expectations are never
+    relaxed.
+
+  The hand-written benchmark is unchanged after this: 24/24 caught, 0/176
+  false failures.
 
 ### What this means for the product
 

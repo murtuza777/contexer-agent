@@ -161,19 +161,27 @@ which must still pass.
 
 | Contracts | Seeded bugs caught | False-failing checks on correct code |
 | --- | --- | --- |
-| Hand-written (3 apps, 18 bugs) | **18/18** caught with proof | **0/140** (20 clean runs) |
-| Compiled by the LLM from one-line goals (`--live`) | see [Benchmark](#benchmark-details) | — |
+| Hand-written (4 apps, 24 bugs) | **24/24** caught with proof | **0/176** (26 clean runs) |
+| Compiled by the LLM from one-line goals (`--live`, free models) | 50–83% per run | 0 in every run |
 
-The hand-written contracts and the bugs were written by the same author. That
-row measures the runner's reliability, not how good generated contracts are.
-The `--live` row measures generated contracts.
+- **Hand-written row:** the contracts and the bugs were written by the same
+  author, so this row measures the runner's reliability, not how good
+  generated contracts are.
+- **Live row:** this measures generated contracts. It varies a lot from run to
+  run with free models. Its misses are edge cases the goal didn't spell out,
+  plus checks the model got wrong, which is why a person approves every
+  contract.
+
+Full method, per-run tables and the diagnosis of bad compiled checks are in
+[bench/RESULTS.md](contexer-agent/bench/RESULTS.md).
 
 <a id="benchmark-details"></a>
 <details><summary>Benchmark details</summary>
 
-- **Fixtures:** todo, a shop (filters, search, cart arithmetic, async data)
-  and a signup form (validation, error states, a submit that reloads the
-  page). They live in
+- **Fixtures:** todo, a shop (filters, search, cart arithmetic, async data),
+  a signup form (validation, error states, a submit that reloads the page) and
+  a notes app (pinning, search in body text, deletes) that is held out from
+  prompt tuning. They live in
   [`contexer-agent/bench/fixtures`](contexer-agent/bench/fixtures). Each bug
   has a `BUG.md` naming the check expected to catch it.
 - **Validity rule:** a contract that fails on the correct app is not scored.
@@ -186,7 +194,7 @@ The `--live` row measures generated contracts.
 
 ## Status
 
-What works today, with tests (403 passing) and CI on Linux:
+What works today, with tests (408 passing) and CI on Linux:
 
 - Contracts, approval and hashing; `verify`, `replay`, `contract`, `run`, and
   `bench` (including `--live`).

@@ -109,3 +109,28 @@ async def test_checked_expectation_reads_the_live_state(runner: CheckRunner, app
     )
     assert ok.passed
     assert not bad.passed and bad.outcomes[0].actual == "not checked"
+
+
+async def test_role_name_also_matches_what_the_user_sees(tmp_path: Path) -> None:
+    site = tmp_path / "labels"
+    site.mkdir()
+    (site / "index.html").write_text(
+        '<!doctype html><html><head><meta charset="utf-8"><link rel="icon" href="data:,"></head><body>'
+        '<ul><li>Milk <button aria-label="Delete Milk" onclick="this.parentElement.remove()">×</button></li></ul>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+    with StaticAppServer(site) as server:
+        runner = CheckRunner(action_timeout=1.0, expect_timeout=0.5)
+        by_text, by_name, missing = await runner.run(
+            server.url,
+            [
+                ("text", check({"steps": [{"action": "click", "target": {"role": "button", "name": "×"}}],
+                                "expect": [{"kind": "hidden", "target": {"text": "Milk"}}]})),
+                ("name", check({"expect": [{"kind": "visible", "target": {"role": "button", "name": "Delete Milk"}}]})),
+                ("none", check({"expect": [{"kind": "visible", "target": {"role": "button", "name": "Archive"}}]})),
+            ],
+        )
+    assert by_text.passed, by_text.failure_report()
+    assert by_name.passed
+    assert not missing.passed  # matching what users see must not make absent elements appear
