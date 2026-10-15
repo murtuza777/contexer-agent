@@ -39,8 +39,42 @@ covers checks that survived that filter.
 | + JSON mode and timeout (todo and notes only) | 4/6 | — | — | — | **6/6** | 0/41 |
 | + `checked` expectation, "don't invent behaviour" rule (all four apps) | 3/6 | **6/6** | 5/6 | 14/18 (78%) | 2/6 ⁴ | 0/156 |
 
+| + independent-checks and accessible-name rules, text-matching role locator | 0/6 ⁵ | 2/6 | 0/6 ⁵ | 2/18 | 4/6 | 0/70 |
+
 ⁴ Notes stopped being held out once its run-3 diagnosis shaped the prompt
 rule. From this row on, its numbers count like the others.
+
+⁵ The router returned replies with 0% executable checks, then no JSON at all,
+so only 1–2 checks per app were left. That is a model failure, not a prompt
+regression, though a longer prompt may make weak free models worse.
+
+### Conclusion: stop tuning against `openrouter/free`
+
+Across five live runs the catch rate ranged from 25% to 83%, with no stable
+trend. The router's choice of model dominates every prompt change, so further
+tuning against it would fit noise. What held in **every** run: compiled checks
+that pass on the correct app never produced a false failure (0 of 70–156 each
+run). The open problem is getting enough good checks, not trusting the ones
+that survive.
+
+Next steps for the compiler (see the technical plan):
+
+1. **Pin a capable model for drafting** and measure it with this benchmark
+   before recommending it. Free routing is not production-grade for
+   compiling contracts.
+2. **Validate drafts against the running app.** When the app already has the
+   feature, show the checks that fail on it as *suspect* ("bug or wrong
+   check?") before approval, instead of as refuted.
+3. **Retry when a reply is mostly non-executable**, within the 180-second
+   per-attempt cap.
+
+Common model mistakes the validity filter caught:
+
+- guessed wording ("1 notes" where the app says "1 note");
+- invented controls ("Unpin X" where the button is "Pin X" and shows
+  "Unpin");
+- assumptions about where text appears (expecting "Dune" gone from the page
+  after removing it from the cart, while it is still in the catalog).
 
 ¹ The model returned no parseable JSON on both attempts, so the analyzer fell
 back to rule-based checks. The CLI now flags such drafts as weak before

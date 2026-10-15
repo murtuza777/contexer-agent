@@ -352,6 +352,26 @@ runs `contexer replay --report github,html` and uploads `report.html`.
 **Done when** a PR on a test repository shows a failing `contexer/acceptance`
 status that links to the report.
 
+### C8. Compiler quality — next (from the live benchmark)
+
+Five `bench --live` runs on `openrouter/free` ranged from 25% to 83% of seeded
+bugs caught, with zero false failures from checks that survived validation.
+The model limits how good a draft can be; the runner does not. In priority
+order:
+
+1. **Pinned drafting model.** Support a separate `[compiler] model` in
+   `contexer.toml`. Benchmark two or three capable models with
+   `bench --live --repeats 3` and recommend one.
+2. **Draft validation.** When drafting against a running app that already
+   implements the goal, run the draft once. Mark failing checks *suspect*,
+   showing their failure report, before approval. A suspect check is either a
+   real bug or a wrong check, and the person decides.
+3. **Coverage retry.** Retry when a reply is less than 50% executable or not
+   JSON, up to three attempts within the 180-second per-attempt cap.
+4. **Mutation-based adequacy.** Run StrykerJS on the lines a goal touches and
+   report which mutants no check kills, as candidate missing checks for the
+   person to approve.
+
 ### Later (product-plan Phases C and D)
 
 - The GitHub App, with check runs that are never `neutral`, an "approve checks"

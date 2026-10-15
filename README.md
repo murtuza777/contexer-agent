@@ -162,7 +162,7 @@ which must still pass.
 | Contracts | Seeded bugs caught | False-failing checks on correct code |
 | --- | --- | --- |
 | Hand-written (4 apps, 24 bugs) | **24/24** caught with proof | **0/176** (26 clean runs) |
-| Compiled by the LLM from one-line goals (`--live`, free models) | 50–83% per run | 0 in every run |
+| Compiled by the LLM from one-line goals (`--live`, free models) | 25–83% per run | 0 in every run |
 
 - **Hand-written row:** the contracts and the bugs were written by the same
   author, so this row measures the runner's reliability, not how good
