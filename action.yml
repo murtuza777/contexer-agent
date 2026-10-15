@@ -16,7 +16,7 @@ inputs:
     description: Verify an app that is already running at this URL instead of starting it.
     default: ""
   post-status:
-    description: Post a contexer/acceptance commit status (needs `statuses: write`).
+    description: "Post a contexer/acceptance commit status (needs the statuses: write permission)."
     default: "true"
   github-token:
     description: Token used to post the commit status.

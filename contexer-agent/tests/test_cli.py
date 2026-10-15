@@ -1,5 +1,7 @@
 """Tests for the Contexer CLI entrypoint."""
 
+import re
+
 from typer.testing import CliRunner
 
 from contexer import __version__
@@ -22,17 +24,23 @@ class TestVersion:
         assert f"contexer v{__version__}" in result.output
 
 
+def _plain(text: str) -> str:
+    """Help output without ANSI styling (Rich styles it when CI forces a terminal)."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
 class TestHelp:
     """``contexer --help``."""
 
     def test_help_flag(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "Contexer" in result.output
-        assert "owns done" in result.output
-        for command in ("verify", "replay", "contract", "bench"):
-            assert command in result.output
+        output = _plain(result.output)
+        assert "Contexer" in output
+        assert "owns done" in output
+        for command in ("run", "verify", "replay", "contract", "bench"):
+            assert command in output
 
     def test_help_contains_version_option(self) -> None:
         result = runner.invoke(app, ["--help"])
-        assert "--version" in result.output
+        assert "--version" in _plain(result.output)
