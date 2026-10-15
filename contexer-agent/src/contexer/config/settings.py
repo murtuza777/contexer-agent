@@ -41,7 +41,7 @@ class ContexerConfig:
     opencode_model_id: str = DEFAULT_OPENCODE_MODEL_ID
     opencode_timeout: float = 120.0
     # None means "not configured": static projects are served locally,
-    # others are expected on a dev server (see workflow.loop).
+    # others get their dev server started by contexer.appserver.
     app_url: Optional[str] = None
 
     # -- harness safety ---------------------------------------------------
