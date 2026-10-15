@@ -89,9 +89,18 @@ pip install -e contexer-agent/contexer-agent
 playwright install chromium
 ```
 
+See it catch a real bug in about ten seconds, with no API key and no agent:
+
+```bash
+contexer demo          # a todo app with a bug an AI left in, proven against its contract
+contexer demo --fix    # then the repair loop, driven by a clearly labelled simulated agent
+```
+
 In your app's directory:
 
 ```bash
+contexer init --ci     # detect how the app starts; add the GitHub merge-gate workflow
+
 # 1. Describe what must be true. Contexer starts your app (static, Vite or Next.js)
 #    and compiles the goal into checks grounded in the live UI. Needs OPENROUTER_API_KEY.
 contexer contract draft "Users can add a task and complete it, and the count updates"

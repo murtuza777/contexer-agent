@@ -31,6 +31,8 @@ serves static sites itself and starts the project's dev server.
 
 | Command | What it does |
 | --- | --- |
+| `contexer demo [--fix]` | Create a todo app with a seeded bug and prove its contract; no key or agent needed |
+| `contexer init [--ci]` | Detect how the app starts and prepare `.contexer/`; `--ci` writes the gate workflow |
 | `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
 | `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |
 | `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
@@ -39,6 +41,7 @@ serves static sites itself and starts the project's dev server.
 | `contexer contract approve ID` | Lock a contract at its current content (sha256). Any later edit needs re-approval |
 | `contexer run "GOAL"` / `--contract ID` | Approve the checklist, drive the coding agent, prove, repair, and keep the best attempt |
 | `contexer bench [--live]` | Seeded-bug benchmark: catch rate and false-failure rate |
+| `contexer runs` | Recent runs with outcome, check counts and report paths |
 | `contexer` | The interactive shell (`/loop`, `/verify`, `/project`, ...) |
 
 Useful options:
