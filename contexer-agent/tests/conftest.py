@@ -15,6 +15,7 @@ class FakeLLM(LLMProvider):
     def __init__(self, *replies: str | Exception) -> None:
         self.replies = list(replies)
         self.prompts: list[str] = []
+        self.kwargs: list[dict[str, Any]] = []
 
     @property
     def name(self) -> str:
@@ -32,6 +33,7 @@ class FakeLLM(LLMProvider):
         **kwargs: Any,
     ) -> LLMResponse:
         self.prompts.append(str(prompt))
+        self.kwargs.append(dict(kwargs))
         if not self.replies:
             raise AssertionError("FakeLLM received an unexpected call")
         reply = self.replies.pop(0)

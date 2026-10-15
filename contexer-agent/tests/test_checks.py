@@ -144,3 +144,21 @@ def test_check_result_failure_report_shows_expected_and_actual() -> None:
     assert "uncaught exception: TypeError: cart is undefined" in report
     assert "Buy" not in report  # passing expectations are not repair noise
     assert result.summary() == 'expected text of [data-testid="n"] contains "1", got "0"'
+
+
+def test_checked_attribute_is_read_as_live_state() -> None:
+    """The `checked` attribute never changes on click; models mean "is it ticked"."""
+    ticked = Expectation.model_validate(
+        {"kind": "attribute", "target": {"role": "checkbox", "name": "Done"}, "attribute": "checked", "equals": "checked"}
+    )
+    assert ticked.kind == "checked"
+    assert ticked.describe() == 'checkbox "Done" is checked'
+    unticked = Expectation.model_validate(
+        {"kind": "attribute", "target": {"role": "checkbox", "name": "Done"}, "attribute": "checked", "equals": "false"}
+    )
+    assert unticked.kind == "unchecked"
+    # Other attributes are untouched.
+    other = Expectation.model_validate(
+        {"kind": "attribute", "target": {"css": "button"}, "attribute": "aria-pressed", "equals": "true"}
+    )
+    assert other.kind == "attribute"

@@ -1,0 +1,306 @@
+{
+  "version": 1,
+  "id": "notes-basics",
+  "goal": "Users can save notes with a title and body, pin a note to the top, search notes by title or body, and delete notes; a title is required and the note count stays correct",
+  "summary": "Note taking: save, validate, pin, search, delete, count",
+  "source": "user",
+  "created_at": "2026-10-15T00:00:00Z",
+  "approval": {
+    "by": "contexer-bench",
+    "at": "2026-10-15T18:11:29Z",
+    "sha256": "ebdbf35c2443e39752022b81d9b916d2c18f264b6d603cbee76981b1f1359dd8"
+  },
+  "criteria": [
+    {
+      "id": "save-shows-note",
+      "description": "Saving a note shows its title and body and counts it",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Note title"
+            },
+            "value": "Groceries"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Write something…"
+            },
+            "value": "Milk and eggs"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Save note"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "role": "heading",
+              "name": "Groceries"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Milk and eggs"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "note-count"
+            },
+            "equals": "1 note"
+          }
+        ]
+      }
+    },
+    {
+      "id": "title-required",
+      "description": "A note without a title is rejected with a message",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Save note"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Title is required"
+            }
+          },
+          {
+            "kind": "count",
+            "target": {
+              "role": "article"
+            },
+            "max": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "pin-moves-to-top",
+      "description": "Pinning an older note moves it to the top",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Note title"
+            },
+            "value": "First"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Save note"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Note title"
+            },
+            "value": "Second"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Save note"
+            }
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Pin First"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "css": "#notes article:first-child h3"
+            },
+            "equals": "First"
+          }
+        ]
+      }
+    },
+    {
+      "id": "search-matches-body",
+      "description": "Search matches text in the body, ignoring case",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Note title"
+            },
+            "value": "Groceries"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Write something…"
+            },
+            "value": "Milk and eggs"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Save note"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Note title"
+            },
+            "value": "Work"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Write something…"
+            },
+            "value": "Finish report"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Save note"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Search notes"
+            },
+            "value": "EGGS"
+          }
+        ],
+        "expect": [
+          {
+            "kind": "count",
+            "target": {
+              "role": "article"
+            },
+            "min": 1,
+            "max": 1
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "role": "heading",
+              "name": "Groceries"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "delete-removes-right-note",
+      "description": "Deleting a note removes that note only and updates the count",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Note title"
+            },
+            "value": "First"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Save note"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Note title"
+            },
+            "value": "Second"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Save note"
+            }
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Delete First"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "hidden",
+            "target": {
+              "role": "heading",
+              "name": "First"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "role": "heading",
+              "name": "Second"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "note-count"
+            },
+            "equals": "1 note"
+          }
+        ]
+      }
+    },
+    {
+      "id": "loads-clean",
+      "description": "The app loads without uncaught exceptions or console errors",
+      "verification_method": "console_check",
+      "check": {
+        "steps": [],
+        "expect": [
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    }
+  ]
+}

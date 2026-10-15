@@ -94,6 +94,12 @@ class CompileStats(BaseModel):
     executable: int = 0
     failed_on_good: list[str] = Field(default_factory=list)
     seconds: float = 0.0
+    # The model returned nothing usable and the analyzer fell back to rules.
+    fallback: bool = False
+    # The compiled contract as written by the model, for diagnosing bad checks.
+    contract: Optional[dict] = None
+    # Why each dropped check failed on the good app.
+    failures: dict[str, str] = Field(default_factory=dict)
 
 
 class AppScore(BaseModel):
@@ -236,6 +242,8 @@ async def _compile_live(app: FixtureApp, llm: LLMProvider) -> tuple[Optional[Con
             await session.observe(running)
             drafted = await session.compile(goal, GoalAnalyzer(llm_provider=llm), f"{app.name}-compiled", context)
             stats.criteria = len(drafted.criteria)
+            stats.fallback = drafted.source == "rules"
+            stats.contract = drafted.to_file_dict()
             executable = [c for c in drafted.criteria if c.check is not None]
             stats.executable = len(executable)
             candidate = drafted.model_copy(update={"criteria": executable}).approved_by("bench-live")
@@ -247,6 +255,8 @@ async def _compile_live(app: FixtureApp, llm: LLMProvider) -> tuple[Optional[Con
                 passing.add(r.criterion_id)
             elif r.proven:
                 stats.failed_on_good.append(r.criterion_id)
+                detail = r.check_result.failure_report() if r.check_result else r.evidence
+                stats.failures[r.criterion_id] = detail[:1500]
     stats.seconds = time.monotonic() - started
     kept = [c for c in executable if c.id in passing]
     if not kept:

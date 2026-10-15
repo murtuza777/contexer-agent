@@ -41,6 +41,8 @@ def bench(
 
     def compiled(name: str, stats: CompileStats) -> None:
         dropped = f", dropped {stats.failed_on_good} (failed on the good app)" if stats.failed_on_good else ""
+        if stats.fallback:
+            dropped += " — the model returned nothing usable; rule-based fallback"
         console.print(
             f"  [cyan]compiled[/] {escape(name)}: {stats.executable}/{stats.criteria} executable"
             f"{escape(dropped)} [dim]{stats.seconds:.0f}s[/]"

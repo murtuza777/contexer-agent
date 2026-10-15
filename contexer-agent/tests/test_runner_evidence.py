@@ -96,3 +96,16 @@ async def test_artifacts_dir_gets_a_screenshot_per_check_and_traces_on_failure(a
     assert ok.trace is None  # passing checks keep no trace in on-failure mode
     assert bad.screenshot and Path(bad.screenshot).is_file()
     assert bad.trace and Path(bad.trace).is_file()
+
+
+async def test_checked_expectation_reads_the_live_state(runner: CheckRunner, app_url: str) -> None:
+    [ok, bad] = await runner.run(
+        app_url,
+        [
+            ("ticks", check({"steps": [{"action": "check", "target": {"role": "checkbox", "name": "Working box"}}],
+                             "expect": [{"kind": "checked", "target": {"role": "checkbox", "name": "Working box"}}]})),
+            ("stays", check({"expect": [{"kind": "checked", "target": {"role": "checkbox", "name": "Working box"}}]})),
+        ],
+    )
+    assert ok.passed
+    assert not bad.passed and bad.outcomes[0].actual == "not checked"

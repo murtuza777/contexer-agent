@@ -259,6 +259,14 @@ class CheckRunner:
 
     async def _probe(self, page: Page, exp: Expectation, before: Optional[str]) -> tuple[bool, str]:
         try:
+            if exp.kind in ("checked", "unchecked"):
+                assert exp.target is not None
+                loc = _locate(page, exp.target)
+                if await loc.count() == 0:
+                    return False, _MISSING
+                checked = await (await _first_visible(loc)).is_checked(timeout=500)
+                return checked == (exp.kind == "checked"), "checked" if checked else "not checked"
+
             if exp.kind in ("visible", "hidden", "count"):
                 assert exp.target is not None
                 loc = _locate(page, exp.target)

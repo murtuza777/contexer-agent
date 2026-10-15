@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notes</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Notes</h1>
+    <form id="note-form">
+      <input id="title" placeholder="Note title" autocomplete="off">
+      <textarea id="body" placeholder="Write something…" rows="3"></textarea>
+      <p id="form-error" role="alert" hidden></p>
+      <button type="submit">Save note</button>
+    </form>
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search notes" aria-label="Search notes">
+      <span data-testid="note-count">0 notes</span>
+    </div>
+    <section id="notes" aria-label="Notes"></section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

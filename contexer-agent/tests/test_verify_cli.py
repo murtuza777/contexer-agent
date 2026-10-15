@@ -75,3 +75,21 @@ def test_modified_contract_needs_action(todo_app: Path) -> None:
 def test_verify_needs_a_goal_or_contract(todo_app: Path) -> None:
     result = _invoke("verify", "--dir", str(todo_app))
     assert result.exit_code != 0
+
+
+def test_weak_rule_based_draft_is_flagged_before_approval() -> None:
+    import io
+
+    from rich.console import Console
+
+    from contexer.cli.gate_cli import warn_if_weak_draft
+    from contexer.contract import Contract
+
+    out = io.StringIO()
+    console = Console(file=out, width=120)
+    warn_if_weak_draft(console, Contract(id="x", goal="g", source="rules"))
+    assert "Weak draft" in out.getvalue()
+
+    out.truncate(0)
+    warn_if_weak_draft(console, Contract(id="y", goal="g", source="llm"))
+    assert out.getvalue() == ""

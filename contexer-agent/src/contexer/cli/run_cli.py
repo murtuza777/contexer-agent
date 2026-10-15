@@ -15,7 +15,7 @@ from rich.table import Table
 
 from contexer.agents import create_agent
 from contexer.appserver import AppStartError, open_app
-from contexer.cli.gate_cli import _llm_or_none
+from contexer.cli.gate_cli import _llm_or_none, warn_if_weak_draft
 from contexer.config.project import ProjectConfigError, load_project_config
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.controller import RunController, RunOutcome, RunSettings
@@ -126,6 +126,7 @@ def _draft(console: Console, project: Path, store: ContractStore, goal: str, url
 def _approve(console: Console, store: ContractStore, contract: Contract, yes: bool) -> Contract:
     console.print()
     console.print(Panel("\n".join(escape(line) for line in contract.describe_lines()), title=f"Definition of done · {contract.id}"))
+    warn_if_weak_draft(console, contract)
     if not yes and not typer.confirm("Approve these checks as the definition of done?", default=False):
         store.save(contract)
         console.print(f"[yellow]Not approved.[/] Edit {escape(str(store.path_for(contract.id)))} and run again.")
