@@ -43,6 +43,7 @@ def register(app: typer.Typer) -> None:
     from contexer.cli.run_cli import run
     from contexer.cli.runs_cli import runs
     from contexer.cli.demo_cli import demo
+    from contexer.cli.init_cli import init
 
     app.command("run")(run)
     app.command("verify")(verify)
@@ -51,6 +52,7 @@ def register(app: typer.Typer) -> None:
     app.command("bench")(bench)
     app.command("runs")(runs)
     app.command("demo")(demo)
+    app.command("init")(init)
 
 
 # -- verify / replay -----------------------------------------------------------
@@ -169,6 +171,7 @@ async def run_verification(
                     drafted = await session.compile(goal, analyzer, store.unique_id(goal), app.repo_context)
                 path = store.save(drafted)
                 console.print(f"[dim]Draft contract:[/] {escape(str(path))}")
+                warn_if_weak_draft(console, drafted)
                 contracts = [drafted, *contracts]
             with console.status(f"[dim]Running {sum(len(c.criteria) for c in contracts)} checks in Chromium...[/dim]"):
                 result = await session.verify(
@@ -196,6 +199,23 @@ def _resolve_contracts(store: ContractStore, refs: list[str], all_contracts: boo
     except ContractError as exc:
         raise typer.BadParameter(str(exc)) from exc
     return contracts
+
+
+def warn_if_weak_draft(console: Console, contract: Contract) -> None:
+    """Say loudly when a draft did not come from the model, before anyone approves it."""
+    if contract.source != "rules":
+        return
+    executable = sum(1 for c in contract.criteria if c.check)
+    console.print(
+        Panel(
+            "The model did not return usable checks, so this draft was built from simple rules and only "
+            f"has {executable} executable check(s) — far too few to define done.\n"
+            "Retry (free models are unreliable), set a stronger OPENROUTER_MODEL, or edit the contract file "
+            "and add checks before approving it.",
+            title="Weak draft",
+            border_style="yellow",
+        )
+    )
 
 
 def _llm_or_none() -> Optional[LLMProvider]:
@@ -352,6 +372,7 @@ def contract_draft(
     for line in contract.describe_lines():
         console.print(escape(line))
     console.print()
+    warn_if_weak_draft(console, contract)
     console.print(f"[dim]Saved draft:[/] {escape(str(path))}")
     console.print(f"[dim]Review it, then:[/] contexer contract approve {escape(contract.id)}")
 
