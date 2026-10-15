@@ -22,14 +22,12 @@ from contexer.project.models import Project
 from contexer.repair.repair import RepairEngine
 from contexer.verification.models import GoalAnalysis, VerificationResult, format_contract
 from contexer.verification.verifier import Verifier
-from contexer.workflow.app_server import StaticAppServer
+from contexer.appserver import AppStartError, open_app
 from contexer.workflow.criteria import GoalAnalyzer
 from contexer.workflow.inspector import RepositoryContext, RepositoryInspector
 from contexer.workflow.planner import EngineeringPlan, EngineeringPlanner
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_DEV_SERVER_URL = "http://localhost:3000"
 
 _METHOD_TAGS = {
     "assertion": "[green]proven[/]",
@@ -103,12 +101,11 @@ class AutonomousLoop:
         start_time = time.monotonic()
         target_proj = self._resolve_project(project, project_dir)
         repo_context = self.inspector.inspect(target_proj.path)
-        resolved_url, server = self._resolve_app_url(app_url, repo_context, target_proj)
         try:
-            return await self._run(goal, resolved_url, criteria, target_proj, repo_context, start_time)
-        finally:
-            if server:
-                server.stop()
+            with self._open_app(target_proj, app_url, repo_context) as app:
+                return await self._run(goal, app.url, criteria, target_proj, repo_context, start_time)
+        except AppStartError as exc:
+            return self._app_start_failure(goal, app_url, target_proj, start_time, exc)
 
     async def verify_only(
         self,
@@ -122,40 +119,50 @@ class AutonomousLoop:
         start_time = time.monotonic()
         target_proj = self._resolve_project(project, project_dir)
         repo_context = self.inspector.inspect(target_proj.path)
-        resolved_url, server = self._resolve_app_url(app_url, repo_context, target_proj)
         try:
-            self._print_header("Contexer Verification", goal, target_proj, resolved_url)
-            self._print_inspection(repo_context)
+            with self._open_app(target_proj, app_url, repo_context) as app:
+                return await self._verify_only(goal, app.url, criteria, target_proj, repo_context, start_time)
+        except AppStartError as exc:
+            return self._app_start_failure(goal, app_url, target_proj, start_time, exc)
 
-            def result(**extra: Any) -> AutonomousLoopResult:
-                return AutonomousLoopResult(
-                    goal=goal,
-                    app_url=resolved_url,
-                    attempts=1,
-                    project_name=target_proj.name,
-                    project_dir=str(target_proj.path),
-                    duration_seconds=time.monotonic() - start_time,
-                    **extra,
-                )
+    async def _verify_only(
+        self,
+        goal: str,
+        resolved_url: str,
+        criteria: Optional[GoalAnalysis],
+        target_proj: Project,
+        repo_context: RepositoryContext,
+        start_time: float,
+    ) -> AutonomousLoopResult:
+        self._print_header("Contexer Verification", goal, target_proj, resolved_url)
+        self._print_inspection(repo_context)
 
-            # Observe first: criteria for an existing UI must use the names it actually has.
-            observation = await self._observe(resolved_url, "")
-            if not observation.success:
-                self._print_outcome(False, None, target_proj, resolved_url, start_time, attempts=None)
-                return result(passed=False, observation=observation, error=observation.error)
-
-            analysis = await self._derive_criteria(goal, repo_context, criteria, observation.ui_snapshot)
-            verification = await self._verify(goal, observation, analysis, repo_context)
-            self._print_outcome(verification.passed, verification, target_proj, resolved_url, start_time, attempts=None)
-            return result(
-                passed=verification.passed,
-                analysis=analysis,
-                verification=verification,
-                observation=observation,
+        def result(**extra: Any) -> AutonomousLoopResult:
+            return AutonomousLoopResult(
+                goal=goal,
+                app_url=resolved_url,
+                attempts=1,
+                project_name=target_proj.name,
+                project_dir=str(target_proj.path),
+                duration_seconds=time.monotonic() - start_time,
+                **extra,
             )
-        finally:
-            if server:
-                server.stop()
+
+        # Observe first: criteria for an existing UI must use the names it actually has.
+        observation = await self._observe(resolved_url, "")
+        if not observation.success:
+            self._print_outcome(False, None, target_proj, resolved_url, start_time, attempts=None)
+            return result(passed=False, observation=observation, error=observation.error)
+
+        analysis = await self._derive_criteria(goal, repo_context, criteria, observation.ui_snapshot)
+        verification = await self._verify(goal, observation, analysis, repo_context)
+        self._print_outcome(verification.passed, verification, target_proj, resolved_url, start_time, attempts=None)
+        return result(
+            passed=verification.passed,
+            analysis=analysis,
+            verification=verification,
+            observation=observation,
+        )
 
     async def _run(
         self,
@@ -320,23 +327,35 @@ class AutonomousLoop:
             return self.project_manager.set_active_project(project_dir)
         return self.project_manager.active_project
 
-    def _resolve_app_url(
+    def _open_app(self, project: Project, app_url: Optional[str], repo_context: RepositoryContext):
+        """An explicit URL wins; static sites are served; otherwise Contexer starts the dev server."""
+
+        def status(message: str) -> None:
+            self.console.print(f"  [dim]› {escape(message)}[/dim]")
+
+        return open_app(project.path, app_url, repo_context=repo_context, on_status=status)
+
+    def _app_start_failure(
         self,
+        goal: str,
         app_url: Optional[str],
-        repo_context: RepositoryContext,
         project: Project,
-    ) -> tuple[str, Optional[StaticAppServer]]:
-        """An explicit URL always wins; static projects are served locally; otherwise assume a dev server."""
-        if app_url:
-            return app_url, None
-        if repo_context.is_static_site:
-            server = StaticAppServer(project.path)
-            return server.start(), server
-        self.console.print(
-            f"[dim]No --url given and '{escape(project.name)}' needs a dev server; "
-            f"observing {DEFAULT_DEV_SERVER_URL}. Start the app there or pass --url.[/dim]"
+        start_time: float,
+        exc: AppStartError,
+    ) -> AutonomousLoopResult:
+        self.console.print(f"  [red]✗[/red] Could not start the app: {escape(str(exc))}")
+        for line in exc.log_tail.splitlines()[-15:]:
+            self.console.print(f"    [dim]{escape(line)}[/dim]")
+        return AutonomousLoopResult(
+            goal=goal,
+            app_url=app_url or "",
+            passed=False,
+            attempts=0,
+            project_name=project.name,
+            project_dir=str(project.path),
+            error=str(exc),
+            duration_seconds=time.monotonic() - start_time,
         )
-        return DEFAULT_DEV_SERVER_URL, None
 
     # -- phases -----------------------------------------------------------------
 

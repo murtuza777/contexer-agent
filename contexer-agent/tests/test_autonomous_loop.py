@@ -137,7 +137,6 @@ from rich.console import Console  # noqa: E402
 from contexer.project.manager import ProjectManager  # noqa: E402
 from contexer.project.models import Project, ProjectType  # noqa: E402
 from contexer.workflow.inspector import RepositoryContext  # noqa: E402
-from contexer.workflow.loop import DEFAULT_DEV_SERVER_URL  # noqa: E402
 
 
 def _verify_loop(tmp_path: Path) -> tuple[AutonomousLoop, io.StringIO]:
@@ -202,10 +201,25 @@ async def test_run_requires_a_coding_agent(tmp_path: Path) -> None:
         await loop.run("anything")
 
 
-def test_app_url_resolution(tmp_path: Path) -> None:
+def test_explicit_url_wins(tmp_path: Path) -> None:
     loop, _ = _verify_loop(tmp_path)
     project = Project(name="web", path=tmp_path, project_type=ProjectType.EXISTING)
     node_ctx = RepositoryContext(project_name="web", project_path=str(tmp_path), is_static_site=False)
 
-    assert loop._resolve_app_url("http://localhost:5173", node_ctx, project) == ("http://localhost:5173", None)
-    assert loop._resolve_app_url(None, node_ctx, project) == (DEFAULT_DEV_SERVER_URL, None)
+    with loop._open_app(project, "http://localhost:5173", node_ctx) as app:
+        assert (app.url, app.kind) == ("http://localhost:5173", "external")
+
+
+@pytest.mark.anyio
+async def test_unstartable_project_fails_cleanly_instead_of_guessing_a_port(tmp_path: Path) -> None:
+    loop, out = _verify_loop(tmp_path)
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "pyproject.toml").write_text("[project]\nname = 'web'\n", encoding="utf-8")
+    project = Project(name="web", path=web, project_type=ProjectType.EXISTING)
+
+    result = await loop.verify_only("anything", project=project)
+
+    assert result.passed is False
+    assert result.error and "contexer.toml" in result.error
+    assert "Could not start the app" in out.getvalue()

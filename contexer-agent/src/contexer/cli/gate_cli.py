@@ -129,8 +129,11 @@ async def run_verification(
     session = VerificationSession(project, run, verifier=Verifier(llm_provider=None, runner=runner))
     _print_start(console, project, goal, contracts)
 
+    def status(message: str) -> None:
+        console.print(f"[dim]›[/] {escape(message)}")
+
     try:
-        with open_app(project, url) as app:
+        with open_app(project, url, log_path=run.server_log, on_status=status) as app:
             console.print(f"[dim]App:[/] {escape(app.url)} [dim]({app.kind})[/]")
             with console.status("[dim]Loading the app...[/dim]"):
                 await session.observe(app)
