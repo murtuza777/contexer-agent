@@ -304,6 +304,9 @@ class CheckResult(BaseModel):
     page_errors: list[str] = Field(default_factory=list)
     console_errors: list[str] = Field(default_factory=list)
     duration_seconds: float = 0.0
+    # Evidence files, when the runner was given an artifacts directory.
+    screenshot: Optional[str] = None
+    trace: Optional[str] = None
 
     def summary(self) -> str:
         """One-line evidence statement."""

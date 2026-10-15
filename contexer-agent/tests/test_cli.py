@@ -29,7 +29,9 @@ class TestHelp:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "Contexer" in result.output
-        assert "Autonomous Engineering Agent" in result.output
+        assert "owns done" in result.output
+        for command in ("verify", "replay", "contract", "bench"):
+            assert command in result.output
 
     def test_help_contains_version_option(self) -> None:
         result = runner.invoke(app, ["--help"])

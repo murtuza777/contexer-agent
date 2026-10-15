@@ -40,7 +40,7 @@ def _configure_terminal_encoding() -> None:
 
 app = typer.Typer(
     name="contexer",
-    help="Contexer — Autonomous Engineering Agent",
+    help="Contexer: the AI engineer that owns done. Run with no command for the interactive shell.",
     add_completion=False,
     no_args_is_help=False,
     invoke_without_command=True,
@@ -57,6 +57,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False,
         "--version",
@@ -66,16 +67,27 @@ def main(
         is_eager=True,
     ),
 ) -> None:
-    """Contexer — Autonomous Engineering Agent.
+    """Contexer — the AI engineer that owns "done".
 
-    Launch an interactive Contexer shell for autonomous engineering tasks.
-    Contexer orchestrates coding agents through an intent → plan → execute
-    → verify workflow.
+    With no command, launch the interactive shell. Commands such as
+    ``verify``, ``replay`` and ``contract`` run once and exit with a gate
+    code: 0 pass, 1 fail, 2 needs action, 3 error.
     """
     _configure_terminal_encoding()
+    if ctx.invoked_subcommand is not None:
+        return
     from contexer.cli.repl import ContexerApp
 
     contexer_app = ContexerApp()
     contexer_app.run()
+
+
+def _register_commands() -> None:
+    from contexer.cli.gate_cli import register
+
+    register(app)
+
+
+_register_commands()
 
 

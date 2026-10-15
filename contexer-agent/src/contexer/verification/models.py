@@ -13,6 +13,12 @@ from contexer.verification.checks import Check, CheckResult
 #   heuristic — keyword evidence only (no LLM available)
 VerdictMethod = Literal["assertion", "judgment", "heuristic"]
 
+# What the evidence says about a criterion:
+#   verified   — every expectation held
+#   refuted    — an expectation was observed to fail
+#   unverified — nothing could decide (a step could not act on its target)
+Verdict = Literal["verified", "refuted", "unverified"]
+
 
 class AcceptanceCriterion(BaseModel):
     """An individual verifiable condition derived dynamically from a user goal."""
@@ -60,6 +66,21 @@ class CriterionResult(BaseModel):
     evidence: str = ""
     method: VerdictMethod = "judgment"
     check_result: Optional[CheckResult] = None
+
+    @property
+    def verdict(self) -> Verdict:
+        if self.passed:
+            return "verified"
+        # A check that never reached its expectations (step could not act,
+        # navigation or the browser failed) observed nothing to refute.
+        if self.check_result is not None and (self.check_result.blocked or self.check_result.failed_step):
+            return "unverified"
+        return "refuted"
+
+    @property
+    def proven(self) -> bool:
+        """Decided by executing a check in a browser, not by opinion."""
+        return self.method == "assertion"
 
 
 class VerificationResult(BaseModel):

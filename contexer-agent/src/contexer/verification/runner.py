@@ -4,21 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
-from typing import TYPE_CHECKING, Any, Optional, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 from urllib.parse import urljoin
 
 from contexer.observer.playwright import capture_ui_snapshot, record_console_error
 from contexer.verification.checks import Check, CheckResult, Expectation, ExpectationOutcome, Locator, Step
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, Locator as PWLocator, Page
+    from playwright.async_api import Browser, BrowserContext, Locator as PWLocator, Page
 
 logger = logging.getLogger(__name__)
 
 _MISSING = "<no matching element>"
 _COMPARATOR_KINDS = {"text", "value", "attribute", "css", "url", "title"}
 _VISIBILITY_SCAN_LIMIT = 20
+
+TraceMode = Literal["off", "on", "on-failure"]
 
 
 class CheckRunner:
@@ -27,6 +31,9 @@ class CheckRunner:
     Isolation matters: a check that mutates state (cart, theme, auth) must not
     leak into the next one. Expectations auto-retry until ``expect_timeout`` so
     asynchronous UI updates are not reported as failures.
+
+    With an ``artifacts_dir``, each check leaves a screenshot of the page as it
+    was judged, and (per ``trace``) a Playwright trace for the trace viewer.
     """
 
     def __init__(
@@ -36,24 +43,33 @@ class CheckRunner:
         action_timeout: float = 3.0,
         expect_timeout: float = 2.0,
         settle_ms: int = 250,
+        trace: TraceMode = "off",
     ) -> None:
         self.headless = headless
         self.navigation_timeout = navigation_timeout
         self.action_timeout = action_timeout
         self.expect_timeout = expect_timeout
         self.settle_ms = settle_ms
+        self.trace = trace
 
-    async def run(self, url: str, checks: list[tuple[str, Check]]) -> list[CheckResult]:
+    async def run(
+        self,
+        url: str,
+        checks: list[tuple[str, Check]],
+        artifacts_dir: Optional[Path] = None,
+    ) -> list[CheckResult]:
         """Execute ``(criterion_id, check)`` pairs in order and return one result each."""
         if not checks:
             return []
         from playwright.async_api import async_playwright
 
+        if artifacts_dir is not None:
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=self.headless)
                 try:
-                    return [await self._run_one(browser, url, cid, check) for cid, check in checks]
+                    return [await self._run_one(browser, url, cid, check, artifacts_dir) for cid, check in checks]
                 finally:
                     await browser.close()
         except Exception as exc:
@@ -63,7 +79,59 @@ class CheckRunner:
                 for cid, _ in checks
             ]
 
-    async def _run_one(self, browser: Browser, url: str, criterion_id: str, check: Check) -> CheckResult:
+    async def _run_one(
+        self,
+        browser: Browser,
+        url: str,
+        criterion_id: str,
+        check: Check,
+        artifacts_dir: Optional[Path],
+    ) -> CheckResult:
+        context = await browser.new_context(viewport={"width": 1280, "height": 800}, ignore_https_errors=True)
+        tracing = self.trace != "off" and artifacts_dir is not None
+        try:
+            if tracing:
+                await context.tracing.start(screenshots=True, snapshots=True)
+            result, page = await self._exercise(context, url, criterion_id, check)
+            if artifacts_dir is not None:
+                await self._capture_evidence(context, page, result, artifacts_dir, tracing)
+            return result
+        finally:
+            await context.close()
+
+    async def _capture_evidence(
+        self,
+        context: BrowserContext,
+        page: Optional[Page],
+        result: CheckResult,
+        artifacts_dir: Path,
+        tracing: bool,
+    ) -> None:
+        stem = _file_stem(result.criterion_id)
+        if page is not None:
+            shot = artifacts_dir / f"{stem}.jpg"
+            try:
+                await page.screenshot(path=str(shot), type="jpeg", quality=70, timeout=5000)
+                result.screenshot = str(shot)
+            except Exception as exc:
+                logger.debug("Screenshot for %s skipped: %s", result.criterion_id, exc)
+        if tracing:
+            keep = self.trace == "on" or not result.passed
+            trace_path = artifacts_dir / f"{stem}.trace.zip"
+            try:
+                await context.tracing.stop(path=str(trace_path) if keep else None)
+                if keep:
+                    result.trace = str(trace_path)
+            except Exception as exc:
+                logger.debug("Trace for %s skipped: %s", result.criterion_id, exc)
+
+    async def _exercise(
+        self,
+        context: BrowserContext,
+        url: str,
+        criterion_id: str,
+        check: Check,
+    ) -> tuple[CheckResult, Optional[Page]]:
         started = time.monotonic()
         page_errors: list[str] = []
         console_errors: list[str] = []
@@ -73,20 +141,21 @@ class CheckRunner:
             outcomes: Optional[list[ExpectationOutcome]] = None,
             failed_step: Optional[str] = None,
             ui_at_failure: Optional[str] = None,
+            blocked: Optional[bool] = None,
         ) -> CheckResult:
             return CheckResult(
                 criterion_id=criterion_id,
                 passed=passed,
                 outcomes=outcomes or [],
                 failed_step=failed_step,
-                blocked=ui_at_failure is not None,
+                blocked=ui_at_failure is not None if blocked is None else blocked,
                 ui_at_failure=ui_at_failure or "",
                 page_errors=list(page_errors),
                 console_errors=list(console_errors),
                 duration_seconds=time.monotonic() - started,
             )
 
-        context = await browser.new_context(viewport={"width": 1280, "height": 800}, ignore_https_errors=True)
+        page: Optional[Page] = None
         try:
             page = await context.new_page()
             page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -95,7 +164,7 @@ class CheckRunner:
             try:
                 await page.goto(url, wait_until="load", timeout=self.navigation_timeout * 1000)
             except Exception as exc:
-                return finish(False, failed_step=f"navigation to {url} ({_short(exc)})")
+                return finish(False, failed_step=f"navigation to {url} ({_short(exc)})"), page
 
             baselines: dict[int, Optional[str]] = {}
             for i, exp in enumerate(check.expect):
@@ -106,10 +175,23 @@ class CheckRunner:
                 try:
                     await self._perform(page, step, url)
                 except Exception as exc:
-                    # A step that cannot act on its target is inconclusive; record
-                    # what the page offered so repair (or a human) can tell why.
-                    ui = await capture_ui_snapshot(page) if step.target is not None else None
-                    return finish(False, failed_step=f"step {n} '{step.describe()}' ({_short(exc)})", ui_at_failure=ui)
+                    failed = f"step {n} '{step.describe()}' ({_short(exc)})"
+                    if step.target is None:
+                        return finish(False, failed_step=failed), page
+                    ui = await capture_ui_snapshot(page)
+                    target = _locate(page, step.target)
+                    if not await _any_visible(target, await target.count()):
+                        # The target is not on the page: either the feature is
+                        # missing or the check named it differently. Inconclusive.
+                        return finish(False, failed_step=failed, ui_at_failure=ui), page
+                    # The target was there and the action did not take effect
+                    # (state did not change, element disabled or covered): that
+                    # is observed behaviour, not a lookup problem.
+                    actual = await _describe_failed_action(target, step, exc)
+                    outcome = ExpectationOutcome(
+                        description=f"step {n} '{step.describe()}' takes effect", passed=False, actual=actual
+                    )
+                    return finish(False, [outcome], ui_at_failure=ui, blocked=False), page
 
             await page.wait_for_timeout(self.settle_ms)
 
@@ -129,12 +211,10 @@ class CheckRunner:
                     )
 
             ordered = [outcomes[i] for i in range(len(check.expect))]
-            return finish(all(o.passed for o in ordered), ordered)
+            return finish(all(o.passed for o in ordered), ordered), page
         except Exception as exc:
             logger.debug("Check %s aborted: %s", criterion_id, exc)
-            return finish(False, failed_step=f"check execution ({_short(exc)})")
-        finally:
-            await context.close()
+            return finish(False, failed_step=f"check execution ({_short(exc)})"), page
 
     # -- steps ----------------------------------------------------------------
 
@@ -265,6 +345,24 @@ async def _any_visible(loc: PWLocator, count: int) -> bool:
     return False
 
 
+async def _describe_failed_action(target: PWLocator, step: Step, exc: BaseException) -> str:
+    """What the page did instead of honouring a step whose target was present."""
+    element = await _first_visible(target)
+    if step.action in ("check", "uncheck"):
+        try:
+            checked = await element.is_checked(timeout=500)
+            state = "checked" if checked else "unchecked"
+            return f"clicked it, but it stayed {state}"
+        except Exception:
+            pass
+    try:
+        if not await element.is_enabled(timeout=500):
+            return "the element is disabled"
+    except Exception:
+        pass
+    return f"the action did not complete: {_short(exc)}"
+
+
 def _show(value: Optional[str], before: Optional[str], exp: Expectation) -> str:
     now = _quote(value)
     if exp.changed is not None:
@@ -277,6 +375,10 @@ def _quote(value: Optional[str]) -> str:
         return "<absent>"
     flat = " ".join(value.split())
     return f'"{flat[:117]}..."' if len(flat) > 120 else f'"{flat}"'
+
+
+def _file_stem(criterion_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", criterion_id).strip("._") or "check"
 
 
 def _short(exc: BaseException) -> str:
