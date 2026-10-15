@@ -163,6 +163,9 @@ class RunController:
         prompt = implement_prompt(contract, repo, others)
         fresh = True
         last_signatures: set[str] = set()
+        # What the work tree looked like when the agent started this attempt
+        # (after any revert), so "changed files" means the agent's changes.
+        current = baseline
 
         with ExitStack() as stack:
             app: Optional[RunningApp] = None
@@ -193,7 +196,8 @@ class RunController:
 
                 tampered = guard.restore_if_changed()
                 snapshots[n] = shadow.snapshot(f"{run.run_id}/{n}", f"attempt {n}")
-                changed = shadow.changed_paths(snapshots[n - 1], snapshots[n])
+                changed = shadow.changed_paths(current, snapshots[n])
+                current = snapshots[n]
                 attempt = Attempt(
                     n=n,
                     kind=kind,
@@ -275,7 +279,8 @@ class RunController:
                     break
 
                 reverted_from: Optional[int] = None
-                if attempt.score > best_score:
+                usable = result.decision.outcome != "error"  # an app that does not start is never kept
+                if usable and attempt.score > best_score:
                     best, best_score = n, attempt.score
                 elif best is not None and attempt.score < best_score:
                     shadow.restore(snapshots[best])
@@ -283,6 +288,11 @@ class RunController:
                     reverted_from = best
                     attempt.note = f"Scored lower than attempt {best}; reverted to it."
                     self.on_event("revert", attempt.note)
+                    if app is not None and app.server is not None and _DEPENDENCY_FILES & {
+                        Path(p).name for p in shadow.changed_paths(snapshots[n], snapshots[best])
+                    }:
+                        app.url = app.server.restart()
+                    current = snapshots[best]
 
                 if n > self.settings.max_repair_rounds:
                     only_unverified = result.decision.refuted == 0 and result.decision.outcome == "needs_action"
@@ -309,7 +319,9 @@ class RunController:
                 )
                 last_signatures = signatures
 
-        # Leave the project in the best state that was reached.
+        # Leave the project in the best state that was reached — and never in a
+        # state worse than the one Contexer found: with no usable attempt, the
+        # baseline comes back (each attempt stays in refs/contexer/<run>/<n>).
         final_n = outcome.attempts[-1].n if outcome.attempts else 0
         if outcome.terminal == "tampered":
             target = best if best is not None else 0
@@ -317,6 +329,9 @@ class RunController:
         elif outcome.terminal != "succeeded" and best is not None and best != final_n:
             shadow.restore(snapshots[best])
             self.on_event("revert", f"Restored attempt {best}, the best one reached.")
+        elif outcome.terminal != "succeeded" and best is None and final_n > 0:
+            shadow.restore(baseline)
+            self.on_event("revert", "No attempt produced a working app; restored the project as it was.")
         outcome.best_attempt = best
         outcome.final = results.get(best) if best is not None else (results[final_n] if final_n in results else None)
         end_snapshot = snapshots.get(best, snapshots[0]) if best is not None else shadow.snapshot()

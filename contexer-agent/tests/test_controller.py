@@ -61,6 +61,36 @@ async def test_worse_attempt_is_reverted_and_the_best_state_is_kept(project: Pat
     # The project is left at attempt 1 (the best one), not at the broken last attempt.
     assert (project / "app.js").read_text(encoding="utf-8") == COUNT_BUG_JS
     assert outcome.exit_code == 1
+    # After the revert, attempt 3's changes are measured from attempt 1's files.
+    assert outcome.attempts[2].changed_files == ["app.js"]
+
+
+@pytest.mark.skipif(shutil.which("node") is None or shutil.which("npm") is None, reason="needs node and npm")
+async def test_when_no_attempt_starts_the_app_the_project_is_restored_as_found(tmp_path: Path) -> None:
+    import json as _json
+
+    project = tmp_path / "web"
+    project.mkdir()
+    (project / "package.json").write_text(
+        _json.dumps({"scripts": {"dev": "node -e \"console.error('Module not found'); process.exit(1)\""}}),
+        encoding="utf-8",
+    )
+    (project / "node_modules").mkdir()
+    (project / "app.js").write_text("// original\n", encoding="utf-8")
+    store = ContractStore(project)
+    contract = _contract(_copy_contract(store))
+    agent = ScriptedAgent([{"app.js": "// attempt 1\n"}, {"app.js": "// attempt 2\n"}])
+    outcome = await _controller(project, agent, rounds=1).run(contract)
+
+    assert outcome.best_attempt is None
+    assert outcome.terminal == "needs_human"
+    assert (project / "app.js").read_text(encoding="utf-8") == "// original\n"
+    assert "Module not found" in agent.prompts[1]  # the repair saw the dev server's error
+
+
+def _copy_contract(store: ContractStore) -> Path:
+    shutil.copytree(FIXTURE / "app" / ".contexer" / "contracts", store.root)
+    return store.project_dir
 
 
 async def test_same_failure_twice_switches_to_a_fresh_session(project: Path) -> None:
