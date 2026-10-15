@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "id": "shop-cart",
+  "goal": "Shoppers can browse, filter and search products, and the cart count and total stay correct",
+  "summary": "Catalog filtering, search and cart arithmetic",
+  "source": "user",
+  "created_at": "2026-10-15T00:00:00Z",
+  "approval": {
+    "by": "contexer-bench",
+    "at": "2026-10-15T17:54:56Z",
+    "sha256": "a92c89511b374fa02f46c5024076822f21674b05ff376347c923e35c0beab430"
+  },
+  "criteria": [
+    {
+      "id": "shows-all-products",
+      "description": "All six products are listed once they load",
+      "verification_method": "dom_inspection",
+      "check": {
+        "steps": [],
+        "expect": [
+          {
+            "kind": "count",
+            "target": {
+              "role": "article"
+            },
+            "min": 6,
+            "max": 6
+          }
+        ]
+      }
+    },
+    {
+      "id": "category-filter",
+      "description": "Choosing Books shows only books",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Books"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "count",
+            "target": {
+              "role": "article"
+            },
+            "min": 3,
+            "max": 3
+          },
+          {
+            "kind": "hidden",
+            "target": {
+              "text": "Catan"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "all-restores",
+      "description": "Choosing All after a category shows every product again",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Books"
+            }
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "All"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "count",
+            "target": {
+              "role": "article"
+            },
+            "min": 6,
+            "max": 6
+          }
+        ]
+      }
+    },
+    {
+      "id": "add-to-cart",
+      "description": "Adding a product updates the cart count and total",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add Dune to cart"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "cart-count"
+            },
+            "equals": "1"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "cart-total"
+            },
+            "equals": "$9.99"
+          }
+        ]
+      }
+    },
+    {
+      "id": "quantity-total",
+      "description": "Adding the same product twice doubles its line in the total",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add Dune to cart"
+            }
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add Dune to cart"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "cart-count"
+            },
+            "equals": "2"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "cart-total"
+            },
+            "equals": "$19.98"
+          }
+        ]
+      }
+    },
+    {
+      "id": "remove-from-cart",
+      "description": "Removing a product takes it out of the count and the total",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add Dune to cart"
+            }
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add Catan to cart"
+            }
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Remove Dune"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "cart-count"
+            },
+            "equals": "1"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "cart-total"
+            },
+            "equals": "$42.00"
+          }
+        ]
+      }
+    },
+    {
+      "id": "search-any-case",
+      "description": "Searching is case-insensitive and narrows the list",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Search products"
+            },
+            "value": "dune"
+          }
+        ],
+        "expect": [
+          {
+            "kind": "count",
+            "target": {
+              "role": "article"
+            },
+            "min": 1,
+            "max": 1
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "role": "heading",
+              "name": "Dune"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "loads-clean",
+      "description": "The shop loads without uncaught exceptions or console errors",
+      "verification_method": "console_check",
+      "check": {
+        "steps": [],
+        "expect": [
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    }
+  ]
+}
