@@ -62,6 +62,7 @@ def verify(
     trace: str = typer.Option("off", "--trace", help="Playwright traces: off, on-failure or on."),
     json_output: bool = typer.Option(False, "--json", help="Print result.json to stdout."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
+    github: bool = typer.Option(False, "--github", help="Post a contexer/acceptance commit status (needs GITHUB_TOKEN)."),
 ) -> None:
     """Prove the running app against contracts; exit 0 pass, 1 fail, 2 needs action, 3 error."""
     if not goal and not contract and not all_contracts:
@@ -83,6 +84,7 @@ def verify(
             console=console,
         )
     )
+    _report_to_github(result, console, project_dir, post=github)
     _finish(result, console, json_output, open_report)
 
 
@@ -93,6 +95,7 @@ def replay(
     trace: str = typer.Option("on-failure", "--trace", help="Playwright traces: off, on-failure or on."),
     json_output: bool = typer.Option(False, "--json", help="Print result.json to stdout."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
+    github: bool = typer.Option(False, "--github", help="Post a contexer/acceptance commit status (needs GITHUB_TOKEN)."),
 ) -> None:
     """Replay every approved contract with no LLM calls (the CI gate)."""
     verify(
@@ -105,7 +108,24 @@ def replay(
         trace=trace,
         json_output=json_output,
         open_report=open_report,
+        github=github,
     )
+
+
+def _report_to_github(result: RunResult, console: Console, project_dir: Path, *, post: bool) -> None:
+    from contexer.github import GitHubReportError, detect_target, post_status, write_step_summary
+
+    summary = write_step_summary(result)
+    if summary is not None:
+        console.print(f"[dim]Job summary written to {escape(str(summary))}[/]")
+    if not post:
+        return
+    try:
+        target = detect_target(project_dir)
+        post_status(target, result.decision)
+        console.print(f"[green]✓[/] Posted [bold]contexer/acceptance[/] on {escape(target.repo)}@{target.sha[:8]}")
+    except GitHubReportError as exc:
+        console.print(f"[yellow]![/] GitHub status not posted: {escape(str(exc))}")
 
 
 async def run_verification(
