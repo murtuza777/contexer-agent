@@ -125,8 +125,8 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4        # if your app needs Node
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0        # if your app needs Node
         with: { node-version: "22" }
       - uses: murtuza777/contexer-agent@main
         with:

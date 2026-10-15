@@ -17,11 +17,11 @@ jobs:
       run:
         working-directory: contexer-agent
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: "22"
       - name: Install
@@ -32,7 +32,7 @@ jobs:
         run: python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
       - name: Benchmark (catch rate and false failures)
         run: contexer bench --repeats 2 --out bench-results.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: bench-results
