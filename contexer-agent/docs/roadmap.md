@@ -140,7 +140,7 @@ Judged criteria are advisory by default, because noisy judges get removed
 - Phase 4 merged into `main` (PRs #1 and #2).
 - This plan.
 
-### C1. Contracts, a non-interactive CLI, and evidence — building
+### C1. Contracts, a non-interactive CLI, and evidence — done
 
 **Contract store** (`contract/`):
 
@@ -178,7 +178,7 @@ The REPL starts only when no subcommand is given.
 - It exits 0, 1 or 2 correctly.
 - The HTML report opens and shows a screenshot for every check.
 
-### C2. App runtime — next
+### C2. App runtime — done
 
 **`appserver/detect.py`** decides how to start the app:
 
@@ -211,7 +211,7 @@ Static projects keep `StaticAppServer`.
   beforehand.
 - No `node` process is left running afterwards, checked on Windows.
 
-### C3. Benchmark — next
+### C3. Benchmark — done (static fixtures, `--live`)
 
 **Layout:**
 
@@ -245,7 +245,7 @@ The first fixtures are static apps, which keeps the benchmark hermetic and
 fast. Vite and Next.js fixtures follow C2, and StrykerJS-generated mutants
 follow later.
 
-### C4. Agent adapters — next
+### C4. Agent adapters — done for Claude Code, OpenCode, scripted; Codex next
 
 **`agents/base.py`:**
 
@@ -278,7 +278,7 @@ follow later.
 - The scripted adapter drives the controller tests.
 - A live Claude Code turn implements a fixture task.
 
-### C5. Checkpoints and the repair controller — next
+### C5. Checkpoints and the repair controller — done
 
 **`checkpoint/`** is a shadow git repository at `.contexer/shadow.git`, with
 the work tree set to the project:
@@ -329,14 +329,14 @@ the work tree set to the project:
 - `.env` survives a restore.
 - A live Claude Code run fixes a seeded bug in a fixture.
 
-### C6. Run store — later in this pass
+### C6. Run store — next (run.json per run today)
 
 - `.contexer/contexer.db` (sqlite3, WAL), with tables `runs`, `attempts` and
   `evidence`.
 - `contexer runs` lists runs; `contexer runs show ID` shows one.
 - DBOS waits until there is more than one worker.
 
-### C7. GitHub reporting — next after C5
+### C7. GitHub reporting — done (commit status, job summary, action)
 
 **`github/status.py`:**
 

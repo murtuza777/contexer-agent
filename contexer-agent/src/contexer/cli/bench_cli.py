@@ -12,6 +12,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from contexer.bench import AppScore, BenchReport, VariantRun, run_bench
+from contexer.bench.runner import CompileStats
 
 
 def bench(
@@ -19,6 +20,7 @@ def bench(
     repeats: int = typer.Option(3, "--repeats", "-n", min=1, help="Runs per good/benign variant."),
     app: list[str] = typer.Option([], "--app", help="Only these fixture apps (repeatable)."),
     out: Optional[Path] = typer.Option(None, "--out", help="Write the full report as JSON."),
+    live: bool = typer.Option(False, "--live", help="Score contracts the LLM compiles from each goal instead."),
 ) -> None:
     """Run the seeded-bug benchmark against every fixture app."""
     console = Console()
@@ -29,8 +31,26 @@ def bench(
     def progress(run: VariantRun) -> None:
         console.print(_run_line(run))
 
-    console.print(f"[bold bright_cyan]Contexer bench[/] [dim]· {escape(str(root))} · {repeats} repeat(s)[/]")
-    report = asyncio.run(run_bench(root, repeats=repeats, only=app or None, on_run=progress))
+    llm = None
+    if live:
+        from contexer.cli.gate_cli import _llm_or_none
+
+        llm = _llm_or_none()
+        if llm is None:
+            raise typer.BadParameter("--live needs an LLM (set OPENROUTER_API_KEY)")
+
+    def compiled(name: str, stats: CompileStats) -> None:
+        dropped = f", dropped {stats.failed_on_good} (failed on the good app)" if stats.failed_on_good else ""
+        console.print(
+            f"  [cyan]compiled[/] {escape(name)}: {stats.executable}/{stats.criteria} executable"
+            f"{escape(dropped)} [dim]{stats.seconds:.0f}s[/]"
+        )
+
+    mode = "LLM-compiled contracts" if live else "approved contracts"
+    console.print(f"[bold bright_cyan]Contexer bench[/] [dim]· {escape(str(root))} · {mode} · {repeats} repeat(s)[/]")
+    report = asyncio.run(
+        run_bench(root, repeats=repeats, only=app or None, on_run=progress, live_llm=llm, on_compiled=compiled)
+    )
     render_bench(console, report)
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)

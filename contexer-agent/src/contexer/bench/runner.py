@@ -37,9 +37,12 @@ from contexer.contract import Contract, ContractStore
 from contexer.evidence.rundir import RunDir
 from contexer.gate.models import RunResult
 from contexer.gate.session import VerificationSession
+from contexer.llm.base import LLMProvider
 from contexer.verification.runner import CheckRunner
 from contexer.verification.verifier import Verifier
 from contexer.workflow.app_server import StaticAppServer
+from contexer.workflow.criteria import GoalAnalyzer
+from contexer.workflow.inspector import RepositoryInspector
 
 VariantKind = Literal["good", "benign", "bug"]
 BugVerdict = Literal["caught", "flagged", "missed"]
@@ -84,10 +87,20 @@ class VariantRun(BaseModel):
     duration_seconds: float = 0.0
 
 
+class CompileStats(BaseModel):
+    """How a model-compiled contract fared before scoring (live mode)."""
+
+    criteria: int = 0
+    executable: int = 0
+    failed_on_good: list[str] = Field(default_factory=list)
+    seconds: float = 0.0
+
+
 class AppScore(BaseModel):
     app: str
     valid: bool = True
     invalid_reason: str = ""
+    compiled: Optional[CompileStats] = None
     clean_runs: int = 0
     false_failure_runs: int = 0
     gating_checks_on_clean_runs: int = 0
@@ -151,19 +164,39 @@ async def run_bench(
     repeats: int = 3,
     only: Optional[list[str]] = None,
     on_run: Optional[Callable[[VariantRun], None]] = None,
+    live_llm: Optional[LLMProvider] = None,
+    on_compiled: Optional[Callable[[str, CompileStats], None]] = None,
 ) -> BenchReport:
+    """Score every fixture app.
+
+    With ``live_llm``, each app's contract is replaced by one the model
+    compiles from the same one-line goal, grounded in the good app's UI.
+    Compiled checks that fail on the good app are dropped and counted (a
+    reviewer would reject them), and the rest are scored like hand-written
+    contracts. This measures the compiler, not just the runner.
+    """
     from contexer.contract.models import utc_now
 
     started = time.monotonic()
     report = BenchReport(started_at=utc_now(), repeats=repeats)
     for app in discover(fixtures_root, only):
-        score = AppScore(app=app.name)
+        score = AppScore(app=app.name if live_llm is None else f"{app.name} (compiled)")
         report.apps.append(score)
         unapproved = [c.id for c in app.contracts if c.status != "approved"]
         if not app.contracts or unapproved:
             score.valid = False
             score.invalid_reason = "no approved contracts" if not app.contracts else f"not approved: {unapproved}"
             continue
+        if live_llm is not None:
+            compiled, stats = await _compile_live(app, live_llm)
+            score.compiled = stats
+            if on_compiled:
+                on_compiled(app.name, stats)
+            if compiled is None:
+                score.valid = False
+                score.invalid_reason = "no compiled check passed on the good app"
+                continue
+            app = FixtureApp(name=app.name, root=app.root, contracts=[compiled], bugs=app.bugs, benign=app.benign)
 
         good = Variant(app=app.name, kind="good", name="good")
         plan: list[tuple[Variant, int]] = [(good, r) for r in range(repeats)]
@@ -185,6 +218,41 @@ async def run_bench(
 
     report.duration_seconds = time.monotonic() - started
     return report
+
+
+async def _compile_live(app: FixtureApp, llm: LLMProvider) -> tuple[Optional[Contract], CompileStats]:
+    """Compile the app's goal with the model, then keep only checks that pass on the good app."""
+    started = time.monotonic()
+    goal = app.contracts[0].goal
+    stats = CompileStats()
+    with tempfile.TemporaryDirectory(prefix=f"contexer-compile-{app.name}-") as tmp:
+        work = Path(tmp) / "app"
+        shutil.copytree(app.app_dir, work, ignore=_IGNORED)
+        run_dir = RunDir.create(work)
+        session = VerificationSession(work, run_dir, verifier=Verifier(llm_provider=None, runner=CheckRunner()))
+        context = RepositoryInspector().inspect(work)
+        with StaticAppServer(work) as server:
+            running = RunningApp(url=server.url, kind="static", repo_context=context)
+            await session.observe(running)
+            drafted = await session.compile(goal, GoalAnalyzer(llm_provider=llm), f"{app.name}-compiled", context)
+            stats.criteria = len(drafted.criteria)
+            executable = [c for c in drafted.criteria if c.check is not None]
+            stats.executable = len(executable)
+            candidate = drafted.model_copy(update={"criteria": executable}).approved_by("bench-live")
+            result = await session.verify(running, [candidate])
+    passing: set[str] = set()
+    for outcome in result.contracts:
+        for r in outcome.verification.criteria_results if outcome.verification else []:
+            if r.proven and r.verdict == "verified":
+                passing.add(r.criterion_id)
+            elif r.proven:
+                stats.failed_on_good.append(r.criterion_id)
+    stats.seconds = time.monotonic() - started
+    kept = [c for c in executable if c.id in passing]
+    if not kept:
+        return None, stats
+    pruned = drafted.model_copy(update={"criteria": kept}).approved_by("bench-live")
+    return pruned, stats
 
 
 async def _run_variant(app: FixtureApp, variant: Variant, repeat: int) -> VariantRun:

@@ -41,12 +41,14 @@ UrlOption = typer.Option(None, "--url", "-u", help="Use an app you already run i
 def register(app: typer.Typer) -> None:
     from contexer.cli.bench_cli import bench
     from contexer.cli.run_cli import run
+    from contexer.cli.runs_cli import runs
 
     app.command("run")(run)
     app.command("verify")(verify)
     app.command("replay")(replay)
     app.add_typer(contract_app, name="contract")
     app.command("bench")(bench)
+    app.command("runs")(runs)
 
 
 # -- verify / replay -----------------------------------------------------------

@@ -1,5 +1,6 @@
 """The benchmark scores bugs and clean runs, and refuses invalid contracts."""
 
+import json
 import shutil
 from pathlib import Path
 
@@ -49,6 +50,39 @@ async def test_contract_that_fails_on_the_good_app_is_invalid(tmp_path: Path) ->
     [score] = report.apps
     assert not score.valid
     assert "fails on the good app" in score.invalid_reason
+
+
+async def test_live_mode_scores_a_compiled_contract_and_drops_checks_that_fail_on_good_code(
+    tmp_path: Path, fake_llm
+) -> None:
+    complete_check = {
+        "steps": [
+            {"action": "fill", "target": {"placeholder": "What needs doing?"}, "value": "A"},
+            {"action": "click", "target": {"role": "button", "name": "Add"}},
+            {"action": "check", "target": {"role": "checkbox", "name": "Complete A"}},
+        ],
+        "expect": [{"kind": "text", "target": {"test_id": "remaining-count"}, "equals": "0 left"}],
+    }
+    reply = json.dumps(
+        {
+            "summary": "todo",
+            "acceptance_criteria": [
+                {"id": "completes", "description": "Completing lowers the count", "check": complete_check},
+                {"id": "bogus", "description": "A widget that does not exist",
+                 "check": {"expect": [{"kind": "visible", "target": {"text": "Nonexistent widget"}}]}},
+            ],
+        }
+    )
+    llm = fake_llm(reply)
+    report = await run_bench(_mini_fixture(tmp_path), repeats=1, live_llm=llm)
+
+    [score] = report.apps
+    assert score.app == "todo (compiled)"
+    assert score.compiled is not None
+    assert score.compiled.failed_on_good == ["bogus"]
+    assert (score.caught, score.missed, score.false_failure_runs) == (1, 0, 0)
+    assert len(llm.prompts) == 1  # the goal was compiled once, from the contract's goal text
+    assert "Users can add, complete and delete tasks" in llm.prompts[0]
 
 
 async def test_unapproved_contracts_make_the_app_invalid(tmp_path: Path) -> None:
