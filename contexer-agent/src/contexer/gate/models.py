@@ -56,6 +56,37 @@ class GateDecision(BaseModel):
         return f"{label}: {counts}"
 
 
+class AttemptRow(BaseModel):
+    """One agent attempt, as shown in the report."""
+
+    n: int
+    kind: str
+    fresh_session: bool = False
+    agent_status: str = ""
+    agent_summary: str = ""
+    agent_error: Optional[str] = None
+    changed_files: list[str] = Field(default_factory=list)
+    outcome: str = ""
+    verified: int = 0
+    refuted: int = 0
+    unverified: int = 0
+    note: str = ""
+    duration_seconds: float = 0.0
+    cost_usd: Optional[float] = None
+
+
+class AgentRunSummary(BaseModel):
+    """How a coding agent was driven to the state that was verified."""
+
+    agent: str
+    terminal: str
+    reason: str = ""
+    best_attempt: Optional[int] = None
+    attempts: list[AttemptRow] = Field(default_factory=list)
+    cost_usd: float = 0.0
+    diff: str = ""
+
+
 class RunResult(BaseModel):
     """Everything a verification run produced; serialised as ``result.json``."""
 
@@ -73,3 +104,4 @@ class RunResult(BaseModel):
     contexer_version: str = ""
     run_dir: str = ""
     error: Optional[str] = None
+    agent_run: Optional[AgentRunSummary] = None

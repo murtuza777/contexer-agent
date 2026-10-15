@@ -13,20 +13,16 @@ from __future__ import annotations
 import collections
 import os
 import re
-import signal
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Callable, Optional
+from typing import IO, Callable, Optional
 
 import httpx
 
 from contexer.appserver.detect import StartPlan
-
-if TYPE_CHECKING:
-    from contexer.appserver.winjob import KillOnCloseJob
+from contexer.procutil import ProcessTree, spawn_tree
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _ANNOUNCED_URL = re.compile(r"https?://(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):(\d{2,5})")
@@ -54,8 +50,7 @@ class DevServer:
         self.log_path = log_path
         self.on_status = on_status or (lambda _msg: None)
         self.url: Optional[str] = None
-        self._proc: Optional[subprocess.Popen[bytes]] = None
-        self._job: Optional[KillOnCloseJob] = None
+        self._proc: Optional[ProcessTree] = None
         self._lines: collections.deque[str] = collections.deque(maxlen=_LOG_LINES)
         self._lock = threading.Lock()
         self._reader: Optional[threading.Thread] = None
@@ -76,12 +71,8 @@ class DevServer:
         return self.url
 
     def stop(self) -> None:
-        proc = self._proc
-        if proc is not None and proc.poll() is None:
-            self._kill_tree(proc)
-        if self._job is not None:
-            self._job.close()
-            self._job = None
+        if self._proc is not None:
+            self._proc.kill()
         if self._reader is not None:
             self._reader.join(timeout=5)
             self._reader = None
@@ -140,27 +131,12 @@ class DevServer:
             raise DevServerError(f"`{display}` exited with code {proc.returncode}", self.log_tail())
 
     def _spawn(self) -> None:
-        kwargs: dict = {}
-        if sys.platform == "win32":
-            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-        else:
-            kwargs["start_new_session"] = True
         self._record(f"$ {self.plan.display}")
         try:
-            self._proc = subprocess.Popen(
-                self.plan.argv,
-                cwd=self.plan.cwd,
-                env=self._env(),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                **kwargs,
-            )
+            self._proc = spawn_tree(self.plan.argv, self.plan.cwd, self._env())
         except OSError as exc:
             raise DevServerError(f"Could not run `{self.plan.display}`: {exc}") from exc
-        if sys.platform == "win32":
-            self._job = _assign_to_job(self._proc)
-        self._reader = threading.Thread(target=self._pump, args=(self._proc,), name="contexer-devserver-log", daemon=True)
+        self._reader = threading.Thread(target=self._pump, args=(self._proc.proc,), name="contexer-devserver-log", daemon=True)
         self._reader.start()
 
     def _pump(self, proc: subprocess.Popen[bytes]) -> None:
@@ -181,8 +157,10 @@ class DevServer:
         with httpx.Client(timeout=10.0, follow_redirects=False) as client:
             while time.monotonic() < deadline:
                 proc = self._proc
-                if proc is None or proc.poll() is not None:
-                    code = proc.returncode if proc else "?"
+                code = proc.poll() if proc is not None else "?"
+                if code is not None:
+                    if self._reader is not None:
+                        self._reader.join(timeout=2)  # let the last log lines land
                     raise DevServerError(
                         f"`{self.plan.display}` exited with code {code} before it was ready", self.log_tail()
                     )
@@ -214,40 +192,3 @@ class DevServer:
         env.setdefault("FORCE_COLOR", "0")
         env.setdefault("CI", "1")  # no interactive prompts from dev tooling
         return env
-
-    def _kill_tree(self, proc: subprocess.Popen[bytes]) -> None:
-        if sys.platform == "win32":
-            if self._job is not None:
-                self._job.terminate()
-            else:
-                subprocess.run(
-                    ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-        else:
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                return
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            if sys.platform != "win32":
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            proc.kill()
-            proc.wait(timeout=5)
-
-
-def _assign_to_job(proc: subprocess.Popen[bytes]) -> Optional[KillOnCloseJob]:
-    try:
-        from contexer.appserver.winjob import KillOnCloseJob
-
-        job = KillOnCloseJob()
-        job.assign(int(proc._handle))  # type: ignore[attr-defined]
-        return job
-    except OSError:
-        return None  # taskkill /T fallback in _kill_tree

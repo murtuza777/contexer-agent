@@ -51,6 +51,7 @@ def render_report(result: RunResult) -> str:
     sections = [
         _header(result, project),
         _reasons(result),
+        _agent_run_section(result),
         *(_contract_section(o) for o in _ordered(result.contracts)),
         _load_section(result),
         _log_section(result),
@@ -212,6 +213,67 @@ def _criterion_row(cid: str, description: str, steps: list[str], result: Optiona
     <div class="crit-body">{''.join(details)}</div>
   </details>
 </li>"""
+
+
+_TERMINAL_LABELS = {
+    "succeeded": ("Every check proven", "ok"),
+    "failed_checks": ("Checks still failing", "bad"),
+    "needs_human": ("Needs a human decision", "warn"),
+    "budget_exhausted": ("Budget used up", "warn"),
+    "timed_out": ("Out of time", "warn"),
+    "tampered": ("Agent edited the contract", "bad"),
+    "agent_error": ("Coding agent failed", "bad"),
+    "app_error": ("App did not start", "bad"),
+}
+
+
+def _agent_run_section(result: RunResult) -> str:
+    run = result.agent_run
+    if run is None:
+        return ""
+    label, cls = _TERMINAL_LABELS.get(run.terminal, (run.terminal, "muted"))
+    rows: list[str] = []
+    for a in run.attempts:
+        best = " <span class='pill pill-ok'>kept</span>" if a.n == run.best_attempt else ""
+        counts = f"{a.verified} ✓ · {a.refuted} ✗ · {a.unverified} ?" if a.outcome != "error" else "—"
+        status = a.agent_status if a.agent_status == "completed" else f"{a.agent_status}: {a.agent_error or ''}"
+        session = " (fresh session)" if a.fresh_session and a.n > 1 else ""
+        files = ", ".join(a.changed_files[:6]) + (f" +{len(a.changed_files) - 6}" if len(a.changed_files) > 6 else "")
+        cost = f" · ${a.cost_usd:.2f}" if a.cost_usd else ""
+        note = f"<div class='muted'>{_e(a.note)}</div>" if a.note else ""
+        summary = (
+            f"<details><summary class='muted'>Agent's own summary (not evidence)</summary>"
+            f"<pre>{_e(a.agent_summary)}</pre></details>"
+            if a.agent_summary
+            else ""
+        )
+        rows.append(
+            f"<tr><td>{a.n}{best}</td><td>{_e(a.kind)}{_e(session)}</td>"
+            f"<td>{_e(status)}<div class='muted'>{a.duration_seconds:.0f}s{_e(cost)}</div></td>"
+            f"<td>{_e(files) or '<span class=muted>none</span>'}</td>"
+            f"<td><span class='{_OUTCOME_CLASS.get(a.outcome, 'muted')}'>{_e(_OUTCOME_LABELS.get(a.outcome, a.outcome))}</span>"
+            f"<div class='muted'>{counts}</div>{note}{summary}</td></tr>"
+        )
+    table = (
+        "<table class='diff attempts'><tr><th>#</th><th>Turn</th><th>Agent</th><th>Files changed</th>"
+        f"<th>Contexer's verdict</th></tr>{''.join(rows)}</table>"
+    )
+    cost = f" · total ${run.cost_usd:.2f}" if run.cost_usd else ""
+    diff = (
+        f"<details><summary>Final diff</summary><pre class='log'>{_e(run.diff)}</pre></details>"
+        if run.diff.strip()
+        else ""
+    )
+    return f"""<section class="card">
+  <h2>Agent run</h2>
+  <p><span class="{cls}"><strong>{_e(label)}</strong></span> · {_e(run.agent)}{_e(cost)}</p>
+  <p class="muted">{_e(run.reason)}</p>
+  {table}
+  {diff}
+</section>"""
+
+
+_OUTCOME_CLASS = {"pass": "ok", "fail": "bad", "needs_action": "warn", "error": "bad"}
 
 
 def _load_section(result: RunResult) -> str:
