@@ -42,6 +42,7 @@ def register(app: typer.Typer) -> None:
     from contexer.cli.bench_cli import bench
     from contexer.cli.run_cli import run
     from contexer.cli.runs_cli import runs
+    from contexer.cli.demo_cli import demo
 
     app.command("run")(run)
     app.command("verify")(verify)
@@ -49,6 +50,7 @@ def register(app: typer.Typer) -> None:
     app.add_typer(contract_app, name="contract")
     app.command("bench")(bench)
     app.command("runs")(runs)
+    app.command("demo")(demo)
 
 
 # -- verify / replay -----------------------------------------------------------

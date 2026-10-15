@@ -1,0 +1,9 @@
+body { font-family: system-ui, sans-serif; background: #f5f5f4; margin: 0; }
+main { max-width: 480px; margin: 48px auto; background: #fff; padding: 24px; border-radius: 12px; }
+form { display: flex; gap: 8px; }
+input { flex: 1; padding: 8px; }
+ul { list-style: none; padding: 0; }
+li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #eee; }
+li.done span { text-decoration: line-through; color: #888; }
+li button { margin-left: auto; }
+footer { display: flex; justify-content: space-between; margin-top: 12px; }
