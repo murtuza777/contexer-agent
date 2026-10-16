@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Callable, Optional
 if TYPE_CHECKING:
     from contexer.cli.repl import ContexerApp
     from contexer.project.models import Project
-    from contexer.workflow.loop import AutonomousLoop
 
 from contexer import __version__
 
@@ -431,84 +430,69 @@ def _parse_goal_args(app: ContexerApp, args: str, usage: str) -> Optional[tuple[
     return goal, app_url, target_proj
 
 
-def _build_loop(app: ContexerApp, with_coding_agent: bool) -> AutonomousLoop:
-    from contexer.llm.factory import create_llm_provider
-    from contexer.observer.playwright import PlaywrightObserver
-    from contexer.opencode.adapter import OpenCodeAdapter
-    from contexer.workflow.loop import AutonomousLoop
-
-    config = app.config
-    llm_provider = None
-    try:
-        llm_provider = getattr(app.agent, "llm", None) or create_llm_provider(config)
-    except Exception:
-        pass
-
-    adapter = None
-    if with_coding_agent:
-        adapter = OpenCodeAdapter(
-            base_url=getattr(config, "opencode_server_url", "http://127.0.0.1:4096"),
-            timeout=getattr(config, "opencode_timeout", 120.0),
-            model_provider=getattr(config, "opencode_model_provider", None) or "opencode",
-            model_id=getattr(config, "opencode_model_id", None) or "nemotron-3.5-lightning-free",
-        )
-    return AutonomousLoop(
-        adapter=adapter,
-        observer=PlaywrightObserver(headless=True),
-        max_attempts=3,
-        console=app.ui.console,
-        project_manager=app.project_manager,
-        llm_provider=llm_provider,
-    )
-
-
 def _cmd_loop(app: ContexerApp, args: str) -> Optional[bool]:
-    """Execute autonomous engineering loop (Goal -> OpenCode -> Playwright -> Verifier -> Repair)."""
-    import asyncio
+    """Approve a checklist for the goal, then drive the coding agent until every check is proven.
+
+    Same behaviour as ``contexer run``: contract approval, snapshots, keep-best
+    repair and regression replay.
+    """
+    import typer
+
+    from contexer.cli.run_cli import run as run_command
 
     ui = app.ui
     parsed = _parse_goal_args(app, args, "/loop <goal> [--url <url>] [--dir <path>]")
     if parsed is None:
         return None
     goal, app_url, target_proj = parsed
-
-    loop = _build_loop(app, with_coding_agent=True)
     try:
-        asyncio.run(loop.run(goal=goal, app_url=app_url, project=target_proj))
+        run_command(
+            goal=goal,
+            contract_id=None,
+            project_dir=target_proj.path,
+            url=app_url,
+            agent_name=None,
+            model=None,
+            rounds=None,
+            budget=None,
+            yes=False,
+            no_replay=False,
+            open_report=False,
+        )
+    except typer.Exit:
+        pass
+    except typer.BadParameter as exc:
+        ui.print_error(str(exc))
     except KeyboardInterrupt:
         ui.console.print()
-        ui.print_warning("Autonomous loop interrupted by user.")
-        ui.console.print()
+        ui.print_warning("Run interrupted by user.")
     except Exception as exc:
         ui.console.print()
-        ui.print_error(f"Autonomous loop error: {exc}")
-        ui.console.print()
-
+        ui.print_error(f"Run error: {exc}")
+    ui.console.print()
     return None
 
 
 def _cmd_verify(app: ContexerApp, args: str) -> Optional[bool]:
-    """Verify the running application against a goal without changing any code."""
+    """Compile the goal into checks and prove them against the running app (no code changes)."""
     import asyncio
+
+    from contexer.cli.gate_cli import run_verification
 
     ui = app.ui
     parsed = _parse_goal_args(app, args, "/verify <goal> [--url <url>] [--dir <path>]")
     if parsed is None:
         return None
     goal, app_url, target_proj = parsed
-
-    loop = _build_loop(app, with_coding_agent=False)
     try:
-        asyncio.run(loop.verify_only(goal=goal, app_url=app_url, project=target_proj))
+        asyncio.run(run_verification(target_proj.path, goal=goal, url=app_url, console=ui.console))
     except KeyboardInterrupt:
         ui.console.print()
         ui.print_warning("Verification interrupted by user.")
-        ui.console.print()
     except Exception as exc:
         ui.console.print()
         ui.print_error(f"Verification error: {exc}")
-        ui.console.print()
-
+    ui.console.print()
     return None
 
 
@@ -607,7 +591,7 @@ COMMANDS: dict[str, CommandDef] = {
     ),
     "loop": CommandDef(
         name="loop",
-        help_text="Run autonomous loop (OpenCode + Playwright + Verifier + Repair)",
+        help_text="Approve checks for a goal, then build and repair with a coding agent until proven",
         aliases=("auto", "build"),
     ),
     "verify": CommandDef(

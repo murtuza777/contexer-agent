@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from contexer.llm.base import LLMProvider
@@ -65,8 +66,13 @@ class Verifier:
         observation: BrowserObservation,
         analysis: Optional[GoalAnalysis] = None,
         repo_context: Optional[RepositoryContext] = None,
+        artifacts_dir: Optional[Path] = None,
     ) -> VerificationResult:
-        """Verify the application at ``observation.url`` against ``analysis``."""
+        """Verify the application at ``observation.url`` against ``analysis``.
+
+        ``artifacts_dir`` receives per-check screenshots (and traces, if the
+        runner records them).
+        """
         if not observation.success:
             err = observation.error or "Application was not reachable."
             return VerificationResult(
@@ -102,9 +108,11 @@ class Verifier:
         judgment: Optional[_Judgment] = None
 
         if asserted:
-            check_results = await self.runner.run(
-                observation.url, [(c.id, c.check) for c in asserted if c.check is not None]
-            )
+            pairs = [(c.id, c.check) for c in asserted if c.check is not None]
+            if artifacts_dir is not None:
+                check_results = await self.runner.run(observation.url, pairs, artifacts_dir=artifacts_dir)
+            else:
+                check_results = await self.runner.run(observation.url, pairs)
             for criterion, outcome in zip(asserted, check_results):
                 results.append(
                     CriterionResult(

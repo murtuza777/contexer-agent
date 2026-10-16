@@ -1,0 +1,70 @@
+name: Contexer acceptance gate
+description: >-
+  Replay a project's approved acceptance contracts in a real browser and block the
+  merge when behaviour regresses. Posts a contexer/acceptance commit status and
+  uploads an evidence report (screenshots, traces, expected vs actual).
+author: murtuza777
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  working-directory:
+    description: Project directory containing .contexer/contracts.
+    default: "."
+  url:
+    description: Verify an app that is already running at this URL instead of starting it.
+    default: ""
+  post-status:
+    description: "Post a contexer/acceptance commit status (needs the statuses: write permission)."
+    default: "true"
+  github-token:
+    description: Token used to post the commit status.
+    default: ${{ github.token }}
+  python-version:
+    description: Python used to run Contexer.
+    default: "3.12"
+
+outputs:
+  outcome:
+    description: pass, fail, needs_action or error.
+    value: ${{ steps.gate.outputs.outcome }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v7.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Contexer
+      shell: bash
+      run: |
+        python -m pip install --quiet "${{ github.action_path }}/contexer-agent"
+        python -m playwright install --with-deps chromium
+
+    - name: Replay approved contracts
+      id: gate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        args=(replay --dir . --json)
+        if [ -n "${{ inputs.url }}" ]; then args+=(--url "${{ inputs.url }}"); fi
+        if [ "${{ inputs.post-status }}" = "true" ]; then args+=(--github); fi
+        set +e
+        contexer "${args[@]}" > "$RUNNER_TEMP/contexer-result.json"
+        code=$?
+        set -e
+        outcome=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['decision']['outcome'])" "$RUNNER_TEMP/contexer-result.json" 2>/dev/null || echo error)
+        echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+        exit $code
+
+    - name: Upload evidence report
+      if: always()
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: contexer-report
+        path: ${{ inputs.working-directory }}/.contexer/runs/
+        if-no-files-found: ignore

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any, Optional
@@ -17,6 +18,8 @@ from contexer.workflow.inspector import RepositoryContext
 logger = logging.getLogger(__name__)
 
 RUNTIME_CRITERION_ID = "crit-runtime"
+# One compile attempt may not hang a command for the SDK default (10 minutes).
+COMPILE_TIMEOUT_SECONDS = 180.0
 MAX_ANALYSIS_ATTEMPTS = 2
 # Below this share of executable criteria, a reply is retried: the rest would
 # fall back to LLM judgment of a static snapshot, which cannot see behaviour.
@@ -44,6 +47,7 @@ Steps:
 
 Expectations (all must hold):
   {"kind": "visible", "target": L}     {"kind": "hidden", "target": L}
+  {"kind": "checked", "target": L}     {"kind": "unchecked", "target": L}   checkbox / radio / switch state
   {"kind": "count", "target": L, "min": 3}               ("max" also allowed)
   {"kind": "text", "target": L, "contains": "1"}
   {"kind": "value", "target": L, "equals": ""}           value of an input
@@ -54,9 +58,21 @@ Expectations (all must hold):
 Comparators: "equals", "contains" (case-insensitive), "matches" (regex), "changed" (vs. before the steps ran).
 
 Rules:
+- Every check runs alone, in a fresh browser, on the freshly loaded app. Include every step that creates the state it
+  checks (add the items, fill the form) — never rely on another check having run first.
+- A role locator's "name" is the accessible name: an aria-label wins over the visible text.
 - Verify behaviour by interacting, not just by presence: click "Add to cart", then expect the cart count text to change.
 - One behaviour per check. Keep expectations implementation-agnostic
   (theme toggle: body background-color changed — not a guessed class name).
+- Expect exact values ("equals") when the goal implies one, so an off-by-one or a stale value fails.
+- Assert only what the goal states or the current UI already shows. Do not invent behaviour the goal leaves open
+  (for example the order of items, or wording that appears nowhere in the UI or source).
+- Cover the cases a careless implementation gets wrong, not only the happy path:
+    counts and totals: act more than once (two different items, and the same item twice) and expect the exact result;
+    filters, tabs and toggles: switch to a state and back again, and expect the original state to return;
+    removing or editing one of several items: expect the others to stay and any counts or totals to update;
+    forms: one check per rule with a value that breaks it, the valid path, and the error clearing after a fix;
+    every interaction check also expects no uncaught exceptions or console errors ({"kind": "no_errors"}).
 - Omit "check" only when a criterion cannot be checked mechanically (e.g. "looks modern").
 
 Illustrative criterion (its names are made up; take real names from the current UI or the goal):
@@ -71,8 +87,9 @@ Illustrative criterion (its names are made up; take real names from the current 
 class GoalAnalyzer:
     """Uses LLM to analyze user goals and generate acceptance criteria with executable checks."""
 
-    def __init__(self, llm_provider: Optional[LLMProvider] = None) -> None:
+    def __init__(self, llm_provider: Optional[LLMProvider] = None, timeout: float = COMPILE_TIMEOUT_SECONDS) -> None:
         self.llm_provider = llm_provider
+        self.timeout = timeout
 
     async def analyze(
         self,
@@ -89,7 +106,9 @@ class GoalAnalyzer:
         best: Optional[GoalAnalysis] = None
         for attempt in range(1, MAX_ANALYSIS_ATTEMPTS + 1) if self.llm_provider else ():
             try:
-                candidate = await self._analyze_with_llm(goal, repo_context, ui_snapshot)
+                # First ask for JSON mode (routers drop it for models without support);
+                # the retry goes without it in case a provider rejects the parameter.
+                candidate = await self._analyze_with_llm(goal, repo_context, ui_snapshot, json_mode=attempt == 1)
             except Exception as exc:
                 err_msg = str(exc)
                 if "429" in err_msg or "rate limit" in err_msg.lower():
@@ -123,6 +142,7 @@ class GoalAnalyzer:
         goal: str,
         repo_context: Optional[RepositoryContext],
         ui_snapshot: str = "",
+        json_mode: bool = False,
     ) -> GoalAnalysis:
         assert self.llm_provider is not None
         context_str = repo_context.format_summary() if repo_context else "Target: Web application"
@@ -145,7 +165,7 @@ class GoalAnalyzer:
             else ""
         )
         prompt = (
-            "You are a Senior QA Architect. Turn the user's engineering goal into 3 to 6 specific, "
+            "You are a Senior QA Architect. Turn the user's engineering goal into 4 to 10 specific, "
             "observable acceptance criteria, each with an executable browser check. The checks are given "
             "to the implementing engineer as the contract and then executed against the running app.\n\n"
             f"User Goal: {goal}\n\n"
@@ -157,10 +177,18 @@ class GoalAnalyzer:
             "Respond ONLY with a JSON object:\n"
             '{"summary": "Brief summary of goal intent", "acceptance_criteria": [<criterion>, ...]}'
         )
-        response = await self.llm_provider.generate(
-            prompt=prompt,
-            system_instruction="You are a QA architect. Return ONLY valid JSON.",
-        )
+        extra = {"response_format": {"type": "json_object"}} if json_mode else {}
+        try:
+            response = await asyncio.wait_for(
+                self.llm_provider.generate(
+                    prompt=prompt,
+                    system_instruction="You are a QA architect. Return ONLY valid JSON.",
+                    **extra,
+                ),
+                timeout=self.timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(f"the model did not answer within {self.timeout:.0f}s") from exc
         data = parse_json_object(response.text, expect_key="acceptance_criteria")
 
         criteria: list[AcceptanceCriterion] = []
@@ -321,9 +349,3 @@ def _quoted_ui_text(goal: str) -> list[tuple[str, Optional[str]]]:
         role = _ROLE_WORDS.get(following.group(1).lower()) if following else None
         found.append((text, role))
     return found
-
-
-def extract_acceptance_criteria(goal: str, llm_provider: Optional[LLMProvider] = None) -> GoalAnalysis:
-    """Helper function for backward compatibility."""
-    analyzer = GoalAnalyzer(llm_provider=llm_provider)
-    return analyzer._dynamic_rule_analysis(goal)

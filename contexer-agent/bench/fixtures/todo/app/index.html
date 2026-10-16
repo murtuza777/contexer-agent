@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Todo</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Todo</h1>
+    <form id="new-task">
+      <input id="task-input" placeholder="What needs doing?" autocomplete="off">
+      <button type="submit">Add</button>
+    </form>
+    <ul id="tasks" aria-label="Tasks"></ul>
+    <footer>
+      <span data-testid="remaining-count">0 left</span>
+      <button id="clear" type="button">Clear completed</button>
+    </footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

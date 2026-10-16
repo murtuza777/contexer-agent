@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create your account</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Create your account</h1>
+    <form id="signup" novalidate>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email">
+      <p class="error" id="email-error" role="alert" hidden></p>
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="new-password">
+      <p class="error" id="password-error" role="alert" hidden></p>
+
+      <label for="confirm">Confirm password</label>
+      <input id="confirm" name="confirm" type="password" autocomplete="new-password">
+      <p class="error" id="confirm-error" role="alert" hidden></p>
+
+      <button type="submit">Create account</button>
+    </form>
+    <p id="success" role="status" hidden>Account created. Check your inbox to verify your email.</p>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

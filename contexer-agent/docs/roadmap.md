@@ -1,206 +1,435 @@
-# Contexer engineering roadmap
+# Contexer technical plan
 
-Contexer's claim is that the agent that writes the code should not be the one
-that decides whether it works. Each phase below is judged by how much it
-strengthens that claim, or how much it widens where the claim applies.
+This is the build plan for [product-plan.md](product-plan.md) v2. It covers
+module layout, data formats, the CLI, the order of work, and how each piece is
+tested. [technical-landscape.md](technical-landscape.md) holds the research
+behind each library choice.
 
-| Phase | Status | Recommendation |
-| --- | --- | --- |
-| 1. Housekeeping | Done | — |
-| 4. Structured assertion verifier | **Done** | See below |
-| 3. Coding-agent abstraction | Next | Do now: the loop depends on a single, currently flaky executor |
-| — Dev-server lifecycle (new) | After 3 | Needed before the loop can run on Node/Python apps unattended |
-| 5. Run persistence | After that | Pair it with replaying saved checks as regression tests |
-| 2. Domain realignment | Fold in | Move code when a phase touches it; no standalone reshuffle |
-| 6. LangGraph state machine | Defer | Revisit only on the triggers listed below |
-
-Sizes: **S** ≈ under a day, **M** ≈ 1–3 days, **L** ≈ a week.
+Status legend: **done**, **building**, **next**, **later**.
 
 ---
 
-## Phase 4 — Executable acceptance checks (done)
+## 1. Principles
 
-**Problem.** Verification never interacted with the app. An LLM read about
-3,500 characters of HTML and gave an opinion. Without an LLM, keyword matching
-passed "add to cart updates the counter" whenever a `$` appeared on the page.
-The product's central promise was not actually being kept.
+1. **Rent the agents, own the verdict.** Contexer writes four things: the
+   contract, the verdict, the repair controller and the evidence. Everything
+   else is a dependency or an adapter.
+2. **The agent's word never counts.** A turn's "success" is recorded but never
+   used as a pass. The diff that matters is the one Contexer computes against
+   its own snapshot.
+3. **Deterministic code owns control flow.** Agents are two nodes, implement
+   and repair, inside a state machine that Contexer writes and tests.
+4. **Replays need no model.** Once approved, a contract runs with zero LLM
+   calls.
+5. **Fail safe.** Anything inconclusive blocks; nothing reports a quiet pass.
+6. **Measured before claimed.** No accuracy claim without the benchmark.
+7. **Few dependencies.** Prefer the stdlib (sqlite3, subprocess, ctypes,
+   tomllib) over new packages, and pin whatever is added.
 
-**What shipped**
+## 2. Architecture
 
-- `verification/checks.py`: a small, closed DSL. A criterion's `check` has
-  `steps` (click, fill, press, select, check, hover, goto, wait) and
-  `expect`ations (visible, hidden, count, text, value, attribute, css, url,
-  title, no_errors) with `equals` / `contains` / `matches` / `changed`
-  comparators. Locators prefer role + accessible name, then text, label,
-  placeholder, `data-testid`, and CSS last. Invalid model output is rejected
-  per criterion rather than half-executed.
-- `verification/runner.py`: runs each check in a fresh Chromium context.
-  Expectations auto-retry. Error accounting is evaluated last, so exceptions
-  thrown asynchronously by an interaction are counted. When elements are
-  duplicated for responsive layouts, the visible one is used.
-- `verification/verifier.py`: checks decide the criteria they cover. Only
-  criteria without a check go to the LLM judge, or to heuristics when no LLM
-  is configured. Each `CriterionResult.method` is `assertion`, `judgment` or
-  `heuristic`.
-  - Confidence is 1.0 only for a *reproduced* failure.
-  - A check whose step could not find its target is `blocked`: inconclusive,
-    confidence 0.5. It records the page's locator vocabulary at that moment.
-- `workflow/criteria.py`: the LLM compiles the goal into checks. For existing
-  apps, the prompt includes the live ARIA snapshot plus a bounded excerpt of
-  the entry-point source, used **only** to locate elements. Expected behaviour
-  must come from the goal.
-  - The analyzer retries once when fewer than half the criteria are
-    executable.
-  - A `no_errors` runtime check is always present.
-- Contract-first loop: the coding agent receives the checks verbatim. Repair
-  prompts restate the failing checks with expected vs. actual values.
-- `workflow/app_server.py`: static projects are served over HTTP instead of
-  `file://`, which broke ES modules and `fetch`.
-- `/verify <goal>`: the same verification, without a coding agent.
-- Fixes found along the way:
-  - Console warnings were counted as errors.
-  - Every screenshot was saved as `observation_15.png`.
-  - Rich swallowed `[crit-1]` and `[data-testid=…]` as markup.
-  - `Verifier()` silently created an LLM client from `.env`, which made the
-    "deterministic" tests call OpenRouter. The 271 pre-existing tests went
-    from 79 s to 38 s.
+```text
+contexer verify | contract | replay | run | bench | report        (Typer subcommands)
+   │                                                    REPL (/loop, /verify) stays
+   ▼
+contract/      Contract model, file store, hashing, approval; compiles goals via
+               workflow.criteria.GoalAnalyzer
+appserver/     detect start plan → DevServer (spawn, ready, logs, kill tree)
+               or StaticAppServer
+verification/  check DSL, Playwright runner (+ screenshots, traces), verifier,
+               verdicts
+agents/        CodingAgentAdapter: claude_code, opencode, scripted (codex next)
+checkpoint/    shadow-git snapshots: snapshot / restore / diff
+controller/    run state machine: implement → verify → repair, keep-best,
+               signatures, budgets
+store/         sqlite run store (.contexer/contexer.db)
+evidence/      run directory layout + self-contained HTML report
+github/        commit status + step summary (check runs come with the App)
+bench/         seeded-bug benchmark: catch rate and false-failure rate
+```
 
-**Measured with the live `openrouter/free` model.** These are small samples
-and should be treated as indicative only.
+The existing `workflow/loop.py` (`AutonomousLoop`) keeps serving the REPL until
+the controller replaces it (C3). `workflow/criteria.py` remains the goal→check
+compiler.
 
-- Every reply that came from an instruction-following model produced 100%
-  schema-valid checks: 4 of 4 replies across two probes.
-- The failures were routing failures. The router sometimes picks a model that
-  answers `"User Safety: safe"` (a safety classifier) or wraps JSON in prose
-  that itself contains braces. The second case is fixed by the parser. The
-  first is mitigated by one retry, and pinning a specific model avoids it
-  entirely.
-- On a todo app whose "Complete" button throws `refesh is not defined`: the
-  correct version passed 4/4 proven, and the buggy version failed with
-  `expected "0", actual "1"` plus the uncaught exception. Nothing is wrong at
-  page load, so snapshot-based verification could not have seen this bug.
+## 3. Data formats
 
-**Known limitations**
+### `.contexer/` inside the target project
 
-- Elements created only after an interaction are located from source,
-  so locators guessed for apps with no readable front-end source can be
-  `blocked`.
-- Criteria such as "looks modern" still rely on LLM judgment of a text
-  snapshot.
+```text
+.contexer/
+  contracts/<slug>.json   approved contracts; commit these alongside the code
+  runs/<run-id>/          evidence: report.html, result.json, screenshots,
+                          traces, server.log (gitignored)
+  shadow.git/             private snapshot repository (gitignored)
+  contexer.db             run store (gitignored)
+  .gitignore              written by Contexer: everything except contracts/
+```
 
-## Phase 3 — Coding-agent abstraction (next, M)
+### Contract file
 
-**Why now.** The loop only works when OpenCode is running and its free model
-behaves. In this environment `test_live_opencode_e2e` fails for that reason.
-A second executor de-risks every demo and every future phase.
+```json
+{
+  "version": 1,
+  "id": "todo-complete",
+  "goal": "Users can complete a task and the remaining count updates",
+  "summary": "...",
+  "criteria": [ { "id": "crit-1", "description": "...", "verification_method": "interactive_test",
+                  "check": { "steps": [...], "expect": [...] } } ],
+  "source": "llm | user | rules",
+  "created_at": "2026-10-15T10:00:00Z",
+  "approval": { "by": "murtuza777", "at": "...", "sha256": "..." }
+}
+```
 
-**Design**
+- `sha256` covers the canonical JSON of `goal` and `criteria`.
+- A contract whose current hash differs from its approval hash is **modified**.
+  It is never run as approved, and the gate reports it as needing action.
+- `approval: null` means the contract is a draft.
 
-- `contexer/agents/base.py`: a protocol covering what the loop actually uses,
-  `start(workdir, title) -> AgentSession` and
-  `send(session, prompt, timeout) -> AgentResult(status, summary, error, duration)`.
-  Neutral types replace `OpenCodeSession` / `OpenCodeExecutionResult` in
-  `workflow/`.
-- **Contexer computes diffs itself.** Snapshot the workspace with git (a
-  temporary index, or `git stash create`) before each `send`, then diff after.
-  Don't trust an agent's self-reported diff; this is the same independence
-  argument as verification, and it makes every adapter cheaper.
-- Adapters:
-  - `OpenCodeAgent`: the existing client, moved behind the protocol.
-  - `ClaudeCodeAgent`: headless `claude -p --output-format json`, with
-    `--resume <session_id>` for repair turns and an edit-only permission mode
-    scoped to the target directory.
-  - `ScriptedAgent`: applies canned file edits, for hermetic end-to-end
-    tests of the full loop.
-- Select with `CONTEXER_CODING_AGENT=opencode|claude-code` and `/agent`.
+### `contexer.toml` (optional, project root)
 
-**Done when** `/loop` passes the todo-app scenario end to end with each real
-adapter, and the loop test suite runs on `ScriptedAgent` with no network
-access.
+```toml
+[app]
+start = "npm run dev"      # default: detected from package.json
+port = 5173                # default: a free port
+ready_path = "/"
+ready_timeout = 120
+install = true             # install dependencies when node_modules is missing
 
-## Dev-server lifecycle (new, M)
+[gate]
+judged = "advisory"        # or "block"
 
-**Why.** Static projects are served automatically. Everything else needs the
-user to start a dev server by hand and pass `--url`, so `/loop` cannot run
-unattended on the repo's own Next.js `website/`.
+[agent]
+name = "claude-code"       # claude-code | opencode | scripted
+max_repair_rounds = 2
+budget_usd = 3.0
+```
 
-**Design.** `workflow/app_server.py` gains a `DevServer` that:
+### Verdicts
 
-- picks the command from `package.json` scripts (`dev`, then `start`) or the
-  Python entrypoint
-- assigns a free port through `PORT` and the framework's CLI flag
-- waits for HTTP readiness while streaming logs
-- terminates the whole process tree on exit (`taskkill /T` on Windows,
-  process groups on POSIX)
-- restarts between repair attempts if the server died, and surfaces its last
-  log lines as evidence, because build errors are the most common failure
+| Verdict | Meaning | Method labels |
+| --- | --- | --- |
+| `verified` | All expectations held | `proven` (browser) / `judged` (LLM) / `heuristic` |
+| `refuted` | An expectation was observed to fail | same |
+| `unverified` | A step couldn't act, or nothing could decide | — |
 
-**Done when** `/verify "…" --dir website` works with no server running
-beforehand.
+**Gate conclusion:**
 
-## Phase 5 — Run store and regression replay (M)
+- `pass`: every approved check is `verified` and `proven`.
+- `fail`: any proven check is `refuted`.
+- `needs_action`: anything `unverified`, a contract that is modified or still a
+  draft, or a judged check refuted while `judged = "block"`.
 
-**Design**
+Judged criteria are advisory by default, because noisy judges get removed
+(Spotify).
 
-- `.contexer/runs.db`, using stdlib `sqlite3` with no new dependency. Tables:
-  - `runs`: id, goal, project, url, started, finished, passed, analysis JSON
-  - `attempts`: run_id, n, verification JSON, diff, screenshot path
-- Pydantic models already serialise everything that needs storing.
-- `/runs`: list runs. `/runs show <id>`: replay the transcript.
+### CLI exit codes
 
-**The feature that justifies this phase: `/verify --replay <id|all>`.** Every
-goal Contexer has completed leaves behind an executable contract. Replaying
-those contracts against the current app turns past work into a regression
-suite at no extra cost. The same store also gives the repair engine memory of
-what was already tried.
+| Code | Meaning |
+| --- | --- |
+| `0` | pass |
+| `1` | fail |
+| `2` | needs action |
+| `3` | Contexer or environment error, e.g. the app didn't start |
 
-**Done when** a completed run can be replayed after a code change and reports
-exactly which old checks now fail.
+## 4. Milestones, in build order
 
-## Phase 2 — Domain realignment (fold in, S each)
+### C0. Foundations — done
 
-The `intent/`, `planner/` and `tasks/` packages are empty placeholders. The
-real homes already exist:
+- Phase 4 merged into `main` (PRs #1 and #2).
+- This plan.
 
-- `verification/` holds the contract
-- `workflow/` holds orchestration
-- Phase 3 adds `agents/`
+### C1. Contracts, a non-interactive CLI, and evidence — done
 
-Moving files to match a target layout is churn: it creates merge conflicts and
-delivers nothing to users. Delete the empty packages, and move
-`workflow/criteria.py` into `intent/` only when intent handling grows real
-behaviour, such as multi-goal decomposition.
+**Contract store** (`contract/`):
 
-## Phase 6 — LangGraph (defer)
+- the model, canonical hashing, load/save/list
+- `approve()` records who approved and the hash
+- a modified-contract check
 
-The loop is a bounded, mostly linear state machine:
-inspect → criteria → plan → execute → (observe → verify → repair) × N.
-LangGraph would add a large dependency tree and a second state paradigm, plus
-checkpointing that Phase 5's run store already provides for this shape. Pause,
-resume and human-in-the-loop interrupts can be built from an explicit
-`RunState` enum persisted in `runs.db` in a few hundred lines.
+**Subcommands:**
 
-Revisit if any of these become true:
+| Command | What it does |
+| --- | --- |
+| `contexer verify [GOAL] [--contract F...] [--all] [--url U] [--dir D] [--report html,github] [--json]` | With a goal: compile a draft contract, then run it. With `--contract` or `--all`: run saved contracts with no LLM. |
+| `contexer contract draft GOAL` / `show` / `approve ID` / `list` | Manage contracts |
+| `contexer replay` | `verify --all`, for CI |
 
-- runs fan out into parallel sub-goals
-- several coding agents collaborate on one run
-- runs need to wait days for a human and resume elsewhere
+The REPL starts only when no subcommand is given.
 
-## Verifier follow-ups (from Phase 4 findings)
+**Evidence:**
 
-- **Retire the keyword heuristic (S).** In a live run it failed a correct
-  criterion because the page did not contain the words "where" and "users". If
-  the LLM judge is unavailable, retry it once, and otherwise mark the
-  criterion `unverified` (neither passed nor failed) rather than guess. Several
-  existing tests encode the heuristic and will need rewriting.
-- **Self-healing locators for `blocked` checks (M).** Re-ground a blocked
-  check against `ui_at_failure`, the page as it was when the step failed, and
-  run it once more. Weakening must be impossible by construction: code
-  verifies that only `target` fields changed, and that actions, expectation
-  kinds, comparators and values are identical.
-- **Visual checks (M).** Add `{"kind": "visual", "describe": "…"}`, judged by
-  a vision model against the screenshot and labelled `judgment`. This covers
-  "looks modern" style criteria without pretending they are proven.
-- **Windows piped output (S, pre-existing).** Rich raises
-  `UnicodeEncodeError` on `●` and `✓` when stdout is a cp1252 pipe. Use the
-  `_can_encode` fallbacks from `cli/ui.py` in the loop's output too.
+- The runner saves a screenshot per check after its expectations run, and on
+  failure.
+- Playwright tracing is optional (`--trace on-failure`).
+- `evidence/report.py` writes a single self-contained `report.html`:
+  - the checklist with a verdict and method per item
+  - expected vs actual
+  - screenshots inlined as data URIs
+  - page errors and the server log tail
+  - the run's metadata
+- `result.json` holds the machine-readable result.
+
+**Done when:**
+
+- `contexer verify --contract` runs a saved contract against a static app with
+  zero LLM calls.
+- It exits 0, 1 or 2 correctly.
+- The HTML report opens and shows a screenshot for every check.
+
+### C2. App runtime — done
+
+**`appserver/detect.py`** decides how to start the app:
+
+1. `contexer.toml` wins.
+2. Otherwise read `package.json` scripts: `dev`, then `start`.
+3. The package manager comes from the lockfile: pnpm, yarn, bun, else npm.
+4. Port flags come from the framework:
+   - Vite: `--port N --strictPort --host 127.0.0.1`
+   - Next.js: `-p N -H 127.0.0.1`
+   - anything else: the `PORT` environment variable
+
+Static projects keep `StaticAppServer`.
+
+**`appserver/devserver.py`** runs it:
+
+- Spawns the command with a merged log thread writing to `server.log` and a
+  ring buffer.
+- On Windows, a kill-on-close Job Object (ctypes) so stopping takes down every
+  descendant. On POSIX, a new session and `killpg`.
+- A readiness probe with Playwright `webServer` semantics: 2xx, 3xx and
+  400–403 count as ready. It probes both `127.0.0.1` and `localhost`.
+- If the process exits early, it reports the last log lines.
+- If the expected port never answers, it falls back to a URL parsed from the
+  logs.
+- Dependencies are installed automatically when `node_modules` is missing.
+
+**Done when:**
+
+- `contexer verify --dir website` (Next.js) works with nothing started
+  beforehand.
+- No `node` process is left running afterwards, checked on Windows.
+
+### C3. Benchmark — done (static fixtures, `--live`)
+
+**Layout:**
+
+```text
+bench/fixtures/<app>/
+  app/                  the good version
+  bugs/<id>/            file overlays, one realistic bug each
+  bugs/<id>/BUG.md      what the bug is, and which criterion should catch it
+  contract.json         approved contract
+```
+
+**Runner** (`contexer bench`):
+
+- For each app, run the contract against the good version N times (default 3).
+  Any refuted or unverified check there counts as a false failure.
+- Run it once against each bug variant. The bug is **caught** when some proven
+  check is refuted, and **flagged** when a check is only unverified.
+- `--live` also compiles a contract from the app's goal with the LLM and scores
+  it the same way. This measures the compiler, not just the runner.
+
+**Validity rule:** every check in a fixture contract must pass on `app/`. The
+benchmark refuses to score a contract that fails it.
+
+**Done when:**
+
+- `contexer bench` prints catch rate, flag rate and false-failure rate, per app
+  and in total.
+- The numbers go in the README.
+
+The first fixtures are static apps, which keeps the benchmark hermetic and
+fast. Vite and Next.js fixtures follow C2, and StrykerJS-generated mutants
+follow later.
+
+### C4. Agent adapters — done for Claude Code, OpenCode, scripted; Codex next
+
+**`agents/base.py`:**
+
+- `CodingAgentAdapter.start(workdir) -> AgentSession`
+- `send(session, prompt, *, timeout, budget_usd) -> AgentTurn`, where
+  `AgentTurn` has `status`, `summary`, `cost_usd`, `session_id` and `events`
+- `close()`
+
+**`agents/claude_code.py`:**
+
+- Runs `claude -p --output-format stream-json --verbose`, parsing the NDJSON
+  `result` line.
+- `--permission-mode acceptEdits` with explicit `--allowedTools`.
+- `--disallowedTools "Edit(.contexer/**)" "Write(.contexer/**)"` as tamper
+  layer 1.
+- `--max-budget-usd`, and `--resume` for repair turns.
+- Locally it runs the user's own logged-in, unmodified `claude`. Contexer never
+  reads tokens; API keys apply in CI.
+
+**Other adapters:**
+
+- `agents/opencode.py` wraps the existing client.
+- `agents/scripted.py` applies canned file writes per turn, for hermetic loop
+  tests.
+- `agents/codex.py` (`codex exec --json --sandbox workspace-write`) comes once
+  the Codex CLI is available to test against.
+
+**Done when:**
+
+- The scripted adapter drives the controller tests.
+- A live Claude Code turn implements a fixture task.
+
+### C5. Checkpoints and the repair controller — done
+
+**`checkpoint/`** is a shadow git repository at `.contexer/shadow.git`, with
+the work tree set to the project:
+
+- It works for directories that aren't git repositories and never touches the
+  user's refs.
+- `info/exclude` covers `.contexer/`, `node_modules/`, `.next/`, `dist/` and
+  `.venv/`.
+- `snapshot()` runs `add -A` then `commit-tree`, saving to
+  `refs/contexer/<run>/<n>`.
+- `restore(sha)` snapshots the current state first, then
+  `read-tree -u --reset sha`. Files created since the snapshot are removed, and
+  ignored files such as `.env` are never touched.
+- `changed_paths(a, b)` lists what changed between two snapshots.
+
+**`controller/run.py`:**
+
+- States: `compiling → awaiting_approval → implementing → verifying →
+  repairing(n)`.
+- Terminal states: `succeeded`, `failed_checks`, `budget_exhausted`,
+  `timed_out`, `stalled`, `cancelled`, `needs_human`, `error`.
+- Score each attempt by verified proven checks, counting regressions in other
+  locked contracts double. Keep the best attempt; restore it whenever an
+  attempt scores lower, and at the end of the run.
+- A failure signature per check is a hash of (check id, expectation, actual,
+  first page error). When a signature survives a repair, the next round uses a
+  fresh agent session focused on that check. After that, escalate as
+  `needs_human` with the failure bundle.
+- Each repair gets one failure bundle: the failing checks as expected vs
+  actual, the first page errors, the screenshot path and the server log tail,
+  all trimmed.
+- The tamper guard refutes the run if the agent changed `.contexer/**`.
+- Defaults: at most 2 repair rounds, a USD budget and a wall-clock budget.
+
+**`contexer run GOAL|--contract ID [--agent claude-code] [--yes]`:**
+
+1. Compile, or load the contract.
+2. Approve it, prompting unless `--yes` is given.
+3. Snapshot, then implement.
+4. Start the app and verify, including regression replay of every other
+   approved contract.
+5. Repair, then report.
+
+**Done when:**
+
+- With the scripted agent, a run that regresses goes back to its best attempt.
+- A repeated signature changes strategy.
+- `.env` survives a restore.
+- A live Claude Code run fixes a seeded bug in a fixture.
+
+### C6. Run store — next (run.json per run today)
+
+- `.contexer/contexer.db` (sqlite3, WAL), with tables `runs`, `attempts` and
+  `evidence`.
+- `contexer runs` lists runs; `contexer runs show ID` shows one.
+- DBOS waits until there is more than one worker.
+
+### C7. GitHub reporting — done (commit status, job summary, action)
+
+**`github/status.py`:**
+
+- Sets a commit status `contexer/acceptance` through the REST API (httpx,
+  `GITHUB_TOKEN`). Statuses have no `neutral`; `needs_action` maps to
+  `failure` with a clear description.
+- Writes a markdown summary to `$GITHUB_STEP_SUMMARY`.
+- The repo and SHA come from the Actions environment or from git.
+
+**A root `action.yml`** (composite action) installs Contexer and Playwright,
+runs `contexer replay --report github,html` and uploads `report.html`.
+
+**Done when** a PR on a test repository shows a failing `contexer/acceptance`
+status that links to the report.
+
+### C8. Compiler quality — next (from the live benchmark)
+
+Five `bench --live` runs on `openrouter/free` ranged from 25% to 83% of seeded
+bugs caught, with zero false failures from checks that survived validation.
+The model limits how good a draft can be; the runner does not. In priority
+order:
+
+1. **Pinned drafting model.** Support a separate `[compiler] model` in
+   `contexer.toml`. Benchmark two or three capable models with
+   `bench --live --repeats 3` and recommend one.
+2. **Draft validation.** When drafting against a running app that already
+   implements the goal, run the draft once. Mark failing checks *suspect*,
+   showing their failure report, before approval. A suspect check is either a
+   real bug or a wrong check, and the person decides.
+3. **Coverage retry.** Retry when a reply is less than 50% executable or not
+   JSON, up to three attempts within the 180-second per-attempt cap.
+4. **Mutation-based adequacy.** Run StrykerJS on the lines a goal touches and
+   report which mutants no check kills, as candidate missing checks for the
+   person to approve.
+
+### Later (product-plan Phases C and D)
+
+- The GitHub App, with check runs that are never `neutral`, an "approve checks"
+  button, expected-source pinning and merge-queue replay.
+- Ticket-to-PR triggers.
+- A `contexer-mcp` server and a Spec Kit hook.
+- Visual checks; deterministic re-location of moved targets.
+- The founder readiness report.
+- Hosted runs on E2B.
+
+## 5. Testing strategy
+
+- **Unit tests:** the DSL, hashing, detection, the conclusion mapping and
+  signatures.
+- **Hermetic integration:**
+  - static fixture apps through the real Playwright runner
+  - the scripted agent through the real controller
+  - shadow git against a temporary directory
+- **Opt-in live tests**, marked `live`:
+  - a Claude Code turn
+  - OpenRouter compilation
+  - a Next.js dev server
+
+  The default run never needs the network.
+- **Command:** `.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider
+  --deselect tests/test_opencode_integration.py::test_live_opencode_e2e`
+- Every milestone is exercised by running the real CLI on a real app, and its
+  output and report are inspected before committing.
+
+## 6. Deferred, with triggers
+
+- **LangGraph and Temporal:** not needed for a bounded, mostly linear state
+  machine. Revisit when runs fan out across workers, or must pause for days and
+  resume elsewhere.
+- **The keyword heuristic verifier:** retire it once the judged path has a
+  retry. Until then it stays labelled `heuristic` and can never pass a gate.
+
+---
+
+## Done: Phase 4, executable acceptance checks (2026-10-13)
+
+Verification used to be an LLM opinion of about 3,500 characters of HTML. It is
+now a closed check DSL (`verification/checks.py`) executed in fresh Chromium
+contexts (`verification/runner.py`):
+
+- Expectations auto-retry, and error accounting runs last.
+- Each verdict is labelled with how it was reached
+  (`verification/verifier.py`).
+- Checks are compiled from the goal and grounded in the live ARIA snapshot
+  (`workflow/criteria.py`).
+- The coding agent receives the checks verbatim as its contract, and repair
+  prompts restate expected vs actual.
+- Static projects are served over HTTP; `/verify` runs without a coding agent.
+
+Live findings at the time:
+
+- Every reply from an instruction-following model produced schema-valid checks.
+- The failures came from model routing (`openrouter/free`).
+- A todo app whose "Complete" button throws `refesh is not defined` passed 4/4
+  in its correct version. The buggy version failed with `expected "0", actual
+  "1"` plus the exception, a bug no page snapshot could reveal.

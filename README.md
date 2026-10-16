@@ -1,390 +1,230 @@
 # Contexer
 
-> **Contexer — Autonomous Engineering Agent**
+**The AI engineer that owns "done".**
 
-Contexer sits above coding agents and autonomously drives software tasks from intent to implementation, observation, verification, and repair.
+Contexer sits on top of the coding agents you already use: Claude Code, Codex
+and OpenCode. It works in four steps:
 
-```text
-INTENT
-  ↓
-CONTEXT
-  ↓
-PLAN
-  ↓
-EXECUTE
-  ↓
-OBSERVE
-  ↓
-VERIFY
-  ↓
-DONE / REPAIR
-```
+1. It turns a goal into checks you approve.
+2. It has the agent build against them.
+3. It proves every check in a real browser.
+4. It repairs failures in a bounded loop.
+
+After that, it re-checks everything you ever approved on every later change,
+and blocks the merge when behaviour regresses.
+
+You make two decisions per task: **what "done" means**, and **whether to
+merge**. Everything between is Contexer's job.
 
 ---
 
-## The Problem
+## Why
 
-Modern AI coding agents excel at writing, editing, and generating code files. However, when an agent executes file edits without errors, it does not guarantee that the application actually works as the user intended.
+Coding agents write code faster than anyone can check it.
 
-The critical disconnect in software engineering with AI:
+- Agent pull requests wait several times longer for review and merge far less
+  often than human ones.
+- Independent reviewers reject about half of agent changes that pass their
+  tests.
+- Agents have been caught editing tests to make them pass.
 
-```text
-"Code executed successfully"
-              ≠
-"User's goal was achieved"
-```
+Every agent vendor's own verification is run and graded by the agent that
+wrote the code, and some vendor reviewers are designed never to block a
+merge. The research behind this is in
+[reports/AI coding workflows and pain points.md](reports/AI%20coding%20workflows%20and%20pain%20points.md).
 
-A coding agent may create a button, write syntactically valid CSS, or install a library, yet:
-* The button might not render on screen or might be obscured.
-* The script may throw uncaught runtime errors in the browser console.
-* The API route may return 500 errors upon actual user interaction.
-* The resulting page may completely miss the functional acceptance criteria.
+Contexer is the independent half:
 
-Developers are forced to manually inspect the runtime, test the browser interface, diagnose mistakes, and repeatedly re-prompt the coding agent.
+- **Proof, not opinion.** Checks are executed in Chromium. Every verdict says
+  whether a browser proved it (`proven`) or a model judged it (`LLM-judged`).
+  Only proven verdicts can pass the gate.
+- **The agent can't move the goalposts.** Approved contracts are hashed. An
+  agent that edits one has its run refuted, and the contract is put back.
+- **Bounded, reversible repair.**
+  - Every attempt is snapshotted.
+  - An attempt that makes things worse is reverted to the best one.
+  - A failure that repeats unchanged forces a fresh approach instead of the
+    same retry.
+  - The run stops after a fixed number of rounds or at a budget.
+- **Memory that is enforced.** Every approved contract is replayed on every
+  later change, as a regression suite, with no LLM calls.
+- **Fail-safe gate.** Anything undecided blocks the merge; nothing reports a
+  quiet pass.
 
----
+## What it looks like
 
-## What is Contexer?
-
-Contexer is an orchestration and verification layer that operates *above* coding agents. It does not replace the coding agent; instead, it provides the closed-loop governance needed to guide the coding agent to a verified outcome.
-
-* **Current Execution Layer**: [OpenCode](https://github.com/opencode-ai) via local HTTP API.
-* **Current Observation & Verification Layer**: [Playwright](https://playwright.dev/) headless browser runtime + dynamic acceptance criteria verifier.
-* **Current Context Layer**: Official [GitHub MCP Server](https://github.com/github/github-mcp-server) in enforced read-only mode.
-* **Current Agent & Runtime Infrastructure**: AgentForge-derived async agent harness with streaming tool execution, safety approval policies, and provider support for OpenRouter, Gemini, and OpenAI-compatible models.
-
----
-
-## How It Works
-
-Contexer closes the feedback loop between code generation and actual application behavior:
-
-```text
-User Intent
-    ↓
-Context
-    ↓
-Plan
-    ↓
-OpenCode
-    ↓
-Application
-    ↓
-Playwright
-    ↓
-Verification
-    ↓
- ┌──────────────┐
- │              │
-PASS           FAIL
- │              │
-DONE         Diagnose
-                ↓
-              Repair
-                ↓
-             OpenCode
-```
-
-1. **User Intent**: The user provides a high-level outcome (e.g., *"Build an interactive product catalog with search, filter, and responsive grid"*).
-2. **Context & Inspection**: Contexer inspects the project directory structure, detecting frameworks (Next.js, static HTML/JS), entrypoints, and key files.
-3. **Plan & Executable Criteria**: Contexer compiles the intent into acceptance criteria, each with an **executable browser check** (steps such as *click "Add to cart"* followed by expectations such as *the cart count text changes*), plus a multi-step engineering plan. For existing apps, check locators are grounded in the live UI's accessibility tree.
-4. **OpenCode Execution**: Contexer creates an isolated OpenCode session and dispatches the task **with the checks as its contract**. OpenCode writes or modifies the files on disk.
-5. **Application Runtime**: Static projects are served by Contexer on a local HTTP port; other projects are observed on their dev server (`--url`).
-6. **Playwright Observation**: Contexer launches a headless Playwright instance, navigates to the live application URL, captures the DOM tree, detects interactive controls (buttons, links, inputs), tracks console logs, and flags HTTP network errors.
-7. **Executable Verification**: Each check runs in a fresh Chromium context: Contexer performs the steps, then evaluates the expectations with auto-retry. Pass/fail comes from the browser, not from a model's opinion. Only criteria that cannot be checked mechanically fall back to LLM judgment, and every verdict is labelled `proven`, `LLM-judged`, or `heuristic`.
-8. **Pass or Self-Repair**:
-   - If all criteria pass, the task is marked **DONE**.
-   - If verification fails, Contexer's **Repair Engine** sends OpenCode the failing checks with *expected vs. actual* values and any uncaught exceptions. The loop repeats until verification passes or max attempts are reached.
-
----
-
-## Why This Is Different
-
-* **Coding agents execute tasks; Contexer verifies outcomes.** Coding agents report success when file edits finish. Contexer measures whether the user's objective was achieved in the running system.
-* **Independent verification from execution.** The entity that writes the code does not evaluate whether the code works. Observation happens externally through a browser engine, inspecting real DOM nodes and console output.
-* **Automated closed-loop repair.** Instead of forcing the developer to test, copy errors, and re-prompt, Contexer autonomously extracts runtime discrepancies and drives the repair cycle.
-
----
-
-## Architecture
-
-The real architecture implemented in this repository:
+A todo app whose "complete" handler throws:
 
 ```text
-                 Contexer CLI (Typer + Rich REPL)
-                                ↓
-                 Agent Runtime (ContexerAgent)
-                                ↓
-               LLM Provider (OpenRouter / Gemini)
-                                ↓
-          ┌─────────────────────┴─────────────────────┐
-          ↓                                           ↓
-   Workspace Tools & MCP                      Autonomous Loop
- (Filesystem, Shell, Git,                            ↓
-   Official GitHub MCP)                 Target Project Inspector
-                                                     ↓
-                                            Goal & Criteria Analyzer
-                                                     ↓
-                                              Engineering Planner
-                                                     ↓
-                                          OpenCode HTTP Adapter
-                                                     ↓
-                                           Target Application
-                                                     ↓
-                                         Playwright Observer (DOM,
-                                          Console, Network, Shot)
-                                                     ↓
-                                Check Runner + Verifier (executed checks)
-                                                     ↓
-                                         Repair Engine (Self-Repair)
-```
-
----
-
-## Multi-App Architecture
-
-Contexer functions as an orchestration meta-agent that coordinates multiple specialized external applications and runtimes:
-
-| External Application | Protocol / Interface | What Contexer Sends | What Contexer Receives | Why It Is Needed |
-| :--- | :--- | :--- | :--- | :--- |
-| **OpenCode** | HTTP REST API (`localhost:4096`) | Task prompts, workspace directory scope, acceptance criteria, repair instructions | Session IDs, execution status, execution duration, git diffs | Acts as the specialized coding worker that directly modifies files in the repository. |
-| **Playwright** | Headless Browser Automation (Chromium) | Target application URL (`http://localhost:3000`), navigation timeouts | Page titles, DOM structure, visible headings, interactive elements, console logs, network errors, screenshots | Provides independent, ground-truth observation of how the running application actually behaves. |
-| **Official GitHub MCP Server** | Model Context Protocol (stdio / Docker) | Tool execution requests (`list_issues`, `get_file_contents`, etc.) with enforced read-only mode | Structured repository schemas, issue bodies, git tree listings | Supplies external repository context without risking accidental mutations to remote repositories. |
-
----
-
-## Example Workflow
-
-### User Intent
-
-```text
-User: Build an interactive e-commerce landing page.
-```
-
-### Execution & Verification Trace
-
-```text
-[Contexer Autonomous Loop]
-Goal:    Build an interactive e-commerce landing page
-Project: sandbox (scratch) -> /workspace/sandbox
-Target:  http://127.0.0.1:8080
-
-● Inspecting Target Repository
-  ✓ Detected Stack: Static Web (HTML/CSS/JS)
-  ✓ Existing files: 0 files
-
-● Deriving Acceptance Criteria & Executable Checks
-  ✓ 4 criteria, 4 with executable browser checks:
-    • crit-1 Product grid shows at least 6 products with prices (check)
-        expect: at least 6 × [data-testid="product-card"]
-    • crit-2 Category filter narrows the grid (check)
-        do:     click button "Electronics"
-        expect: at most 3 × [data-testid="product-card"]
-    • crit-3 Add to cart updates the cart counter (check)
-        do:     click button "Add to cart"
-        expect: text of [data-testid="cart-count"] contains "1" and changes
-    • crit-runtime Application loads without uncaught JavaScript exceptions or console errors (check)
-        expect: no uncaught exceptions or console errors
-
-● Generating Engineering Plan
-  ✓ Strategy: Semantic HTML5 layout, CSS grid, and vanilla JS cart state.
-    1. Create index.html with nav, product grid, and cart badge.
-    2. Create style.css with card layout.
-    3. Create script.js with product data, filtering, and cart counter.
-
-● Coding Agent Execution
-  › Dispatching plan and executable acceptance contract...
-  ✓ Implementation complete (14.2s)
-
-● Verification (Attempt 1/3)
-  ✓ crit-1 Product grid shows at least 6 products with prices · proven
-  ✓ crit-2 Category filter narrows the grid · proven
-  ✗ crit-3 Add to cart updates the cart counter · proven
-        expected: text of [data-testid="cart-count"] contains "1" and changes
-        actual:   "0" → "0"
-        uncaught exception: cart is not defined
-  ✓ crit-runtime Application loads without uncaught JavaScript exceptions or console errors · proven
-
-● Diagnosis & Self-Repair (Attempt 1/3)
-  › Sending targeted repair prompt to coding agent...
-```
-
-*(Illustrative trace.)* Note what changed from snapshot-based verification: a cart badge that *exists* with count `0` used to satisfy "Add to cart updates the counter". Now the check clicks the button and the browser reports that the count did not change.
-
-### Real output: a bug a page snapshot cannot see
-
-Actual `verify_only` output (live `openrouter/free` model) for a todo app whose "Complete" button strikes the task through but throws `refesh is not defined` and never updates the count. Nothing is wrong at page load. The same contract, derived from the correct version of the app, passes that version 4/4:
-
-```text
-● Verification
-  ✓ crit-1 User can add a new task and the remaining count updates · proven
-  ✗ crit-2 User can mark a task as complete and the remaining count updates · proven
-        expected: text of [data-testid="remaining-count"] equals "0"
-        actual:   "1"
+$ contexer verify --contract todo-basics
+  ✓ add-shows-task Adding a task shows it in the list · proven
+  ✓ add-clears-input The input is cleared after adding a task · proven
+  ✓ empty-not-added Submitting an empty task adds nothing · proven
+  ✓ count-tracks-adds The remaining count goes up with each task added · proven
+  ✗ complete-decrements Completing a task lowers the remaining count and raises no errors · proven
+        expected: text of [data-testid="remaining-count"] equals "1 left"
+        actual:   "2 left"
         uncaught exception: refesh is not defined
-  ✗ crit-3 Remaining count reflects number of incomplete tasks · proven
-        expected: text of [data-testid="remaining-count"] equals "1"
-        actual:   "2"
-        uncaught exception: refesh is not defined
-  ✓ crit-runtime Application loads without uncaught JavaScript exceptions or console errors · proven
-Reason: [crit-2] expected text of [data-testid="remaining-count"] equals "0", got "1"; ...
+  ✓ delete-removes-right-task Deleting a task removes that task and keeps the others · proven
+  ✓ loads-clean The app loads without uncaught exceptions or console errors · proven
+
+FAIL: 6 verified, 1 refuted, 0 unverified                      (exit code 1)
 ```
 
----
+Each run also writes a self-contained `report.html`. It contains:
 
-## Demo
+- the verdict, and the reasons for it, up front;
+- expected vs actual for every refuted check;
+- the screenshot each check was judged on;
+- Playwright traces for failures;
+- for `contexer run`, every attempt the agent made and the final diff.
 
-🎥 Demo video: https://drive.google.com/file/d/1JY83zeOhzG795Fzvxcxr2AD82umNfUXQ/view?usp=drive_link
+## Quickstart
 
----
-
-## Quick Start
-
-### Prerequisites
-
-* Python >= 3.11
-* Node.js >= 18 (for running target web applications or Playwright browser binaries)
-* Git
-* (Optional) [OpenCode](https://github.com/opencode-ai) installed and running locally on port 4096: `opencode serve --port 4096`
-
-### Installation
+Contexer isn't on PyPI yet, so install it from source:
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/murtuza777/contexer-agent.git
-cd contexer-agent
-
-# 2. Navigate to the agent package
-cd contexer-agent
-
-# 3. Create and activate a virtual environment
-python -m venv .venv
-# On Windows:
-.venv\Scripts\activate
-# On Linux/macOS:
-source .venv/bin/activate
-
-# 4. Install dependencies in editable mode
-pip install -e ".[dev]"
-
-# 5. Install Playwright browser binaries
+pip install -e contexer-agent/contexer-agent
 playwright install chromium
 ```
 
-### Environment Configuration
-
-Copy the example environment file and configure your API keys:
+See it catch a real bug in about ten seconds, with no API key and no agent:
 
 ```bash
-cp .env.example .env
+contexer demo          # a todo app with a bug an AI left in, proven against its contract
+contexer demo --fix    # then the repair loop, driven by a clearly labelled simulated agent
 ```
 
-Configure keys in `.env`:
-* `OPENROUTER_API_KEY`: Required for LLM planning, criteria analysis, and verification.
-* `OPENROUTER_MODEL`: Model name (default: `openrouter/free` or any preferred model).
-* `GITHUB_PERSONAL_ACCESS_TOKEN`: (Optional) GitHub token for read-only GitHub MCP server integration.
-
----
-
-## Running Contexer
-
-### Launch Interactive Shell
+In your app's directory:
 
 ```bash
-contexer
+contexer init --ci     # detect how the app starts; add the GitHub merge-gate workflow
+
+# 1. Describe what must be true. Contexer starts your app (static, Vite or Next.js)
+#    and compiles the goal into checks grounded in the live UI. Needs OPENROUTER_API_KEY.
+contexer contract draft "Users can add a task and complete it, and the count updates"
+
+# 2. Read the checklist and lock it in. Commit .contexer/contracts/.
+contexer contract show <id>
+contexer contract approve <id>
+
+# 3. Prove it, with no LLM involved.
+contexer verify --contract <id>
+
+# 4. Or let a coding agent build or fix it until every check is proven.
+contexer run --contract <id> --agent claude-code
 ```
 
-Inside the Contexer REPL, the following slash commands are available:
+Or do it all in one step:
+`contexer run "Users can add a task and complete it, and the count updates"`.
+Contexer shows the checklist and asks you to approve it before any code
+changes.
 
-| Command | Aliases | Description |
-| :--- | :--- | :--- |
-| `/help` | `/h`, `/?` | Display available commands and usage guide. |
-| `/status` | — | Show current session status, active project, and provider health. |
-| `/project` | `/p`, `/workspace` | Inspect and manage target projects (`/project list`, `/project set <name>`, `/project new <name>`, `/project reset`). |
-| `/opencode` | `/oc` | Check OpenCode server health or run targeted prompts (`/opencode status`, `/opencode run <prompt>`). |
-| `/loop` | `/auto`, `/build` | Run the complete autonomous loop (`/loop <goal> [--url <url>] [--dir <path>]`). |
-| `/verify` | `/check` | Verify the running app against a goal with executable browser checks, without changing code (`/verify <goal> [--url <url>] [--dir <path>]`). |
-| `/github` | `/gh`, `/mcp` | Check official GitHub MCP server connection, tool discovery, and read-only enforcement. |
-| `/clear` | `/cls` | Clear the terminal screen. |
-| `/version` | `/v` | Show version information (`contexer v0.1.0`). |
-| `/exit` | `/quit`, `/q` | Exit the Contexer shell. |
+## Gate merges in CI
 
-### Running an Autonomous Loop Directly
-
-Within the REPL:
-
-```bash
-/loop Build an interactive portfolio page with project cards and dark mode toggle --url http://127.0.0.1:3000
+```yaml
+# .github/workflows/acceptance.yml
+name: Acceptance gate
+on: [pull_request]
+permissions:
+  contents: read
+  statuses: write
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0        # if your app needs Node
+        with: { node-version: "22" }
+      - uses: murtuza777/contexer-agent@main
+        with:
+          working-directory: .
 ```
 
----
+The action does four things:
 
-## Current Status
+1. Replays every approved contract against the PR's code.
+2. Posts a `contexer/acceptance` commit status that links to the evidence.
+3. Writes a per-check table into the job summary.
+4. Uploads `report.html` as the `contexer-report` artifact.
 
-### Working
+Make `contexer/acceptance` a required check and nothing merges until the
+behaviour is proven. This repository runs the action on its own todo fixture
+([`acceptance-gate.yml`](.github/workflows/acceptance-gate.yml)).
 
-* **Interactive CLI & REPL**: Typer application with Rich UI, command routing, prefix expansion, and session status tracking.
-* **Agent Runtime & Streaming**: Provider abstraction supporting OpenRouter, Gemini, and OpenAI-compatible models with streamed responses and structured function calling.
-* **Safety & Tool Execution**: Bounded filesystem tools, read-only git operations, safe command execution, and configurable approval policies (`on-request`, `auto`, `never`).
-* **OpenCode Integration**: HTTP client connecting to OpenCode server, session management, prompt dispatch, timeout controls, and diff extraction.
-* **Playwright Headless Observer**: Headless browser automation capturing DOM titles, headings, interactive element trees, browser console errors, HTTP failures, and full-page screenshots.
-* **Executable Acceptance Checks**: Goals are compiled into browser checks (steps + expectations) that Playwright executes in isolated contexts; failures report expected vs. actual. LLM judgment is used only for criteria without a check, and every verdict is labelled with how it was reached.
-* **Self-Repair Engine**: Discrepancy diagnosis between runtime observations and acceptance criteria, producing targeted repair prompts for OpenCode.
-* **Autonomous Engineering Loop**: End-to-end orchestration (`Goal → Inspector → Criteria → Planner → OpenCode → Playwright → Verifier → Repair → Complete`).
-* **Official GitHub MCP Server**: Read-only integration supporting stdio binary and Docker container execution with tool discovery.
-* **Target Project Management**: Project candidate scanning, isolation of user targets from the Contexer agent itself (`is_protected`), and scratch sandboxes.
+## How accurate is it?
 
-### In Progress
+`contexer bench` replays contracts against fixture apps with seeded bugs. It
+also runs them against harmless variants (refactors, restyles, slow APIs),
+which must still pass.
 
-* Interactive human-in-the-loop intervention during individual repair attempts.
-* Persistent cross-session task state using SQLite checkpointing.
+| Contracts | Seeded bugs caught | False-failing checks on correct code |
+| --- | --- | --- |
+| Hand-written (4 apps, 24 bugs) | **24/24** caught with proof | **0/176** (26 clean runs) |
+| Compiled by the LLM from one-line goals (`--live`, free models) | 25–83% per run | 0 in every run |
 
-### Planned
+- **Hand-written row:** the contracts and the bugs were written by the same
+  author, so this row measures the runner's reliability, not how good
+  generated contracts are.
+- **Live row:** this measures generated contracts. It varies a lot from run to
+  run with free models. Its misses are edge cases the goal didn't spell out,
+  plus checks the model got wrong, which is why a person approves every
+  contract.
 
-* Adapters for additional coding agents (Claude Code, Codex, Aider).
-* Multi-modal visual regression testing comparing rendered UI against design mockups.
-* Automated pull request creation and CI pipeline monitoring via GitHub MCP.
+Full method, per-run tables and the diagnosis of bad compiled checks are in
+[bench/RESULTS.md](contexer-agent/bench/RESULTS.md).
 
----
+<a id="benchmark-details"></a>
+<details><summary>Benchmark details</summary>
 
-## Roadmap
+- **Fixtures:** todo, a shop (filters, search, cart arithmetic, async data),
+  a signup form (validation, error states, a submit that reloads the page) and
+  a notes app (pinning, search in body text, deletes) that is held out from
+  prompt tuning. They live in
+  [`contexer-agent/bench/fixtures`](contexer-agent/bench/fixtures). Each bug
+  has a `BUG.md` naming the check expected to catch it.
+- **Validity rule:** a contract that fails on the correct app is not scored.
+- **Scoring:**
+  - **Caught:** a proven check is refuted.
+  - **Flagged:** the bug only made a check unverified.
+  - **False failure:** any check not verified on correct or harmless code.
 
-```text
-✓ CLI & Interactive REPL
-✓ LLM runtime & provider abstraction
-✓ Tool runtime & safety approval policies
-✓ OpenCode integration & execution adapter
-✓ Playwright headless browser observation
-✓ Executable acceptance checks (contract-first, browser-proven verdicts, /verify)
-✓ Autonomous self-repair loop
-✓ Official GitHub MCP server integration (read-only)
-→ Coding-agent abstraction + second adapter (Claude Code), independent diffs
-→ Dev-server lifecycle for Node/Python projects
-→ Run persistence + replaying saved checks as regression tests
-→ Interactive human-in-the-loop repair checkpoints
-→ Multi-modal visual checks
-```
+</details>
 
-The detailed plan, with sequencing rationale, is in [contexer-agent/docs/roadmap.md](contexer-agent/docs/roadmap.md).
+## Status
 
----
+What works today, with tests (408 passing) and CI on Linux:
 
-## Tech Stack
+- Contracts, approval and hashing; `verify`, `replay`, `contract`, `run`, and
+  `bench` (including `--live`).
+- Starting the project's dev server (static, Vite, Next.js, or a command in
+  `contexer.toml`), including killing the whole process tree on Windows.
+- The repair controller: snapshots, keep-best, revert, fresh session on a
+  repeated failure, tamper guard and regression replay.
+- GitHub: the commit status, the job summary, and a reusable action.
 
-* **Language**: Python 3.11+
-* **Agent Harness & CLI**: Typer, Rich, AgentForge-derived runtime foundation
-* **LLM & Inference**: OpenRouter, Google Gemini, OpenAI-compatible API, Pydantic
-* **Coding Engine Integration**: OpenCode (HTTP REST client, session & diff APIs)
-* **Runtime Observation**: Playwright (Chromium headless browser automation)
-* **Model Context Protocol**: MCP (JSON-RPC over stdio) with official GitHub MCP Server
-* **Networking & HTTP**: HTTPX (async client with retry and backoff)
-* **Testing & Quality**: pytest, pytest-cov, anyio, Pyright
-* **Product Website**: Next.js 15 (App Router), TypeScript, Tailwind CSS, Lucide React
+Honest gaps:
 
----
+- **No live coding-agent run yet.** The Claude Code and OpenCode adapters are
+  tested against the real stream protocol with a fake binary, and the full
+  loop is tested with a scripted agent. A live run with a real agent hasn't
+  happened yet: the development machine's Claude account had no API credit,
+  and OpenCode's free tier now refuses programmatic use.
+- No Codex adapter yet; no GitHub App (check runs, approve button) yet.
+- No login or authenticated flows in checks yet; no visual-design checks.
+- Compiling goals into checks uses OpenRouter. Free models are slow (minutes)
+  and vary in quality. Replays never call a model.
 
-## License & Attribution
+## Docs
 
-This project is licensed under the [MIT License](contexer-agent/pyproject.toml).
+| Document | Covers |
+| --- | --- |
+| [Product plan](contexer-agent/docs/product-plan.md) | Who it's for, what it does, and the order of work |
+| [Technical plan](contexer-agent/docs/roadmap.md) | Architecture, formats and milestones |
+| [Technical landscape](contexer-agent/docs/technical-landscape.md) | The repos and designs Contexer builds on, and its competitors |
+| [Developer guide](contexer-agent/README.md) | Setup, commands, `contexer.toml` and tests |
 
-Contexer contains focused adaptations of architectural patterns and selected harness implementation concepts from [AgentForge](https://github.com/MohitGoyal09/AgentForge) (commit `3f513b3`), Copyright (c) 2026 Mohit Goyal, licensed under the MIT License. See [`contexer-agent/THIRD_PARTY_NOTICES.md`](contexer-agent/THIRD_PARTY_NOTICES.md) and [`contexer-agent/docs/agentforge-integration.md`](contexer-agent/docs/agentforge-integration.md) for full notices and module boundary definitions.
+MIT licensed. Contexer adapts parts of
+[AgentForge](https://github.com/MohitGoyal09/AgentForge) (MIT); see
+[THIRD_PARTY_NOTICES](contexer-agent/THIRD_PARTY_NOTICES.md).

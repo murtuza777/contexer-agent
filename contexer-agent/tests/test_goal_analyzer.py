@@ -206,3 +206,26 @@ async def test_retries_when_only_trivial_criteria_are_executable(fake_llm) -> No
     analysis = await GoalAnalyzer(llm_provider=llm).analyze("todo list")
     assert len(llm.prompts) == 2
     assert analysis.acceptance_criteria[0].id == "crit-add"
+
+
+@pytest.mark.anyio
+async def test_first_attempt_asks_for_json_mode_and_the_retry_does_not(fake_llm) -> None:
+    llm = fake_llm("I cannot help with that.", '{"summary": "s", "acceptance_criteria": []}')
+    await GoalAnalyzer(llm_provider=llm).analyze("Add a button")
+    assert llm.kwargs[0] == {"response_format": {"type": "json_object"}}
+    assert llm.kwargs[1] == {}
+
+
+@pytest.mark.anyio
+async def test_a_model_that_never_answers_times_out_and_falls_back() -> None:
+    import asyncio as _asyncio
+
+    from tests.conftest import FakeLLM
+
+    class Hanging(FakeLLM):
+        async def generate(self, prompt, system_instruction=None, tools=None, **kwargs):  # type: ignore[override]
+            await _asyncio.sleep(60)
+            raise AssertionError("unreachable")
+
+    analysis = await GoalAnalyzer(llm_provider=Hanging(), timeout=0.2).analyze("Add a 'Save' button")
+    assert analysis.generated_by == "rules"

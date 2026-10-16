@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "id": "todo-basics",
+  "goal": "Users can add, complete and delete tasks, and the remaining count stays correct",
+  "summary": "Core todo list behaviour",
+  "source": "user",
+  "created_at": "2026-10-15T00:00:00Z",
+  "approval": {
+    "by": "contexer-bench",
+    "at": "2026-10-15T17:08:07Z",
+    "sha256": "40740b37aeefc36aadc26a39a81f270c6c64872c8d25793925315de45a2b7454"
+  },
+  "criteria": [
+    {
+      "id": "add-shows-task",
+      "description": "Adding a task shows it in the list",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "Buy milk"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Buy milk"
+            }
+          },
+          {
+            "kind": "count",
+            "target": {
+              "role": "listitem"
+            },
+            "min": 1,
+            "max": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "add-clears-input",
+      "description": "The input is cleared after adding a task",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "Buy milk"
+          },
+          {
+            "action": "press",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "Enter"
+          }
+        ],
+        "expect": [
+          {
+            "kind": "value",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "equals": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "empty-not-added",
+      "description": "Submitting an empty task adds nothing",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "   "
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "count",
+            "target": {
+              "role": "listitem"
+            },
+            "max": 0
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "remaining-count"
+            },
+            "equals": "0 left"
+          }
+        ]
+      }
+    },
+    {
+      "id": "count-tracks-adds",
+      "description": "The remaining count goes up with each task added",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "Buy milk"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "Walk dog"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "remaining-count"
+            },
+            "equals": "2 left"
+          }
+        ]
+      }
+    },
+    {
+      "id": "complete-decrements",
+      "description": "Completing a task lowers the remaining count and raises no errors",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "Buy milk"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "Walk dog"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add"
+            }
+          },
+          {
+            "action": "check",
+            "target": {
+              "role": "checkbox",
+              "name": "Complete Buy milk"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "remaining-count"
+            },
+            "equals": "1 left"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "delete-removes-right-task",
+      "description": "Deleting a task removes that task and keeps the others",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "Buy milk"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "What needs doing?"
+            },
+            "value": "Walk dog"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add"
+            }
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Delete Buy milk"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "hidden",
+            "target": {
+              "text": "Buy milk"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Walk dog"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "remaining-count"
+            },
+            "equals": "1 left"
+          }
+        ]
+      }
+    },
+    {
+      "id": "loads-clean",
+      "description": "The app loads without uncaught exceptions or console errors",
+      "verification_method": "console_check",
+      "check": {
+        "steps": [],
+        "expect": [
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    }
+  ]
+}

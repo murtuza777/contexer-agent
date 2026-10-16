@@ -1,6 +1,6 @@
-"""Workflow module for autonomous engineering loop."""
+"""Goal analysis and repository inspection used to compile contracts.
 
-from contexer.workflow.criteria import extract_acceptance_criteria
-from contexer.workflow.loop import AutonomousLoop, AutonomousLoopResult
-
-__all__ = ["AutonomousLoop", "AutonomousLoopResult", "extract_acceptance_criteria"]
+``criteria`` turns a goal into acceptance criteria with executable checks;
+``inspector`` describes the target project; ``app_server`` serves static
+sites. The run loop itself lives in ``contexer.controller``.
+"""

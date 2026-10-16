@@ -1,0 +1,12 @@
+body { font-family: system-ui, sans-serif; background: #f8fafc; margin: 0; color: #0f172a; }
+main { max-width: 640px; margin: 40px auto; padding: 0 16px; }
+form { display: flex; flex-direction: column; gap: 8px; background: #fff; padding: 16px; border-radius: 10px; }
+input, textarea { padding: 8px; font: inherit; }
+#form-error { color: #b91c1c; margin: 0; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 16px 0; }
+.toolbar input { flex: 1; padding: 8px; }
+#notes { display: flex; flex-direction: column; gap: 10px; }
+article { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; }
+article h3 { margin: 0 0 6px; }
+article.pinned { border-color: #f59e0b; }
+.actions { display: flex; gap: 8px; margin-top: 8px; }

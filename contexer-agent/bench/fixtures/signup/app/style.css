@@ -1,0 +1,8 @@
+body { font-family: system-ui, sans-serif; background: #f1f5f9; margin: 0; }
+main { max-width: 420px; margin: 48px auto; background: #fff; padding: 28px; border-radius: 12px; }
+form { display: flex; flex-direction: column; gap: 6px; }
+label { font-weight: 600; margin-top: 8px; }
+input { padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; }
+.error { color: #b91c1c; margin: 0; font-size: 14px; }
+button { margin-top: 16px; padding: 10px; background: #0f172a; color: #fff; border: 0; border-radius: 6px; }
+#success { color: #166534; font-weight: 600; }

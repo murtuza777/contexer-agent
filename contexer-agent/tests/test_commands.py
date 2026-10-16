@@ -216,15 +216,8 @@ class TestCommandRouter:
         result = router.dispatch(app, "/loop")
         assert result is None
 
-    @patch("contexer.workflow.loop.AutonomousLoop.run")
+    @patch("contexer.cli.run_cli.run")
     def test_loop_command_dispatches(self, mock_run) -> None:
-        from contexer.workflow.loop import AutonomousLoopResult
-        mock_run.return_value = AutonomousLoopResult(
-            goal="Add button",
-            app_url="http://localhost:3000",
-            passed=True,
-            attempts=1,
-        )
         app = self._make_app()
         router = CommandRouter()
         result = router.dispatch(app, "/loop Add button --url http://localhost:4000")
@@ -232,12 +225,11 @@ class TestCommandRouter:
         mock_run.assert_called_once()
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs["goal"] == "Add button"
-        assert call_kwargs["app_url"] == "http://localhost:4000"
+        assert call_kwargs["url"] == "http://localhost:4000"
+        assert call_kwargs["yes"] is False  # the shell still asks before approving the checklist
 
-    @patch("contexer.workflow.loop.AutonomousLoop.verify_only")
+    @patch("contexer.cli.gate_cli.run_verification")
     def test_verify_command_runs_without_coding_agent(self, mock_verify) -> None:
-        from contexer.workflow.loop import AutonomousLoopResult
-        mock_verify.return_value = AutonomousLoopResult(goal="g", app_url="u", passed=True, attempts=1)
         app = self._make_app()
         router = CommandRouter()
         with patch("contexer.opencode.adapter.OpenCodeAdapter.__init__") as adapter_init:
@@ -246,26 +238,17 @@ class TestCommandRouter:
         adapter_init.assert_not_called()
         call_kwargs = mock_verify.call_args[1]
         assert call_kwargs["goal"] == "Add button"
-        assert call_kwargs["app_url"] == "http://localhost:5173"
+        assert call_kwargs["url"] == "http://localhost:5173"
 
-    @patch("contexer.workflow.loop.AutonomousLoop.verify_only")
+    @patch("contexer.cli.gate_cli.run_verification")
     def test_verify_without_url_lets_contexer_resolve_it(self, mock_verify) -> None:
-        from contexer.workflow.loop import AutonomousLoopResult
-        mock_verify.return_value = AutonomousLoopResult(goal="g", app_url="u", passed=True, attempts=1)
         app = self._make_app()
         app.config.app_url = None
         CommandRouter().dispatch(app, "/verify Add button")
-        assert mock_verify.call_args[1]["app_url"] is None
+        assert mock_verify.call_args[1]["url"] is None
 
-    @patch("contexer.workflow.loop.AutonomousLoop.run")
+    @patch("contexer.cli.run_cli.run")
     def test_loop_command_with_dir(self, mock_run) -> None:
-        from contexer.workflow.loop import AutonomousLoopResult
-        mock_run.return_value = AutonomousLoopResult(
-            goal="Add button",
-            app_url="http://localhost:3000",
-            passed=True,
-            attempts=1,
-        )
         app = self._make_app()
         router = CommandRouter()
         result = router.dispatch(app, "/loop Add button --dir sandbox --url http://localhost:3000")
@@ -273,7 +256,7 @@ class TestCommandRouter:
         mock_run.assert_called_once()
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs["goal"] == "Add button"
-        assert call_kwargs["project"].name == "sandbox"
+        assert call_kwargs["project_dir"].name == "sandbox"
 
     def test_project_command_registered(self) -> None:
         assert "project" in COMMANDS

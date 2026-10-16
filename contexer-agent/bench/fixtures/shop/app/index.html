@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bookshop</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Bookshop</h1>
+    <div class="cart-summary">
+      Cart: <span data-testid="cart-count">0</span> items ·
+      <span data-testid="cart-total">$0.00</span>
+    </div>
+  </header>
+  <main>
+    <section class="controls">
+      <input id="search" type="search" placeholder="Search products" aria-label="Search products">
+      <div role="group" aria-label="Category">
+        <button type="button" data-category="All" aria-pressed="true">All</button>
+        <button type="button" data-category="Books" aria-pressed="false">Books</button>
+        <button type="button" data-category="Games" aria-pressed="false">Games</button>
+      </div>
+    </section>
+    <section id="products" aria-label="Products"><p class="loading">Loading products…</p></section>
+    <aside>
+      <h2>Your cart</h2>
+      <ul id="cart" aria-label="Cart"></ul>
+    </aside>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

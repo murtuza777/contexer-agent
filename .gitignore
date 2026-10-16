@@ -82,3 +82,6 @@ sandbox*/
 .contexer/
 
 
+
+# Benchmark fixtures ship their approved contracts (the nested .gitignore keeps runs out)
+!contexer-agent/bench/fixtures/*/app/.contexer/

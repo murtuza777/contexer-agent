@@ -1,0 +1,23 @@
+# Dogfoods the Contexer action: replays the todo fixture's approved contract
+# and posts a contexer/acceptance commit status on every push and PR.
+name: Acceptance gate (dogfood)
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Contexer acceptance gate
+        uses: ./
+        with:
+          working-directory: contexer-agent/bench/fixtures/todo/app

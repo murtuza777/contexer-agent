@@ -1,87 +1,120 @@
-# Contexer Agent (Python)
+# Contexer (Python package)
 
-Contexer is an autonomous engineering CLI that sits above coding agents and coordinates software tasks from intent to implementation, runtime observation, dynamic verification, and self-repair.
+This is the developer guide. The product overview is in the
+[repository README](../README.md).
 
-The agent harness is a focused adaptation of AgentForge architectural patterns. See [the integration boundary](docs/agentforge-integration.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
-
-## Capabilities
-
-```text
-User Intent → Contexer CLI → Autonomous Loop → OpenCode (Coding Agent)
-     ↑                                                ↓
-     └──── Repair Engine ← Verifier ← Playwright (Observation)
-```
-
-1. **Interactive Shell**: Typer + Rich REPL with slash commands (`/help`, `/status`, `/project`, `/opencode`, `/loop`, `/verify`, `/github`, `/exit`).
-2. **Provider Abstraction**: OpenRouter, Google Gemini, and OpenAI-compatible streaming LLM completions with structured tool calls.
-3. **Workspace Tools & Safety**: File inspection/editing, read-only Git operations, bounded shell execution, and approval policies (`on-request`, `auto`, `never`).
-4. **OpenCode Integration**: Async HTTP client and adapter interfacing with local OpenCode server (`http://127.0.0.1:4096`) for session management, prompt execution, and git diffs.
-5. **Playwright Observation**: Headless browser automation capturing DOM structure, visible headings, interactive elements, console logs, network errors, and visual screenshots.
-6. **Executable Verification & Self-Repair**: Compiles user intent into acceptance criteria with executable browser checks (click / fill / expect), hands them to the coding agent as the contract, runs them in real Chromium, and sends expected-vs-actual failures back for repair. Every verdict is labelled `proven` (check executed), `LLM-judged`, or `heuristic`. See [docs/roadmap.md](docs/roadmap.md#phase-4--executable-acceptance-checks-done).
-7. **Official GitHub MCP Server**: Enforced read-only integration supporting stdio binary and Docker container execution for safe repository inspection.
-
-## Quick Start
+## Setup
 
 ```bash
-# 1. Navigate to the agent package
 cd contexer-agent
-
-# 2. Create and activate virtual environment
 python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/macOS:
-source .venv/bin/activate
-
-# 3. Install in editable mode
+# Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
-
-# 4. Install Playwright browser dependencies
 playwright install chromium
-
-# 5. Launch Contexer CLI
-contexer
 ```
 
-Configure `OPENROUTER_API_KEY` and optionally `OPENROUTER_MODEL` in `.env` (see `.env.example`).
+**Optional, for compiling goals into checks:** set `OPENROUTER_API_KEY` in
+`.env` (see `.env.example`). Replaying approved contracts never calls a model.
 
-## CLI Commands
+**Optional, for `contexer run`:** a coding agent on `PATH`:
 
-Inside the `contexer` REPL:
+| Agent | Requirement |
+| --- | --- |
+| [Claude Code](https://code.claude.com) (`claude`) | Logged in, or `ANTHROPIC_API_KEY` set |
+| [OpenCode](https://opencode.ai) (`opencode`) | Configured with a provider that allows programmatic use |
 
-* `/loop <goal> [--url <url>] [--dir <path>]` — Run the full autonomous loop (Goal → OpenCode → Playwright → Verifier → Repair).
-* `/verify <goal> [--url <url>] [--dir <path>]` — Verify the running app against a goal with executable browser checks, without changing code.
+## Commands
 
-Without `--url`, static projects are served on a local HTTP port automatically; other projects are observed at `http://localhost:3000` (start the dev server first).
-* `/opencode [status | run <prompt>]` — Interact directly with the local OpenCode execution engine.
-* `/github` — Verify official GitHub MCP Server connection, tool discovery, and read-only mode.
-* `/project [status | list | set <name> | new <name> | reset]` — Inspect and switch target projects or scratch sandboxes.
-* `/status` — View current session status, active project, and provider health.
-* `/help` — Display command help.
-* `/exit` — Exit the Contexer shell.
+Every command takes `--dir PATH` (default: the current directory) and
+`--url URL`. Use `--url` when you already run the app; otherwise Contexer
+serves static sites itself and starts the project's dev server.
 
-## Architecture & Subsystems
+| Command | What it does |
+| --- | --- |
+| `contexer demo [--fix]` | Create a todo app with a seeded bug and prove its contract; no key or agent needed |
+| `contexer init [--ci]` | Detect how the app starts and prepare `.contexer/`; `--ci` writes the gate workflow |
+| `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
+| `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |
+| `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
+| `contexer contract draft "GOAL"` | Create a draft contract |
+| `contexer contract list` / `show ID` | Review contracts |
+| `contexer contract approve ID` | Lock a contract at its current content (sha256). Any later edit needs re-approval |
+| `contexer run "GOAL"` / `--contract ID` | Approve the checklist, drive the coding agent, prove, repair, and keep the best attempt |
+| `contexer bench [--live]` | Seeded-bug benchmark: catch rate and false-failure rate |
+| `contexer runs` | Recent runs with outcome, check counts and report paths |
+| `contexer` | The interactive shell (`/loop`, `/verify`, `/project`, ...) |
 
-- **`cli/`**: Typer entrypoint, Rich REPL shell, command router, and UI components.
-- **`runtime/`**: Agent execution loop, streaming events, and tool execution harness.
-- **`llm/`**: Provider abstraction, OpenRouter/Gemini client, and prompt templates.
-- **`safety/`**: Configurable approval policies, circuit breakers, and observation sanitizers.
-- **`tools/`**: Local filesystem tools, read-only git tools, and bounded terminal execution.
-- **`project/`**: Workspace manager detecting project stacks and protecting the Contexer agent itself.
-- **`opencode/`**: HTTP adapter and async client for OpenCode execution engine.
-- **`observer/`**: Playwright headless browser observer.
-- **`verification/`**: Executable check DSL (`checks.py`), Playwright check runner (`runner.py`), and the verifier that combines proven, judged, and heuristic verdicts.
-- **`repair/`**: Failure diagnosis and repair prompt synthesizer.
-- **`workflow/`**: Autonomous loop orchestrating inspection, planning, execution, verification, and repair.
-- **`mcp/`**: Official GitHub MCP Server runner and client.
+Useful options:
 
-## Product Roadmap Status
+- `--trace on-failure` keeps Playwright traces for failing checks.
+- `--json` prints `result.json`.
+- `--open` opens the HTML report.
+- `run` also takes `--agent`, `--model`, `--rounds`, `--budget` and `--yes`.
 
-- [x] Phase 1: Housekeeping & dead code cleanup (audit verified, dead bootstrap code removed)
-- [ ] Phase 2: Domain realignment & ghost module population (`intent/`, `planner/`, `tasks/`)
-- [ ] Phase 3: Generic coding-agent abstraction (`contexer.coding_agent`)
-- [x] Phase 4: Structured assertion verifier & failure diagnosis rebuild (executable checks, `/verify`)
-- [ ] Phase 5: Durable run state persistence (`.contexer/runs.db`)
-- [ ] Phase 6: LangGraph workflow orchestration state machine
+**Exit codes:** `0` pass · `1` fail (a check was refuted) · `2` needs action
+(unverified check, draft or modified contract, budget or time exhausted) ·
+`3` error (app or agent could not run).
 
-The plan for the remaining phases, including recommended re-sequencing, is in [docs/roadmap.md](docs/roadmap.md).
+## Project files
+
+```text
+<project>/
+  contexer.toml                 optional settings (below)
+  .contexer/
+    contracts/<id>.json          approved contracts: commit these
+    .gitignore                   written by Contexer; keeps everything else local
+    runs/<run-id>/               report.html, result.json, run.json, screenshots,
+                                 traces, server.log, attempt-N/
+    shadow.git/                  private snapshot repository used by `run`
+```
+
+```toml
+# contexer.toml
+[app]
+start = "npm run dev -- --port {port}"   # default: package.json dev/start script
+port = 5173                              # default: a free port
+ready_path = "/"
+ready_timeout = 120
+install = true                           # install dependencies when node_modules is missing
+
+[gate]
+judged = "advisory"                      # or "block"
+
+[agent]
+name = "claude-code"                     # or "opencode"
+max_repair_rounds = 2
+budget_usd = 3.0
+```
+
+## Architecture
+
+| Package | Responsibility |
+| --- | --- |
+| `contract/` | Contract model, canonical sha256, approval, file store |
+| `verification/` | The closed check DSL, the Playwright runner (screenshots, traces), and the verifier. Verdicts are `verified`, `refuted` or `unverified`, each labelled `proven`, `LLM-judged` or `heuristic` |
+| `gate/` | Fail-safe gate decision and the `VerificationSession` |
+| `appserver/` | Start-plan detection, the dev-server lifecycle, and Windows Job Objects |
+| `agents/` | The `CodingAgentAdapter` interface: Claude Code, OpenCode and a scripted agent |
+| `checkpoint/` | Shadow-git snapshots and exact restores |
+| `controller/` | Implement → prove → repair: keep-best, revert, repeated-failure detection, tamper guard |
+| `evidence/` | Run directories and the self-contained HTML report |
+| `github/` | Commit status and job summary |
+| `bench/` | Seeded-bug benchmark, including `--live` scoring of LLM-compiled contracts |
+| `workflow/`, `runtime/`, `cli/repl.py` | The interactive shell and its earlier loop |
+
+The build plan and design decisions are in
+[docs/roadmap.md](docs/roadmap.md). The research behind each library choice is
+in [docs/technical-landscape.md](docs/technical-landscape.md).
+
+## Tests
+
+```bash
+python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
+contexer bench --repeats 2
+```
+
+The suite runs real Chromium against fixture apps, real Node process trees
+for the dev-server tests, and real git for snapshots. It needs no network and
+no model. Live-service tests skip themselves when their prerequisites are
+missing. CI runs both commands on Linux; see
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml).

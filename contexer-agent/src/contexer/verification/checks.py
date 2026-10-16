@@ -155,10 +155,12 @@ class Step(BaseModel):
 
 
 ExpectKind = Literal[
-    "visible", "hidden", "count", "text", "value", "attribute", "css", "url", "title", "no_errors"
+    "visible", "hidden", "checked", "unchecked", "count", "text", "value", "attribute", "css", "url", "title",
+    "no_errors",
 ]
 
-_NEEDS_TARGET = {"visible", "hidden", "count", "text", "value", "attribute", "css"}
+_NEEDS_TARGET = {"visible", "hidden", "checked", "unchecked", "count", "text", "value", "attribute", "css"}
+_TRUTHY = {"", "true", "checked", "on", "1", "yes"}
 _NEEDS_COMPARATOR = {"text", "value", "attribute", "css", "url", "title"}
 
 
@@ -183,6 +185,25 @@ class Expectation(BaseModel):
     changed: Optional[bool] = None
     min: Optional[int] = None
     max: Optional[int] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _checked_attribute_means_state(cls, data: Any) -> Any:
+        """``attribute "checked"`` only reflects the initial markup, never a user's click.
+
+        Models reach for it to say "the box is ticked"; read it as the live state.
+        """
+        if (
+            isinstance(data, dict)
+            and data.get("kind") == "attribute"
+            and str(data.get("attribute", "")).lower() == "checked"
+            and data.get("changed") is None
+            and data.get("contains") is None
+            and data.get("matches") is None
+        ):
+            wanted = str(data.get("equals", "true")).strip().lower()
+            return {"kind": "checked" if wanted in _TRUTHY else "unchecked", "target": data.get("target")}
+        return data
 
     @model_validator(mode="after")
     def _validate_shape(self) -> Expectation:
@@ -234,6 +255,10 @@ class Expectation(BaseModel):
             return f"{target} is visible"
         if self.kind == "hidden":
             return f"{target} is hidden or absent"
+        if self.kind == "checked":
+            return f"{target} is checked"
+        if self.kind == "unchecked":
+            return f"{target} is not checked"
         if self.kind == "no_errors":
             return "no uncaught exceptions or console errors"
         if self.kind == "count":
@@ -304,6 +329,9 @@ class CheckResult(BaseModel):
     page_errors: list[str] = Field(default_factory=list)
     console_errors: list[str] = Field(default_factory=list)
     duration_seconds: float = 0.0
+    # Evidence files, when the runner was given an artifacts directory.
+    screenshot: Optional[str] = None
+    trace: Optional[str] = None
 
     def summary(self) -> str:
         """One-line evidence statement."""

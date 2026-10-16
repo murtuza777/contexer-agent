@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "id": "signup-validation",
+  "goal": "The signup form rejects invalid input with a clear message and confirms a valid signup",
+  "summary": "Client-side validation and success state of the signup form",
+  "source": "user",
+  "created_at": "2026-10-15T00:00:00Z",
+  "approval": {
+    "by": "contexer-bench",
+    "at": "2026-10-15T17:54:57Z",
+    "sha256": "396ec5b8bf2cddeeeafa93a612d238b1cd3481f0181f835f5f5307f59f0d0092"
+  },
+  "criteria": [
+    {
+      "id": "invalid-email-rejected",
+      "description": "An invalid email shows an error and no success message",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Email"
+            },
+            "value": "not-an-email"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Password"
+            },
+            "value": "correct-horse"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Confirm password"
+            },
+            "value": "correct-horse"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create account"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Enter a valid email address"
+            }
+          },
+          {
+            "kind": "hidden",
+            "target": {
+              "text": "Account created"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "short-password-rejected",
+      "description": "A password shorter than 8 characters is rejected",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Email"
+            },
+            "value": "ada@example.com"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Password"
+            },
+            "value": "abc"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Confirm password"
+            },
+            "value": "abc"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create account"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Password must be at least 8 characters"
+            }
+          },
+          {
+            "kind": "hidden",
+            "target": {
+              "text": "Account created"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "mismatch-rejected",
+      "description": "Different passwords are rejected",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Email"
+            },
+            "value": "ada@example.com"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Password"
+            },
+            "value": "correct-horse"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Confirm password"
+            },
+            "value": "correct-cow"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create account"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Passwords do not match"
+            }
+          },
+          {
+            "kind": "hidden",
+            "target": {
+              "text": "Account created"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "valid-signup-confirmed",
+      "description": "Valid details create the account without errors",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Email"
+            },
+            "value": "ada@example.com"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Password"
+            },
+            "value": "correct-horse"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Confirm password"
+            },
+            "value": "correct-horse"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create account"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Account created"
+            }
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "errors-clear-after-fix",
+      "description": "Fixing the invalid field and resubmitting clears the error and succeeds",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Email"
+            },
+            "value": "not-an-email"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Password"
+            },
+            "value": "correct-horse"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Confirm password"
+            },
+            "value": "correct-horse"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create account"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Email"
+            },
+            "value": "ada@example.com"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create account"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "hidden",
+            "target": {
+              "text": "Enter a valid email address"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Account created"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "loads-clean",
+      "description": "The page loads without uncaught exceptions or console errors",
+      "verification_method": "console_check",
+      "check": {
+        "steps": [],
+        "expect": [
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    }
+  ]
+}
