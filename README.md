@@ -81,12 +81,12 @@ Each run also writes a self-contained `report.html`. It contains:
 
 ## Quickstart
 
-Contexer isn't on PyPI yet, so install it from source:
+Contexer isn't on PyPI yet, so install it from GitHub (Python 3.11+):
 
 ```bash
-git clone https://github.com/murtuza777/contexer-agent.git
-pip install -e contexer-agent/contexer-agent
-playwright install chromium
+pip install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"
+python -m playwright install chromium
+contexer doctor        # checks Chromium, git, Node, model keys and agents, with the fix for each
 ```
 
 See it catch a real bug in about ten seconds, with no API key and no agent:
@@ -101,8 +101,10 @@ In your app's directory:
 ```bash
 contexer init --ci     # detect how the app starts; add the GitHub merge-gate workflow
 
-# 1. Describe what must be true. Contexer starts your app (static, Vite or Next.js)
-#    and compiles the goal into checks grounded in the live UI. Needs OPENROUTER_API_KEY.
+# 1. Describe what must be true. Contexer starts your app (static, Vite or Next.js),
+#    compiles the goal into checks grounded in the live UI, and tries each check on the
+#    app as it is: which already pass, which fail, which can't run yet.
+#    Needs ANTHROPIC_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY.
 contexer contract draft "Users can add a task and complete it, and the count updates"
 
 # 2. Read the checklist and lock it in. Commit .contexer/contracts/.
@@ -121,6 +123,27 @@ Or do it all in one step:
 Contexer shows the checklist and asks you to approve it before any code
 changes.
 
+### Apps behind a login
+
+Tell Contexer how to sign in, with a test account, in `contexer.toml`:
+
+```toml
+[auth]
+url = "/login"
+steps = [
+  { action = "fill", target = { label = "Email" }, value = "${CONTEXER_TEST_EMAIL}" },
+  { action = "fill", target = { label = "Password" }, value = "${CONTEXER_TEST_PASSWORD}" },
+  { action = "click", target = { role = "button", name = "Sign in" } },
+]
+expect = [{ kind = "url", contains = "/dashboard" }]
+```
+
+It signs in once per run and starts every check signed in; a check marked
+`"login": false` runs as a signed-out visitor. `${NAME}` values come from the
+environment (CI secrets) or the project's `.env`. They are never written to
+contracts, and typed secrets and password fields are masked in reports and in
+what the coding agent sees.
+
 ## Gate merges in CI
 
 ```yaml
@@ -133,6 +156,9 @@ permissions:
 jobs:
   gate:
     runs-on: ubuntu-latest
+    env:                                       # only if contexer.toml has [auth]
+      CONTEXER_TEST_EMAIL: ${{ secrets.CONTEXER_TEST_EMAIL }}
+      CONTEXER_TEST_PASSWORD: ${{ secrets.CONTEXER_TEST_PASSWORD }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.0.0        # if your app needs Node
@@ -161,7 +187,7 @@ which must still pass.
 
 | Contracts | Seeded bugs caught | False-failing checks on correct code |
 | --- | --- | --- |
-| Hand-written (4 apps, 24 bugs) | **24/24** caught with proof | **0/176** (26 clean runs) |
+| Hand-written (6 apps, 35 bugs) | **35/35** caught with proof | **0/248** (38 clean runs) |
 | Compiled by the LLM from one-line goals (`--live`, free models) | 25–83% per run | 0 in every run |
 
 - **Hand-written row:** the contracts and the bugs were written by the same
@@ -179,27 +205,35 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 <details><summary>Benchmark details</summary>
 
 - **Fixtures:** todo, a shop (filters, search, cart arithmetic, async data),
-  a signup form (validation, error states, a submit that reloads the page) and
-  a notes app (pinning, search in body text, deletes) that is held out from
-  prompt tuning. They live in
-  [`contexer-agent/bench/fixtures`](contexer-agent/bench/fixtures). Each bug
-  has a `BUG.md` naming the check expected to catch it.
+  a signup form (validation, error states, a submit that reloads the page), a
+  notes app (pinning, search in body text, deletes), a members area behind a
+  sign-in (welcome, projects, sign-out, a guard for signed-out visitors), and
+  a React 19 + Vite 8 budget tracker started through its own dev server.
+  They live in [`contexer-agent/bench/fixtures`](contexer-agent/bench/fixtures).
+  Each bug has a `BUG.md` naming the check expected to catch it, and every
+  bug was caught by that check.
 - **Validity rule:** a contract that fails on the correct app is not scored.
 - **Scoring:**
   - **Caught:** a proven check is refuted.
-  - **Flagged:** the bug only made a check unverified.
-  - **False failure:** any check not verified on correct or harmless code.
+  - **Flagged:** the merge is blocked without proof (a check is only
+    unverified, or the app did not start).
+  - **False failure:** any check not verified, or an app that did not start,
+    on correct or harmless code.
 
 </details>
 
 ## Status
 
-What works today, with tests (408 passing) and CI on Linux:
+What works today, with tests (442 passing) and CI on Linux:
 
-- Contracts, approval and hashing; `verify`, `replay`, `contract`, `run`, and
-  `bench` (including `--live`).
+- Contracts, approval and hashing; `verify`, `replay`, `contract`, `run`,
+  `doctor` and `bench` (including `--live`).
+- Drafts that are tried on the running app before approval.
 - Starting the project's dev server (static, Vite, Next.js, or a command in
-  `contexer.toml`), including killing the whole process tree on Windows.
+  `contexer.toml`): `npm ci` from the lockfile, a reinstall when an agent
+  changes dependencies, and killing the whole process tree on Windows.
+- Apps behind a login (`[auth]`), with secrets masked in all evidence.
+- Drafting with Anthropic, OpenAI or OpenRouter models.
 - The repair controller: snapshots, keep-best, revert, fresh session on a
   repeated failure, tamper guard and regression replay.
 - GitHub: the commit status, the job summary, and a reusable action.
@@ -211,10 +245,14 @@ Honest gaps:
   loop is tested with a scripted agent. A live run with a real agent hasn't
   happened yet: the development machine's Claude account had no API credit,
   and OpenCode's free tier now refuses programmatic use.
-- No Codex adapter yet; no GitHub App (check runs, approve button) yet.
-- No login or authenticated flows in checks yet; no visual-design checks.
-- Compiling goals into checks uses OpenRouter. Free models are slow (minutes)
-  and vary in quality. Replays never call a model.
+- No Codex adapter yet; no GitHub App (check runs, approve button) yet; not
+  on PyPI yet.
+- No visual-design checks. Sign-in sessions kept only in `sessionStorage`
+  are not carried into checks (cookie and local-storage sessions are).
+- Draft quality depends on the model. Free OpenRouter models are slow
+  (minutes) and vary from run to run (25–83% of seeded bugs caught). A paid
+  model has not been benchmarked yet, for lack of a paid key on the
+  development machine. Replays never call a model.
 
 ## Docs
 

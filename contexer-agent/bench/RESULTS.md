@@ -1,24 +1,36 @@
 # Benchmark results
 
-All runs below were on Windows 11 with Playwright Chromium, 2026-10-15. CI
-re-runs the hand-written benchmark on Linux on every push.
+Local runs were on Windows 11 with Playwright Chromium. CI re-runs the
+hand-written benchmark on Linux on every push.
 
 ## Hand-written contracts (measures the runner)
 
-`contexer bench --repeats 2`
+`contexer bench --repeats 2`, 2026-10-25 (610 s):
 
-| App | Seeded bugs | Caught (proven) | Flagged | Missed | False-failing checks on correct and benign code |
-| --- | --- | --- | --- | --- | --- |
-| todo | 6 | 6 | 0 | 0 | 0 / 56 (8 runs) |
-| shop | 6 | 6 | 0 | 0 | 0 / 48 (6 runs) |
-| signup | 6 | 6 | 0 | 0 | 0 / 36 (6 runs) |
-| notes (held out) | 6 | 6 | 0 | 0 | 0 / 36 (6 runs) |
-| **total** | **24** | **24** | 0 | 0 | **0 / 176** (26 runs) |
+| App | What it exercises | Seeded bugs | Caught (proven) | Flagged | Missed | False-failing checks on correct and benign code |
+| --- | --- | --- | --- | --- | --- | --- |
+| todo | static JS | 6 | 6 | 0 | 0 | 0 / 56 (8 runs) |
+| shop | static JS, async data | 6 | 6 | 0 | 0 | 0 / 48 (6 runs) |
+| signup | static JS, form validation | 6 | 6 | 0 | 0 | 0 / 36 (6 runs) |
+| notes | static JS | 6 | 6 | 0 | 0 | 0 / 36 (6 runs) |
+| members | behind a sign-in (`[auth]`), a signed-out guard | 5 | 5 | 0 | 0 | 0 / 36 (6 runs) |
+| budget-react | React 19 + Vite 8 through its real dev server | 6 | 6 | 0 | 0 | 0 / 36 (6 runs) |
+| **total** | | **35** | **35** | 0 | 0 | **0 / 248** (38 runs) |
+
+Every bug was caught by the check its `BUG.md` names. The two new apps cover
+what most real projects look like: `members` signs in once and starts every
+check signed in (one check runs signed out), and `budget-react` is installed
+with `npm ci` and started with `vite`, exactly as `contexer verify` starts a
+user's project. The 2026-10-15 run of the first four apps scored the same:
+24/24 caught, 0/176 false failures.
 
 The benign variants are a full JS refactor, visual restyles, a 600ms deferred
-render, a 900ms slow API, a 500ms async submit and a 500ms slow save. All of
-them passed every check: auto-retrying expectations absorb timing, and
-role-based locators survive restyles and refactors.
+render, a 900ms slow API, a 500ms async submit, a 500ms slow save, a session
+moved from local storage to a cookie, and a React save behind a 400ms
+simulated API call. All of them passed every check: auto-retrying
+expectations absorb timing, role-based locators survive restyles and
+refactors, and the replayed sign-in state carries both cookies and local
+storage.
 
 **Caveat:** the contracts and the bugs were written by the same author. This
 shows the runner is reliable and classifies failures correctly, not that
@@ -61,12 +73,16 @@ Next steps for the compiler (see the technical plan):
 
 1. **Pin a capable model for drafting** and measure it with this benchmark
    before recommending it. Free routing is not production-grade for
-   compiling contracts.
-2. **Validate drafts against the running app.** When the app already has the
-   feature, show the checks that fail on it as *suspect* ("bug or wrong
-   check?") before approval, instead of as refuted.
+   compiling contracts. *Partly done:* drafting now runs on Anthropic,
+   OpenAI or OpenRouter (`[compiler]` in `contexer.toml`). A live run with a
+   paid model has not been measured yet: the development machine has no
+   paid key.
+2. **Validate drafts against the running app.** *Done:* `contract draft` and
+   `run "GOAL"` now try every drafted check on the app before approval and
+   list which already pass, which fail (expected vs actual: "bug or wrong
+   check?") and which cannot run yet.
 3. **Retry when a reply is mostly non-executable**, within the 180-second
-   per-attempt cap.
+   per-attempt cap. *Done:* replies under 50% executable are retried.
 
 Common model mistakes the validity filter caught:
 

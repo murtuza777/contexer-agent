@@ -95,7 +95,16 @@ start = "npm run dev"      # default: detected from package.json
 port = 5173                # default: a free port
 ready_path = "/"
 ready_timeout = 120
-install = true             # install dependencies when node_modules is missing
+install = true             # npm ci (lockfile) when node_modules is missing or deps change
+
+[auth]                     # sign in before checks; ${NAME} from env or .env
+url = "/login"
+steps = [ ... ]            # check DSL steps
+expect = [ ... ]           # what proves you are signed in
+
+[compiler]
+provider = "anthropic"     # anthropic | openai | openrouter
+model = "claude-opus-5-5"
 
 [gate]
 judged = "advisory"        # or "block"
@@ -201,6 +210,17 @@ Static projects keep `StaticAppServer`.
 - A readiness probe with Playwright `webServer` semantics: 2xx, 3xx and
   400–403 count as ready. It probes both `127.0.0.1` and `localhost`.
 - If the process exits early, it reports the last log lines.
+- Dependencies install from the lockfile exactly (`npm ci`,
+  `pnpm install --frozen-lockfile`), so a gate run never rewrites it, and are
+  reinstalled when an agent changes `package.json` or a lockfile.
+
+**Sign-in (`[auth]`)** — done 2026-10-25. The flow is check-DSL steps and
+expectations. It runs once per verification; its browser state (cookies,
+local storage) is kept in memory and handed to every check's fresh context,
+and `"login": false` runs a check signed out. `${NAME}` values expand from
+the environment or the project `.env` at run time. Typed secrets and
+password fields are masked in all evidence, and signed-in checks keep no
+trace unless `--trace on` is passed.
 - If the expected port never answers, it falls back to a URL parsed from the
   logs.
 - Dependencies are installed automatically when `node_modules` is missing.
@@ -211,7 +231,7 @@ Static projects keep `StaticAppServer`.
   beforehand.
 - No `node` process is left running afterwards, checked on Windows.
 
-### C3. Benchmark — done (static fixtures, `--live`)
+### C3. Benchmark — done (static, signed-in and React + Vite fixtures, `--live`)
 
 **Layout:**
 
@@ -241,8 +261,11 @@ benchmark refuses to score a contract that fails it.
   and in total.
 - The numbers go in the README.
 
-The first fixtures are static apps, which keeps the benchmark hermetic and
-fast. Vite and Next.js fixtures follow C2, and StrykerJS-generated mutants
+The first fixtures were static apps, which kept the benchmark hermetic and
+fast. Since 2026-10-25 variants start exactly as `contexer verify` starts a
+project, `members` signs in through `[auth]`, and `budget-react` runs
+React 19 + Vite 8 through `npm ci` and its dev server: 35/35 bugs caught,
+0/248 false-failing checks. A Next.js fixture and StrykerJS-generated mutants
 follow later.
 
 ### C4. Agent adapters — done for Claude Code, OpenCode, scripted; Codex next
@@ -352,22 +375,25 @@ runs `contexer replay --report github,html` and uploads `report.html`.
 **Done when** a PR on a test repository shows a failing `contexer/acceptance`
 status that links to the report.
 
-### C8. Compiler quality — next (from the live benchmark)
+### C8. Compiler quality — building (from the live benchmark)
 
 Five `bench --live` runs on `openrouter/free` ranged from 25% to 83% of seeded
 bugs caught, with zero false failures from checks that survived validation.
 The model limits how good a draft can be; the runner does not. In priority
 order:
 
-1. **Pinned drafting model.** Support a separate `[compiler] model` in
-   `contexer.toml`. Benchmark two or three capable models with
-   `bench --live --repeats 3` and recommend one.
-2. **Draft validation.** When drafting against a running app that already
-   implements the goal, run the draft once. Mark failing checks *suspect*,
-   showing their failure report, before approval. A suspect check is either a
-   real bug or a wrong check, and the person decides.
-3. **Coverage retry.** Retry when a reply is less than 50% executable or not
-   JSON, up to three attempts within the 180-second per-attempt cap.
+1. **Pinned drafting model.** *Done in code:* `[compiler]` in `contexer.toml`
+   picks Anthropic, OpenAI or OpenRouter and a model. *Next:* benchmark two
+   or three capable models with `bench --live --repeats 3` and recommend one
+   (needs a paid key).
+2. **Draft validation.** *Done:* `contract draft` and `run "GOAL"` run the
+   draft once on the app and list, before approval, the checks that already
+   pass, fail (with expected vs actual: a real bug or a wrong check, and the
+   person decides) or cannot run yet. When every check already passes, the
+   reviewer is told they may not test the new behaviour.
+3. **Coverage retry.** *Done:* a reply under 50% executable or without JSON
+   is retried, and the better of two attempts is kept, within the
+   180-second per-attempt cap.
 4. **Mutation-based adequacy.** Run StrykerJS on the lines a goal touches and
    report which mutants no check kills, as candidate missing checks for the
    person to approve.

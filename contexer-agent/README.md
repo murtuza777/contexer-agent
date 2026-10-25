@@ -13,8 +13,17 @@ pip install -e ".[dev]"
 playwright install chromium
 ```
 
-**Optional, for compiling goals into checks:** set `OPENROUTER_API_KEY` in
-`.env` (see `.env.example`). Replaying approved contracts never calls a model.
+Then run `contexer doctor`. It checks Python, Chromium, git, Node, the
+drafting model, coding agents and the project in `--dir`, and prints the fix
+for anything missing.
+
+**Optional, for compiling goals into checks:** set one of `ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY` or `OPENROUTER_API_KEY` in the environment or `.env` (see
+`.env.example`). With several keys set, the first in that order is used;
+`CONTEXER_LLM_PROVIDER` or `[compiler]` in `contexer.toml` picks one
+explicitly. Draft quality depends on the model, so prefer a strong one (the
+Anthropic default is `claude-opus-5-5`). Replaying approved contracts never
+calls a model.
 
 **Optional, for `contexer run`:** a coding agent on `PATH`:
 
@@ -31,6 +40,7 @@ serves static sites itself and starts the project's dev server.
 
 | Command | What it does |
 | --- | --- |
+| `contexer doctor` | Check everything Contexer needs, with the fix for each problem |
 | `contexer demo [--fix]` | Create a todo app with a seeded bug and prove its contract; no key or agent needed |
 | `contexer init [--ci]` | Detect how the app starts and prepare `.contexer/`; `--ci` writes the gate workflow |
 | `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
@@ -75,7 +85,21 @@ start = "npm run dev -- --port {port}"   # default: package.json dev/start scrip
 port = 5173                              # default: a free port
 ready_path = "/"
 ready_timeout = 120
-install = true                           # install dependencies when node_modules is missing
+install = true                           # npm ci (lockfile) / npm install when node_modules is missing,
+                                         # and again when an agent changes dependencies
+
+[auth]                                   # sign in before checks (see below)
+url = "/login"
+steps = [
+  { action = "fill", target = { label = "Email" }, value = "${CONTEXER_TEST_EMAIL}" },
+  { action = "fill", target = { label = "Password" }, value = "${CONTEXER_TEST_PASSWORD}" },
+  { action = "click", target = { role = "button", name = "Sign in" } },
+]
+expect = [{ kind = "url", contains = "/dashboard" }]
+
+[compiler]
+provider = "anthropic"                   # or "openai", "openrouter"; default: the first key set
+model = "claude-opus-5-5"
 
 [gate]
 judged = "advisory"                      # or "block"
@@ -85,6 +109,27 @@ name = "claude-code"                     # or "opencode"
 max_repair_rounds = 2
 budget_usd = 3.0
 ```
+
+### Apps behind a login
+
+With `[auth]`, Contexer runs the sign-in steps once per verification and starts
+every check from that signed-in browser state (cookies and local storage, kept
+in memory only). Use a dedicated test account:
+
+- `${NAME}` values are read from the environment (CI secrets) or the project's
+  `.env` at run time. They are never written to contracts. Typed `${NAME}`
+  values and password fields are masked in `result.json`, `report.html` and
+  repair prompts.
+- Signed-in checks keep no Playwright trace unless you pass `--trace on`: a
+  trace records request headers, including the session cookie, and CI uploads
+  traces as artifacts. The sign-in flow itself is never traced.
+- A check with `"login": false` runs signed out, for rules like "visitors are
+  sent to the sign-in page".
+- If sign-in fails, the run is an error (exit 3) that says what did not hold,
+  where the browser ended up and what the page said, with a `sign-in.jpg`
+  screenshot. `contexer doctor` reports unset secrets before you run.
+- Sessions kept only in `sessionStorage` are not carried over; cookie and
+  local-storage sessions are.
 
 ## Architecture
 
@@ -115,6 +160,7 @@ contexer bench --repeats 2
 
 The suite runs real Chromium against fixture apps, real Node process trees
 for the dev-server tests, and real git for snapshots. It needs no network and
-no model. Live-service tests skip themselves when their prerequisites are
+no model. The benchmark's React + Vite fixture runs `npm ci` once, so the
+benchmark needs network the first time. Live-service tests skip themselves when their prerequisites are
 missing. CI runs both commands on Linux; see
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
