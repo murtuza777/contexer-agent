@@ -7,13 +7,17 @@ __all__ = ["AgentTurn", "CodingAgentAdapter", "ScriptedAgent", "TurnStatus", "cr
 
 
 def create_agent(name: str, model: str | None = None) -> CodingAgentAdapter:
-    """Build an adapter by name: ``claude-code`` or ``opencode``."""
+    """Build an adapter by name: ``claude-code``, ``codex`` or ``opencode``."""
     if name in ("claude-code", "claude"):
         from contexer.agents.claude_code import ClaudeCodeAgent
 
         return ClaudeCodeAgent(model=model)
+    if name == "codex":
+        from contexer.agents.codex_agent import CodexAgent
+
+        return CodexAgent(model=model)
     if name == "opencode":
         from contexer.agents.opencode_agent import OpenCodeAgent
 
         return OpenCodeAgent(model=model)
-    raise ValueError(f"Unknown coding agent '{name}' (choose claude-code or opencode)")
+    raise ValueError(f"Unknown coding agent '{name}' (choose claude-code, codex or opencode)")

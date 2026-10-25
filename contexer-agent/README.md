@@ -30,6 +30,7 @@ calls a model.
 | Agent | Requirement |
 | --- | --- |
 | [Claude Code](https://code.claude.com) (`claude`) | Logged in, or `ANTHROPIC_API_KEY` set |
+| [Codex](https://github.com/openai/codex) (`codex`) | `codex login`, or `CODEX_API_KEY` set. Runs in the `workspace-write` sandbox with network on. Codex reports no cost, so `--budget` doesn't apply; rounds and the time limit still do |
 | [OpenCode](https://opencode.ai) (`opencode`) | Configured with a provider that allows programmatic use |
 
 ## Commands
@@ -105,7 +106,7 @@ model = "claude-opus-5-5"
 judged = "advisory"                      # or "block"
 
 [agent]
-name = "claude-code"                     # or "opencode"
+name = "claude-code"                     # or "codex", "opencode"
 max_repair_rounds = 2
 budget_usd = 3.0
 ```
@@ -139,7 +140,7 @@ in memory only). Use a dedicated test account:
 | `verification/` | The closed check DSL, the Playwright runner (screenshots, traces), and the verifier. Verdicts are `verified`, `refuted` or `unverified`, each labelled `proven`, `LLM-judged` or `heuristic` |
 | `gate/` | Fail-safe gate decision and the `VerificationSession` |
 | `appserver/` | Start-plan detection, the dev-server lifecycle, and Windows Job Objects |
-| `agents/` | The `CodingAgentAdapter` interface: Claude Code, OpenCode and a scripted agent |
+| `agents/` | The `CodingAgentAdapter` interface: Claude Code, Codex, OpenCode and a scripted agent |
 | `checkpoint/` | Shadow-git snapshots and exact restores |
 | `controller/` | Implement → prove → repair: keep-best, revert, repeated-failure detection, tamper guard |
 | `evidence/` | Run directories and the self-contained HTML report |

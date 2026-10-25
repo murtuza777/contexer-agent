@@ -38,7 +38,7 @@ appserver/     detect start plan → DevServer (spawn, ready, logs, kill tree)
                or StaticAppServer
 verification/  check DSL, Playwright runner (+ screenshots, traces), verifier,
                verdicts
-agents/        CodingAgentAdapter: claude_code, opencode, scripted (codex next)
+agents/        CodingAgentAdapter: claude_code, codex_agent, opencode, scripted
 checkpoint/    shadow-git snapshots: snapshot / restore / diff
 controller/    run state machine: implement → verify → repair, keep-best,
                signatures, budgets
@@ -268,7 +268,7 @@ React 19 + Vite 8 through `npm ci` and its dev server: 35/35 bugs caught,
 0/248 false-failing checks. A Next.js fixture and StrykerJS-generated mutants
 follow later.
 
-### C4. Agent adapters — done for Claude Code, OpenCode, scripted; Codex next
+### C4. Agent adapters — done for Claude Code, Codex, OpenCode, scripted
 
 **`agents/base.py`:**
 
@@ -293,8 +293,14 @@ follow later.
 - `agents/opencode.py` wraps the existing client.
 - `agents/scripted.py` applies canned file writes per turn, for hermetic loop
   tests.
-- `agents/codex.py` (`codex exec --json --sandbox workspace-write`) comes once
-  the Codex CLI is available to test against.
+- `agents/codex_agent.py` (2026-10-25) runs
+  `codex exec --json --sandbox workspace-write` with approvals `never` and
+  network on, the prompt on stdin, and `resume <thread_id> -` for repair
+  turns. Only `turn.completed` / `turn.failed` end a turn: top-level `error`
+  events include retries. The event shapes come from `@openai/codex-sdk`
+  0.164's types. Against the real codex 0.164.0 binary, both the new-thread
+  and the resume invocations parse and reach the API (unauthenticated here).
+  Codex reports tokens, not cost, so the spending budget does not apply to it.
 
 **Done when:**
 

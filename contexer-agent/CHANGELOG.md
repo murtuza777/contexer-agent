@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Codex.** `contexer run --agent codex` (or `[agent] name = "codex"`) drives
+  `codex exec --json` in the `workspace-write` sandbox, resumes the same
+  thread for repair turns, and reports progress and edited files. Codex
+  reports no cost, so `--budget` does not apply to it.
+
 ## 0.2.0 — 2026-10-25
 
 Real projects: apps behind a login, React and Vite through their own dev

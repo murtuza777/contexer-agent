@@ -240,13 +240,14 @@ What works today, with tests (442 passing) and CI on Linux:
 
 Honest gaps:
 
-- **No live coding-agent run yet.** The Claude Code and OpenCode adapters are
-  tested against the real stream protocol with a fake binary, and the full
-  loop is tested with a scripted agent. A live run with a real agent hasn't
-  happened yet: the development machine's Claude account had no API credit,
-  and OpenCode's free tier now refuses programmatic use.
-- No Codex adapter yet; no GitHub App (check runs, approve button) yet; not
-  on PyPI yet.
+- **No live coding-agent run yet.** The Claude Code, Codex and OpenCode
+  adapters are tested against their real stream protocols with fake binaries,
+  and the full loop is tested with a scripted agent. The real Codex CLI
+  accepts the exact invocations Contexer uses, up to authentication. A
+  complete live run hasn't happened yet: the development machine has no
+  Claude API credit or OpenAI key, and OpenCode's free tier refuses
+  programmatic use.
+- No GitHub App (check runs, approve button) yet; not on PyPI yet.
 - No visual-design checks. Sign-in sessions kept only in `sessionStorage`
   are not carried into checks (cookie and local-storage sessions are).
 - Draft quality depends on the model. Free OpenRouter models are slow

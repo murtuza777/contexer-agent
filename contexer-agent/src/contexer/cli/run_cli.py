@@ -41,7 +41,7 @@ def run(
     contract_id: Optional[str] = typer.Option(None, "--contract", "-c", help="Run an existing contract instead."),
     project_dir: Path = typer.Option(Path("."), "--dir", "-d", help="Project directory.", file_okay=False),
     url: Optional[str] = typer.Option(None, "--url", "-u", help="Use an app you already run."),
-    agent_name: Optional[str] = typer.Option(None, "--agent", help="claude-code (default) or opencode."),
+    agent_name: Optional[str] = typer.Option(None, "--agent", help="claude-code (default), codex or opencode."),
     model: Optional[str] = typer.Option(None, "--model", help="Model for the coding agent."),
     rounds: Optional[int] = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
     budget: Optional[float] = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
@@ -79,14 +79,21 @@ def run(
         judged_policy=config.gate.judged,
         replay_others=not no_replay,
     )
-    agent = create_agent(agent_name or config.agent.name, model or config.agent.model)
+    try:
+        agent = create_agent(agent_name or config.agent.name, model or config.agent.model)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     others = [c for c in store.list() if c.id != contract.id and c.status == "approved"]
 
+    budget_note = ""
+    if settings.budget_usd:
+        # Codex reports tokens, not cost: the round and time limits bound its runs instead.
+        budget_note = " · no spending limit (Codex reports no cost)" if agent.name == "codex" else f" · budget ${settings.budget_usd:.2f}"
     console.print()
     console.print(f"[bold bright_cyan]Contexer run[/] [dim]·[/] {escape(contract.goal)}")
     console.print(
         f"[dim]{escape(agent.describe())} · up to {settings.max_repair_rounds} repair round(s)"
-        f"{f' · budget ${settings.budget_usd:.2f}' if settings.budget_usd else ''}"
+        f"{budget_note}"
         f"{f' · replaying {len(others)} other contract(s)' if others else ''}[/]"
     )
 
