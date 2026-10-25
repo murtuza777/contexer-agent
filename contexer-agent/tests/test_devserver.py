@@ -130,6 +130,34 @@ def test_server_that_crashes_reports_its_log(tmp_path: Path) -> None:
     assert "boom: missing module" in info.value.log_tail
 
 
+def test_a_lockfile_is_installed_exactly_and_never_rewritten(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text(json.dumps({"scripts": {"dev": "vite"}}), encoding="utf-8")
+    assert plan_start(tmp_path).install_argv[1:] == ["install"]  # type: ignore[index]
+    (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+    assert plan_start(tmp_path).install_argv[1:] == ["ci"]  # type: ignore[index]
+    (tmp_path / "package-lock.json").unlink()
+    (tmp_path / "pnpm-lock.yaml").write_text("", encoding="utf-8")
+    assert plan_start(tmp_path).install_argv[1:] == ["install", "--frozen-lockfile"]  # type: ignore[index]
+    assert plan_start(tmp_path, AppSettings(install=False)).install_argv is None
+
+
+@needs_node
+def test_restart_reinstalls_when_dependencies_changed(tmp_path: Path) -> None:
+    project = _node_project(tmp_path / "app")  # node_modules already present
+    plan = plan_start(project)
+    marker = project / "installs.txt"
+    plan.install_argv = [str(NODE), "-e", "require('fs').appendFileSync('installs.txt', 'x')"]
+    server = DevServer(plan)
+    try:
+        server.start()
+        assert not marker.exists()  # dependencies were already installed
+        server.restart(install=True)
+        assert marker.read_text() == "x"
+        assert server.is_alive()
+    finally:
+        server.stop()
+
+
 @needs_node
 def test_ensure_running_restarts_a_dead_server(tmp_path: Path) -> None:
     project = _node_project(tmp_path / "app")

@@ -51,7 +51,8 @@ def plan_start(project_dir: str | Path, settings: Optional[AppSettings] = None) 
     settings = settings or AppSettings()
     pkg = _read_package_json(project)
     manager = package_manager(project, pkg)
-    install = _install_argv(manager) if pkg is not None and settings.install and not (project / "node_modules").is_dir() else None
+    # Runs when node_modules is missing, or after an agent changes dependencies.
+    install = _install_argv(manager, project) if pkg is not None and settings.install else None
 
     if settings.start:
         port = settings.port or free_port()
@@ -153,8 +154,14 @@ def _run_script_argv(manager: str, script: str, extra: list[str]) -> list[str]:
     return [exe, "run", script, *extra]
 
 
-def _install_argv(manager: str) -> list[str]:
-    return [_resolve(manager), "install"]
+def _install_argv(manager: str, project: Path) -> list[str]:
+    """Install exactly what the lockfile pins, as CI does, and never rewrite it."""
+    exe = _resolve(manager)
+    if manager == "npm" and (project / "package-lock.json").exists():
+        return [exe, "ci"]
+    if manager == "pnpm" and (project / "pnpm-lock.yaml").exists():
+        return [exe, "install", "--frozen-lockfile"]
+    return [exe, "install"]
 
 
 def _resolve(executable: str) -> str:

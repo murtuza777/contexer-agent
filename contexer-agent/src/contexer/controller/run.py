@@ -235,15 +235,16 @@ class RunController:
                             )
                         )
                     elif app.server is not None and _DEPENDENCY_FILES & {Path(p).name for p in changed}:
-                        self.on_event("app", "Dependencies changed; restarting the dev server")
-                        app.url = app.server.restart()
+                        self.on_event("app", "Dependencies changed; reinstalling and restarting the dev server")
+                        app.url = app.server.restart(install=True)
                     else:
                         app.ensure_running()
                 except AppStartError as exc:
                     app_error = f"{exc}\n{exc.log_tail}".strip()
                     self.on_event("app", f"The app did not start: {exc}")
-                except Exception as exc:  # restart failures surface as plain errors
-                    app_error = str(exc)
+                except Exception as exc:  # restart failures (DevServerError) carry the install/server log
+                    app_error = f"{exc}\n{getattr(exc, 'log_tail', '')}".strip()
+                    self.on_event("app", f"The app did not restart: {exc}")
 
                 attempt_dir = RunDir(run_id=f"{run.run_id}/a{n}", path=run.path / f"attempt-{n}")
                 attempt_dir.path.mkdir(parents=True, exist_ok=True)
@@ -291,7 +292,10 @@ class RunController:
                     if app is not None and app.server is not None and _DEPENDENCY_FILES & {
                         Path(p).name for p in shadow.changed_paths(snapshots[n], snapshots[best])
                     }:
-                        app.url = app.server.restart()
+                        try:
+                            app.url = app.server.restart(install=True)
+                        except Exception as exc:  # the next attempt restarts it and reports the failure
+                            self.on_event("app", f"The app did not restart after the revert: {exc}")
                     current = snapshots[best]
 
                 if n > self.settings.max_repair_rounds:

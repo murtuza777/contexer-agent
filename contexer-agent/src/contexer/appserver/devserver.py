@@ -58,12 +58,12 @@ class DevServer:
 
     # -- lifecycle -------------------------------------------------------------
 
-    def start(self) -> str:
-        """Install dependencies if needed, start the server, and wait until it answers."""
+    def start(self, install: bool = False) -> str:
+        """Install dependencies if missing (or ``install``), start the server, and wait until it answers."""
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             self._log_file = open(self.log_path, "a", encoding="utf-8")  # noqa: SIM115 - closed in stop()
-        if self.plan.install_argv and not (self.plan.cwd / "node_modules").is_dir():
+        if self.plan.install_argv and (install or not (self.plan.cwd / "node_modules").is_dir()):
             self._install()
         self.on_status(f"Starting `{self.plan.display}` on port {self.plan.port}")
         self._spawn()
@@ -81,9 +81,10 @@ class DevServer:
             self._log_file.close()
             self._log_file = None
 
-    def restart(self) -> str:
+    def restart(self, install: bool = False) -> str:
+        """Stop and start again; ``install`` reinstalls first (dependencies changed)."""
         self.stop()
-        return self.start()
+        return self.start(install=install)
 
     def ensure_running(self) -> str:
         """Restart the server if it died (an agent edit can crash it)."""

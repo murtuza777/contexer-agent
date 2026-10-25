@@ -149,7 +149,9 @@ def project_findings(project: Path) -> list[Finding]:
     else:
         try:
             plan = plan_start(project, settings.app)
-            install = " (dependencies will be installed first)" if plan.install_argv else ""
+            install = ""
+            if plan.install_argv and not (project / "node_modules").is_dir():
+                install = f" (after `{' '.join([Path(plan.install_argv[0]).stem, *plan.install_argv[1:]])}`)"
             findings.append(Finding("App", "ok", f"{project.name}: starts with `{plan.display}`{install}"))
         except StartPlanError as exc:
             findings.append(
