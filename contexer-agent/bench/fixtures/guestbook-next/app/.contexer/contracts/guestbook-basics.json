@@ -1,0 +1,274 @@
+{
+  "version": 1,
+  "id": "guestbook-basics",
+  "goal": "Visitors can sign the guestbook with a name and a message; entries are saved on the server, listed with a correct count, and still there after a reload; a message is required",
+  "summary": "Guestbook: sign, list, count, persist, validate",
+  "source": "user",
+  "created_at": "2026-10-25T00:00:00Z",
+  "approval": {
+    "by": "contexer-bench",
+    "at": "2026-10-25T17:11:21Z",
+    "sha256": "f9fcc93d89d8bc80630d58ed78cff41819894dd76cb1c86c9d3fc5cfbcc816a7"
+  },
+  "criteria": [
+    {
+      "id": "sign-shows-entry",
+      "description": "Signing shows the entry with its name, counts it and clears the message",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Name"
+            },
+            "value": "Ada"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Message"
+            },
+            "value": "Lovely site"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Sign the guestbook"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Lovely site"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Ada"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "entry-count"
+            },
+            "equals": "1 entry"
+          },
+          {
+            "kind": "value",
+            "target": {
+              "label": "Message"
+            },
+            "equals": ""
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "two-entries",
+      "description": "Two entries are both listed and counted",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Name"
+            },
+            "value": "Ada"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Message"
+            },
+            "value": "First note"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Sign the guestbook"
+            }
+          },
+          {
+            "action": "wait",
+            "value": "300"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Name"
+            },
+            "value": "Grace"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Message"
+            },
+            "value": "Second note"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Sign the guestbook"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "First note"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Second note"
+            }
+          },
+          {
+            "kind": "count",
+            "target": {
+              "role": "listitem"
+            },
+            "min": 2,
+            "max": 2
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "entry-count"
+            },
+            "equals": "2 entries"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "message-required",
+      "description": "Signing without a message shows an error and saves nothing",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Name"
+            },
+            "value": "Ada"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Sign the guestbook"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Write a message"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "entry-count"
+            },
+            "equals": "0 entries"
+          }
+        ]
+      }
+    },
+    {
+      "id": "entries-persist",
+      "description": "An entry is still there after reloading the page",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Name"
+            },
+            "value": "Ada"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Message"
+            },
+            "value": "Saved for later"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Sign the guestbook"
+            }
+          },
+          {
+            "action": "wait",
+            "value": "500"
+          },
+          {
+            "action": "goto",
+            "value": "/"
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Saved for later"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "entry-count"
+            },
+            "equals": "1 entry"
+          }
+        ]
+      }
+    },
+    {
+      "id": "loads-clean",
+      "description": "The guestbook loads without errors",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "role": "heading",
+              "name": "Guestbook"
+            }
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    }
+  ]
+}

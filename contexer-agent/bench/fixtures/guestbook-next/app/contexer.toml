@@ -1,0 +1,4 @@
+# Entries live on the server, so every check would see the ones earlier checks
+# saved. The reset puts the guestbook back to empty before each check.
+[app]
+reset = "curl -sf -X POST {url}/api/reset"
