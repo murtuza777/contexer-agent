@@ -30,6 +30,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from contexer.verification.checks import Check, Expectation, Step
+
 CONFIG_FILE = "contexer.toml"
 
 
@@ -60,6 +62,31 @@ class AgentSettings(BaseModel):
     turn_timeout: float = 900.0
 
 
+class AuthSettings(BaseModel):
+    """How to sign in before checks run. Values may use ``${ENV_VAR}`` secrets.
+
+    ```toml
+    [auth]
+    url = "/login"
+    steps = [
+      { action = "fill", target = { label = "Email" }, value = "${CONTEXER_TEST_EMAIL}" },
+      { action = "fill", target = { label = "Password" }, value = "${CONTEXER_TEST_PASSWORD}" },
+      { action = "click", target = { role = "button", name = "Sign in" } },
+    ]
+    expect = [{ kind = "url", contains = "/dashboard" }]
+    ```
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    url: str = "/"
+    steps: list[Step] = Field(min_length=1)
+    expect: list[Expectation] = Field(min_length=1)
+
+    def as_check(self) -> Check:
+        return Check(steps=list(self.steps), expect=list(self.expect), login=False)
+
+
 class CompilerSettings(BaseModel):
     """Which model compiles goals into checks (draft quality depends on it)."""
 
@@ -73,6 +100,7 @@ class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     app: AppSettings = Field(default_factory=AppSettings)
+    auth: Optional[AuthSettings] = None
     compiler: CompilerSettings = Field(default_factory=CompilerSettings)
     gate: GateSettings = Field(default_factory=GateSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)

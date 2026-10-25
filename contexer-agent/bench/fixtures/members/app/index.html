@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard · Members</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Dashboard</h1>
+    <span id="welcome"></span>
+    <button type="button" id="sign-out">Sign out</button>
+  </header>
+  <main class="card">
+    <form id="new-project">
+      <input id="project-name" placeholder="Project name" autocomplete="off">
+      <button type="submit">Create project</button>
+    </form>
+    <ul id="projects" aria-label="Projects"></ul>
+    <p data-testid="project-count">0 projects</p>
+  </main>
+  <script src="auth.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

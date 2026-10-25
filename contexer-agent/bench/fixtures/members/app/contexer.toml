@@ -1,0 +1,10 @@
+# The members fixture signs in with its demo account before checks run.
+# Real projects should reference secrets instead, e.g. value = "${CONTEXER_TEST_PASSWORD}".
+[auth]
+url = "/login.html"
+steps = [
+  { action = "fill", target = { label = "Email" }, value = "demo@example.com" },
+  { action = "fill", target = { label = "Password" }, value = "correct-horse" },
+  { action = "click", target = { role = "button", name = "Sign in" } },
+]
+expect = [{ kind = "visible", target = { role = "heading", name = "Dashboard" } }]

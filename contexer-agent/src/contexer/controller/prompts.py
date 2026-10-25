@@ -68,6 +68,9 @@ def repair_prompt(
 
     if app_error:
         parts.append(f"The app did not start, so no check could run:\n{app_error}")
+    elif result.decision.outcome == "error":
+        # The app started but nothing could be checked, e.g. the sign-in flow broke.
+        parts.append("No check could run:\n" + "\n".join(result.decision.reasons))
     failing = _failing(result)
     if failing:
         parts.append(f"{len(failing)} check(s) did not pass:\n\n" + "\n\n".join(_bundle(cid, r) for cid, r in failing))

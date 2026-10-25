@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "id": "members-basics",
+  "goal": "Signed-in members see a dashboard that welcomes them by name, can create projects that are listed with a correct count (blank names are ignored), and can sign out; signed-out visitors are sent to the sign-in page",
+  "summary": "Members area: welcome, create projects, count, sign out, guard",
+  "source": "user",
+  "created_at": "2026-10-25T00:00:00Z",
+  "approval": {
+    "by": "contexer-bench",
+    "at": "2026-10-25T16:05:55Z",
+    "sha256": "01b4829c95419056e625a60a178de746f83a790a7eabcbb80e4aeafd6fb2dd73"
+  },
+  "criteria": [
+    {
+      "id": "welcomes-member",
+      "description": "The dashboard welcomes the signed-in member by name",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "role": "heading",
+              "name": "Dashboard"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "text": "Welcome,"
+            },
+            "equals": "Welcome, Ada"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "create-project",
+      "description": "Creating a project lists it, counts it and clears the input",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Project name"
+            },
+            "value": "Website"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create project"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Website"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "project-count"
+            },
+            "equals": "1 project"
+          },
+          {
+            "kind": "value",
+            "target": {
+              "placeholder": "Project name"
+            },
+            "equals": ""
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "count-two-projects",
+      "description": "Two projects are both listed and counted",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Project name"
+            },
+            "value": "Website"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create project"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Project name"
+            },
+            "value": "Mobile app"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create project"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "count",
+            "target": {
+              "role": "listitem"
+            },
+            "min": 2,
+            "max": 2
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "project-count"
+            },
+            "equals": "2 projects"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "empty-name-ignored",
+      "description": "A blank project name creates nothing",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "placeholder": "Project name"
+            },
+            "value": "   "
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Create project"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "count",
+            "target": {
+              "role": "listitem"
+            },
+            "max": 0
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "project-count"
+            },
+            "equals": "0 projects"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "sign-out",
+      "description": "Signing out returns to the sign-in page and stays signed out",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Sign out"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "role": "heading",
+              "name": "Sign in"
+            }
+          },
+          {
+            "kind": "url",
+            "contains": "login.html"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "anonymous-redirected",
+      "description": "Signed-out visitors are sent to the sign-in page",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [],
+        "expect": [
+          {
+            "kind": "url",
+            "contains": "login.html"
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "role": "heading",
+              "name": "Sign in"
+            }
+          }
+        ],
+        "login": false
+      }
+    }
+  ]
+}

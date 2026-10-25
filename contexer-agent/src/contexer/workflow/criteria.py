@@ -60,6 +60,8 @@ Comparators: "equals", "contains" (case-insensitive), "matches" (regex), "change
 Rules:
 - Every check runs alone, in a fresh browser, on the freshly loaded app. Include every step that creates the state it
   checks (add the items, fill the form) — never rely on another check having run first.
+- When the project configures a sign-in flow, every check starts already signed in: never add login steps or type
+  credentials. For behaviour of signed-out visitors (a redirect to the login page), add "login": false to the check.
 - A role locator's "name" is the accessible name: an aria-label wins over the visible text.
 - Verify behaviour by interacting, not just by presence: click "Add to cart", then expect the cart count text to change.
 - One behaviour per check. Keep expectations implementation-agnostic

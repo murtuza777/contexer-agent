@@ -6,7 +6,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from contexer.llm.base import LLMProvider
 from contexer.llm.structured import parse_json_object
@@ -67,6 +67,7 @@ class Verifier:
         analysis: Optional[GoalAnalysis] = None,
         repo_context: Optional[RepositoryContext] = None,
         artifacts_dir: Optional[Path] = None,
+        storage_state: Optional[dict[str, Any]] = None,
     ) -> VerificationResult:
         """Verify the application at ``observation.url`` against ``analysis``.
 
@@ -109,10 +110,12 @@ class Verifier:
 
         if asserted:
             pairs = [(c.id, c.check) for c in asserted if c.check is not None]
+            extra: dict[str, Any] = {}
             if artifacts_dir is not None:
-                check_results = await self.runner.run(observation.url, pairs, artifacts_dir=artifacts_dir)
-            else:
-                check_results = await self.runner.run(observation.url, pairs)
+                extra["artifacts_dir"] = artifacts_dir
+            if storage_state is not None:
+                extra["storage_state"] = storage_state
+            check_results = await self.runner.run(observation.url, pairs, **extra)
             for criterion, outcome in zip(asserted, check_results):
                 results.append(
                     CriterionResult(

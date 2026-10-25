@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -11,7 +12,15 @@ from typing import TYPE_CHECKING, Any, Literal, Optional, cast
 from urllib.parse import urljoin
 
 from contexer.observer.playwright import capture_ui_snapshot, record_console_error
-from contexer.verification.checks import Check, CheckResult, Expectation, ExpectationOutcome, Locator, Step
+from contexer.verification.checks import (
+    Check,
+    CheckResult,
+    Expectation,
+    ExpectationOutcome,
+    Locator,
+    Step,
+    expand_secrets,
+)
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, BrowserContext, Locator as PWLocator, Page
@@ -23,6 +32,10 @@ _COMPARATOR_KINDS = {"text", "value", "attribute", "css", "url", "title"}
 _VISIBILITY_SCAN_LIMIT = 20
 
 TraceMode = Literal["off", "on", "on-failure"]
+
+
+class SignInError(Exception):
+    """The configured login flow did not reach a signed-in state."""
 
 
 class CheckRunner:
@@ -57,8 +70,13 @@ class CheckRunner:
         url: str,
         checks: list[tuple[str, Check]],
         artifacts_dir: Optional[Path] = None,
+        storage_state: Optional[dict[str, Any]] = None,
     ) -> list[CheckResult]:
-        """Execute ``(criterion_id, check)`` pairs in order and return one result each."""
+        """Execute ``(criterion_id, check)`` pairs in order and return one result each.
+
+        ``storage_state`` is a signed-in session (from :meth:`sign_in`); checks
+        run with it unless they say ``"login": false``.
+        """
         if not checks:
             return []
         from playwright.async_api import async_playwright
@@ -69,7 +87,10 @@ class CheckRunner:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=self.headless)
                 try:
-                    return [await self._run_one(browser, url, cid, check, artifacts_dir) for cid, check in checks]
+                    return [
+                        await self._run_one(browser, url, cid, check, artifacts_dir, storage_state)
+                        for cid, check in checks
+                    ]
                 finally:
                     await browser.close()
         except Exception as exc:
@@ -79,6 +100,48 @@ class CheckRunner:
                 for cid, _ in checks
             ]
 
+    async def sign_in(
+        self,
+        base_url: str,
+        path: str,
+        flow: Check,
+        screenshot: Optional[Path] = None,
+    ) -> dict[str, Any]:
+        """Run the login flow once and return the signed-in browser state.
+
+        The state (cookies, local storage) is kept in memory and handed to each
+        check's fresh context; it is never written to disk. Raises
+        :class:`SignInError` with the failure report when the flow's
+        expectations do not hold.
+        """
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=self.headless)
+            try:
+                context = await browser.new_context(viewport={"width": 1280, "height": 800}, ignore_https_errors=True)
+                try:
+                    result, page = await self._exercise(context, urljoin(base_url, path), "sign-in", flow)
+                    if not result.passed:
+                        problem = [result.summary()]
+                        if page is not None:
+                            problem.append(f"the browser ended on {page.url}")
+                            alerts = await _alert_text(page)
+                            if alerts:
+                                problem.append(f'the page says "{alerts}"')
+                            if screenshot is not None:
+                                try:
+                                    screenshot.parent.mkdir(parents=True, exist_ok=True)
+                                    await page.screenshot(path=str(screenshot), type="jpeg", quality=70, timeout=5000)
+                                except Exception as exc:
+                                    logger.debug("Sign-in screenshot skipped: %s", exc)
+                        raise SignInError("; ".join(problem))
+                    return cast(dict[str, Any], await context.storage_state())
+                finally:
+                    await context.close()
+            finally:
+                await browser.close()
+
     async def _run_one(
         self,
         browser: Browser,
@@ -86,8 +149,20 @@ class CheckRunner:
         criterion_id: str,
         check: Check,
         artifacts_dir: Optional[Path],
+        storage_state: Optional[dict[str, Any]] = None,
     ) -> CheckResult:
-        context = await browser.new_context(viewport={"width": 1280, "height": 800}, ignore_https_errors=True)
+        if check.login is True and storage_state is None:
+            return CheckResult(
+                criterion_id=criterion_id,
+                passed=False,
+                failed_step="sign-in (this check needs a signed-in user, but contexer.toml has no [auth] section)",
+            )
+        signed_in = storage_state is not None and check.login is not False
+        context = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            ignore_https_errors=True,
+            storage_state=cast(Any, storage_state) if signed_in else None,
+        )
         tracing = self.trace != "off" and artifacts_dir is not None
         try:
             if tracing:
@@ -155,6 +230,10 @@ class CheckRunner:
                 duration_seconds=time.monotonic() - started,
             )
 
+        missing = [name for name in check.secrets() if name not in os.environ]
+        if missing:
+            return finish(False, failed_step=f"secret(s) not set: {', '.join(missing)} (set them in the environment or .env)"), None
+
         page: Optional[Page] = None
         try:
             page = await context.new_page()
@@ -220,7 +299,7 @@ class CheckRunner:
 
     async def _perform(self, page: Page, step: Step, base_url: str) -> None:
         timeout = self.action_timeout * 1000
-        value = step.value or ""
+        value = expand_secrets(step.value or "")
         if step.action == "wait":
             await page.wait_for_timeout(int(value))
             return
@@ -374,6 +453,15 @@ async def _describe_failed_action(target: PWLocator, step: Step, exc: BaseExcept
     except Exception:
         pass
     return f"the action did not complete: {_short(exc)}"
+
+
+async def _alert_text(page: Page) -> str:
+    """Visible role="alert" messages, such as "Invalid email or password"."""
+    try:
+        texts = await page.get_by_role("alert").all_inner_texts()
+    except Exception:
+        return ""
+    return " / ".join(t.strip() for t in texts if t.strip())[:200]
 
 
 def _show(value: Optional[str], before: Optional[str], exp: Expectation) -> str:

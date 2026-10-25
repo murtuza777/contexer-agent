@@ -6,7 +6,7 @@ import base64
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from contexer.observer.models import BrowserObservation
 
@@ -80,6 +80,7 @@ class PlaywrightObserver:
         timeout: float = 15.0,
         screenshot: bool = True,
         screenshot_dir: Optional[str | Path] = None,
+        storage_state: Optional[dict[str, Any]] = None,
     ) -> BrowserObservation:
         """Navigate to URL and capture runtime page state, errors, and DOM."""
         from playwright.async_api import async_playwright, Error as PlaywrightError
@@ -95,6 +96,7 @@ class PlaywrightObserver:
                     context = await browser.new_context(
                         viewport={"width": 1280, "height": 800},
                         ignore_https_errors=True,
+                        storage_state=cast(Any, storage_state),
                     )
                     page = await context.new_page()
 

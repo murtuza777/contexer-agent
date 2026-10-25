@@ -13,6 +13,7 @@ than being half-executed.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any, Literal, Optional
 
@@ -293,17 +294,51 @@ class Expectation(BaseModel):
 
 
 class Check(BaseModel):
-    """Steps to perform, then expectations that must all hold."""
+    """Steps to perform, then expectations that must all hold.
+
+    ``login``: ``None`` follows the project (signed in when ``[auth]`` is
+    configured), ``False`` runs signed out (e.g. "the dashboard redirects
+    anonymous visitors"), ``True`` requires a signed-in session.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     steps: list[Step] = Field(default_factory=list)
     expect: list[Expectation] = Field(min_length=1)
+    login: Optional[bool] = None
 
     def describe_lines(self) -> list[str]:
-        lines = [f"do:     {s.describe()}" for s in self.steps]
+        lines = ["as:     signed-out visitor"] if self.login is False else []
+        lines.extend(f"do:     {s.describe()}" for s in self.steps)
         lines.extend(f"expect: {e.describe()}" for e in self.expect)
         return lines
+
+    def secrets(self) -> list[str]:
+        """Environment variables this check reads through ``${NAME}`` placeholders."""
+        names: list[str] = []
+        for step in self.steps:
+            names.extend(_SECRET.findall(step.value or ""))
+        return list(dict.fromkeys(names))
+
+
+_SECRET = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+class MissingSecretError(ValueError):
+    """A ``${NAME}`` placeholder refers to an environment variable that is not set."""
+
+
+def expand_secrets(value: str, env: Optional[dict[str, str]] = None) -> str:
+    """Replace ``${NAME}`` with the environment variable's value (never stored in contracts)."""
+    source = os.environ if env is None else env
+
+    def lookup(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in source:
+            raise MissingSecretError(f"environment variable {name} is not set")
+        return source[name]
+
+    return _SECRET.sub(lookup, value)
 
 
 class ExpectationOutcome(BaseModel):
