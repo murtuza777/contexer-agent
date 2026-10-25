@@ -8,7 +8,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, Optional, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Optional, cast
 from urllib.parse import urljoin
 
 from contexer.observer.playwright import capture_ui_snapshot, record_console_error
@@ -73,11 +73,14 @@ class CheckRunner:
         checks: list[tuple[str, Check]],
         artifacts_dir: Optional[Path] = None,
         storage_state: Optional[dict[str, Any]] = None,
+        before_each: Optional[Callable[[], Awaitable[Optional[str]]]] = None,
     ) -> list[CheckResult]:
         """Execute ``(criterion_id, check)`` pairs in order and return one result each.
 
         ``storage_state`` is a signed-in session (from :meth:`sign_in`); checks
-        run with it unless they say ``"login": false``.
+        run with it unless they say ``"login": false``. ``before_each`` runs
+        before every check (the ``[app] reset`` command) and returns why it
+        failed, or ``None``; a check whose reset failed cannot run.
         """
         if not checks:
             return []
@@ -89,10 +92,16 @@ class CheckRunner:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=self.headless)
                 try:
-                    return [
-                        await self._run_one(browser, url, cid, check, artifacts_dir, storage_state)
-                        for cid, check in checks
-                    ]
+                    results: list[CheckResult] = []
+                    for cid, check in checks:
+                        problem = await before_each() if before_each is not None else None
+                        if problem:
+                            results.append(
+                                CheckResult(criterion_id=cid, passed=False, failed_step=f"the [app] reset ({problem})")
+                            )
+                            continue
+                        results.append(await self._run_one(browser, url, cid, check, artifacts_dir, storage_state))
+                    return results
                 finally:
                     await browser.close()
         except Exception as exc:

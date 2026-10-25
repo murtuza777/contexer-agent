@@ -44,6 +44,9 @@ class AppSettings(BaseModel):
     ready_timeout: float = 120.0
     install: bool = True
     env: dict[str, str] = Field(default_factory=dict)
+    # Run before every check to put server-side data back (checks share the
+    # app's database), e.g. "npm run db:reset". {url} and {port} are filled in.
+    reset: Optional[str] = None
 
 
 class GateSettings(BaseModel):

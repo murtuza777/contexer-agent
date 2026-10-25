@@ -6,7 +6,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from contexer.llm.base import LLMProvider
 from contexer.llm.structured import parse_json_object
@@ -68,11 +68,13 @@ class Verifier:
         repo_context: Optional[RepositoryContext] = None,
         artifacts_dir: Optional[Path] = None,
         storage_state: Optional[dict[str, Any]] = None,
+        before_each: Optional[Callable[[], Awaitable[Optional[str]]]] = None,
     ) -> VerificationResult:
         """Verify the application at ``observation.url`` against ``analysis``.
 
         ``artifacts_dir`` receives per-check screenshots (and traces, if the
-        runner records them).
+        runner records them). ``storage_state`` and ``before_each`` are passed
+        to the runner (signed-in state; the ``[app] reset`` before each check).
         """
         if not observation.success:
             err = observation.error or "Application was not reachable."
@@ -115,6 +117,8 @@ class Verifier:
                 extra["artifacts_dir"] = artifacts_dir
             if storage_state is not None:
                 extra["storage_state"] = storage_state
+            if before_each is not None:
+                extra["before_each"] = before_each
             check_results = await self.runner.run(observation.url, pairs, **extra)
             for criterion, outcome in zip(asserted, check_results):
                 results.append(

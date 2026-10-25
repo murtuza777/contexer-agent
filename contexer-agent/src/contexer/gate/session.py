@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Awaitable, Callable, Optional, Union
 
 from contexer import __version__
 from contexer.appserver import RunningApp
-from contexer.config.project import AuthSettings, ProjectConfigError, load_project_config
+from contexer.appserver.reset import reset_command, run_reset
+from contexer.config.project import AuthSettings, ProjectConfig, ProjectConfigError, load_project_config
 from contexer.contract.models import Contract, utc_now
 from contexer.evidence.rundir import RunDir
 from contexer.gate.decision import decide
@@ -51,7 +53,11 @@ class VerificationSession:
         # No LLM by default: approved contracts replay without a model.
         self.verifier = verifier or Verifier(llm_provider=None)
         self.observer = observer or PlaywrightObserver()
-        self.auth: Optional[AuthSettings] = _project_auth(self.project_dir) if isinstance(auth, _FromProject) else auth
+        config = _project_config(self.project_dir)
+        self.auth: Optional[AuthSettings] = (config.auth if config else None) if isinstance(auth, _FromProject) else auth
+        # [app] reset: run before every check so checks don't see each other's server-side data.
+        self.reset: Optional[str] = config.app.reset if config else None
+        self._app_env: dict[str, str] = dict(config.app.env) if config else {}
         _load_project_env(self.project_dir)
         self._started = time.monotonic()
         self._started_at = utc_now()
@@ -81,6 +87,15 @@ class VerificationSession:
             kwargs["storage_state"] = state
         self.load = await self.observer.observe(app.url, **kwargs)
         return self.load
+
+    def _reset_before_each(self, app: RunningApp) -> Callable[[], Awaitable[Optional[str]]]:
+        assert self.reset is not None
+        command = reset_command(self.reset, app.url)
+
+        async def reset() -> Optional[str]:
+            return await asyncio.to_thread(run_reset, command, self.project_dir, self._app_env)
+
+        return reset
 
     async def compile(
         self,
@@ -121,6 +136,8 @@ class VerificationSession:
                 extra: dict[str, Any] = {"artifacts_dir": self.run.checks_dir(contract.id)}
                 if state is not None:
                     extra["storage_state"] = state
+                if self.reset:
+                    extra["before_each"] = self._reset_before_each(app)
                 verification = await self.verifier.verify(
                     contract.goal,
                     load,
@@ -164,9 +181,9 @@ class VerificationSession:
         )
 
 
-def _project_auth(project_dir: Path) -> Optional[AuthSettings]:
+def _project_config(project_dir: Path) -> Optional[ProjectConfig]:
     try:
-        return load_project_config(project_dir).auth
+        return load_project_config(project_dir)
     except ProjectConfigError:
         return None  # the app runner reports an invalid contexer.toml
 

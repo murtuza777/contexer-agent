@@ -62,6 +62,9 @@ Rules:
   checks (add the items, fill the form) — never rely on another check having run first.
 - When the project configures a sign-in flow, every check starts already signed in: never add login steps or type
   credentials. For behaviour of signed-out visitors (a redirect to the login page), add "login": false to the check.
+- Checks share the app's server. If the app saves data through an API or database, records an earlier check created
+  may still be listed: give the items a check creates unique names (include the criterion id) and assert on those
+  names, not on an empty list or a total of saved records. Exact counts stay right for state kept in the page.
 - A role locator's "name" is the accessible name: an aria-label wins over the visible text.
 - Verify behaviour by interacting, not just by presence: click "Add to cart", then expect the cart count text to change.
 - One behaviour per check. Keep expectations implementation-agnostic
