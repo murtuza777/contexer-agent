@@ -44,6 +44,7 @@ def register(app: typer.Typer) -> None:
     from contexer.cli.runs_cli import runs
     from contexer.cli.demo_cli import demo
     from contexer.cli.init_cli import init
+    from contexer.cli.doctor_cli import doctor
 
     app.command("run")(run)
     app.command("verify")(verify)
@@ -53,6 +54,7 @@ def register(app: typer.Typer) -> None:
     app.command("runs")(runs)
     app.command("demo")(demo)
     app.command("init")(init)
+    app.command("doctor")(doctor)
 
 
 # -- verify / replay -----------------------------------------------------------

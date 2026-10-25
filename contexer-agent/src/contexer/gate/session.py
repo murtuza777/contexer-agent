@@ -12,6 +12,7 @@ from contexer.contract.models import Contract, utc_now
 from contexer.evidence.rundir import RunDir
 from contexer.gate.decision import decide
 from contexer.gate.models import ContractOutcome, GateDecision, JudgedPolicy, RunResult
+from contexer.observer.browser import browser_problem
 from contexer.observer.models import BrowserObservation
 from contexer.observer.playwright import PlaywrightObserver
 from contexer.verification.verifier import Verifier
@@ -67,7 +68,7 @@ class VerificationSession:
         outcomes: list[ContractOutcome] = []
         app_error: Optional[str] = None
         if not load.success:
-            app_error = f"Application unreachable at {app.url}: {load.error}"
+            app_error = browser_problem(load.error) or f"Application unreachable at {app.url}: {load.error}"
         else:
             for contract in contracts:
                 verification = await self.verifier.verify(
