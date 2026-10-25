@@ -158,6 +158,18 @@ def test_restart_reinstalls_when_dependencies_changed(tmp_path: Path) -> None:
         server.stop()
 
 
+def test_a_configured_start_command_with_a_quoted_path_starts(tmp_path: Path) -> None:
+    # cmd.exe used to get the quotes escaped as \" and answered "is not recognized".
+    (tmp_path / "index.html").write_text("<h1>served</h1>", encoding="utf-8")
+    start = f'"{sys.executable}" -m http.server {{port}} --bind 127.0.0.1'
+    server = DevServer(plan_start(tmp_path, AppSettings(start=start, ready_timeout=30)))
+    try:
+        url = server.start()
+        assert "served" in httpx.get(url).text
+    finally:
+        server.stop()
+
+
 @needs_node
 def test_ensure_running_restarts_a_dead_server(tmp_path: Path) -> None:
     project = _node_project(tmp_path / "app")

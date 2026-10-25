@@ -58,7 +58,7 @@ def plan_start(project_dir: str | Path, settings: Optional[AppSettings] = None) 
         port = settings.port or free_port()
         command = settings.start.replace("{port}", str(port))
         return StartPlan(
-            argv=_shell_argv(command),
+            argv=shell_argv(command),
             display=command,
             port=port,
             cwd=project,
@@ -169,7 +169,8 @@ def _resolve(executable: str) -> str:
     return shutil.which(executable) or executable
 
 
-def _shell_argv(command: str) -> list[str]:
+def shell_argv(command: str) -> list[str]:
+    """Run ``command`` through the platform shell (see procutil.popen_args for Windows quoting)."""
     if sys.platform == "win32":
         return ["cmd.exe", "/d", "/s", "/c", command]
     return ["/bin/sh", "-c", command]

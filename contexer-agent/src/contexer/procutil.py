@@ -20,6 +20,22 @@ if TYPE_CHECKING:
     from contexer.appserver.winjob import KillOnCloseJob
 
 
+_CMD = ["cmd.exe", "/d", "/s", "/c"]
+
+
+def popen_args(argv: list[str]) -> list[str] | str:
+    """What to hand ``Popen`` for ``argv``.
+
+    ``cmd.exe /c`` parses its own command line, and ``subprocess`` would escape
+    quotes inside a shell command as ``\\"``, which cmd does not understand, so
+    a command such as ``"C:\\Program Files\\nodejs\\node.exe" server.js`` failed.
+    With ``/s`` cmd strips one pair of outer quotes and runs the rest verbatim.
+    """
+    if sys.platform == "win32" and len(argv) == len(_CMD) + 1 and argv[: len(_CMD)] == _CMD:
+        return f'{" ".join(_CMD)} "{argv[-1]}"'
+    return argv
+
+
 class ProcessTree:
     """A ``Popen`` plus whatever is needed to stop its descendants."""
 
@@ -75,7 +91,7 @@ def spawn_tree(
     else:
         kwargs["start_new_session"] = True
     proc = subprocess.Popen(
-        argv,
+        popen_args(argv),
         cwd=str(cwd),
         env=env,
         stdin=stdin,
