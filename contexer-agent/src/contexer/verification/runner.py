@@ -165,7 +165,9 @@ class CheckRunner:
             ignore_https_errors=True,
             storage_state=cast(Any, storage_state) if signed_in else None,
         )
-        tracing = self.trace != "off" and artifacts_dir is not None
+        # A trace records request headers, so a signed-in check's trace holds the session
+        # cookie; CI uploads traces as artifacts. Only an explicit --trace on records them.
+        tracing = self.trace != "off" and artifacts_dir is not None and (not signed_in or self.trace == "on")
         try:
             if tracing:
                 await context.tracing.start(screenshots=True, snapshots=True)

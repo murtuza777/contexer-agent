@@ -182,6 +182,22 @@ async def test_typed_secrets_never_reach_the_evidence(tmp_path: Path, monkeypatc
     assert 'textbox "Email": ada@example.com' in result.ui_at_failure  # ordinary input stays useful
 
 
+async def test_signed_in_failures_keep_no_trace_unless_asked(tmp_path: Path) -> None:
+    (tmp_path / "index.html").write_text("<!doctype html><meta charset='utf-8'><h1>Home</h1>", encoding="utf-8")
+    failing = Check.model_validate({"expect": [{"kind": "visible", "target": {"text": "Not on the page"}}]})
+    state = {"cookies": [], "origins": []}  # any signed-in state
+    with StaticAppServer(tmp_path) as server:
+        on_failure = CheckRunner(expect_timeout=0.5, trace="on-failure")
+        [signed_in] = await on_failure.run(server.url, [("a", failing)], tmp_path / "e1", storage_state=state)
+        [signed_out] = await on_failure.run(server.url, [("b", failing)], tmp_path / "e2")
+        explicit = CheckRunner(expect_timeout=0.5, trace="on")
+        [asked] = await explicit.run(server.url, [("c", failing)], tmp_path / "e3", storage_state=state)
+    # A trace holds request headers, i.e. the session cookie, and CI uploads traces.
+    assert signed_in.trace is None
+    assert signed_out.trace is not None
+    assert asked.trace is not None
+
+
 def test_members_fixture_contract_is_approved() -> None:
     [contract] = ContractStore(FIXTURE / "app").list()
     assert contract.status == "approved"
