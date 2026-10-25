@@ -9,13 +9,16 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import typer
 from rich.console import Console
 from rich.markup import escape
 
 from contexer import __version__
+
+if TYPE_CHECKING:
+    from contexer.config.project import AuthSettings
 
 Status = Literal["ok", "warn", "fail"]
 _MARK = {"ok": "[green]✓[/]", "warn": "[yellow]![/]", "fail": "[red]✗[/]"}
@@ -152,6 +155,8 @@ def project_findings(project: Path) -> list[Finding]:
             findings.append(
                 Finding("App", "fail", str(exc), 'Add [app] start = "<command with {port}>" to contexer.toml')
             )
+    if settings.auth is not None:
+        findings.append(_sign_in_finding(project, settings.auth))
 
     try:
         contracts = ContractStore(project).list()
@@ -175,6 +180,31 @@ def project_findings(project: Path) -> list[Finding]:
         )
     )
     return findings
+
+
+def _sign_in_finding(project: Path, auth: AuthSettings) -> Finding:
+    from dotenv import dotenv_values
+
+    secrets = auth.as_check().secrets()
+    env_file = project / ".env"
+    known = set(os.environ) | (set(dotenv_values(env_file)) if env_file.is_file() else set())
+    missing = [name for name in secrets if name not in known]
+    if missing:
+        return Finding(
+            "Sign-in",
+            "fail",
+            f"[auth] uses {', '.join(missing)}, which {'is' if len(missing) == 1 else 'are'} not set",
+            "Set test credentials in the environment (CI secrets) or the project's .env, kept out of git",
+        )
+    if not secrets and any(step.action == "fill" for step in auth.steps):
+        return Finding(
+            "Sign-in",
+            "warn",
+            f"[auth] signs in at {auth.url} with credentials written in contexer.toml",
+            'Use a test account and reference it as value = "${CONTEXER_TEST_PASSWORD}"',
+        )
+    using = f" with {', '.join(secrets)}" if secrets else ""
+    return Finding("Sign-in", "ok", f"[auth] signs in at {auth.url}{using}")
 
 
 def _version(argv: list[str]) -> str:
