@@ -8,13 +8,17 @@ Fixture layout::
     <fixtures>/<app>/bugs/<id>/   file overlays introducing one bug (+ BUG.md)
     <fixtures>/<app>/benign/<id>/ overlays that change code but not behaviour
 
-Each variant is materialised in a temporary directory, served, and verified
-with the app's approved contracts and no LLM. Scoring:
+Each variant is materialised in a temporary directory, started the way
+``contexer verify`` starts a project (static files are served; a package.json
+app runs its real dev server, installed once per app), and verified with the
+app's approved contracts and no LLM. Scoring:
 
-* good and benign runs: any gating verdict other than ``verified`` is a false
-  failure (refuted is a false alarm, unverified is noise that blocks a merge);
-* bug runs: **caught** when a proven check is refuted, **flagged** when a check
-  is only unverified, **missed** when everything verifies.
+* good and benign runs: any outcome other than a pass is a false failure
+  (refuted is a false alarm; unverified, or an app that did not start, is noise
+  that blocks a merge);
+* bug runs: **caught** when a proven check is refuted, **flagged** when the
+  gate blocks without proof (a check is only unverified, or the app did not
+  start), **missed** when everything verifies.
 
 Validity rule (from SWE-Lancer): a contract that does not pass on the good app
 is broken, and its app is reported as invalid instead of being scored.
@@ -32,7 +36,7 @@ from typing import Callable, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from contexer.appserver import RunningApp
+from contexer.appserver import AppStartError, open_app
 from contexer.contract import Contract, ContractStore
 from contexer.evidence.rundir import RunDir
 from contexer.gate.models import RunResult
@@ -40,14 +44,14 @@ from contexer.gate.session import VerificationSession
 from contexer.llm.base import LLMProvider
 from contexer.verification.runner import CheckRunner
 from contexer.verification.verifier import Verifier
-from contexer.workflow.app_server import StaticAppServer
 from contexer.workflow.criteria import GoalAnalyzer
-from contexer.workflow.inspector import RepositoryInspector
 
 VariantKind = Literal["good", "benign", "bug"]
 BugVerdict = Literal["caught", "flagged", "missed"]
 
 _IGNORED = shutil.ignore_patterns(".contexer", "node_modules", ".git")
+# Survives between variants of one app, so dependencies install once.
+_KEPT = {"node_modules"}
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,8 @@ class VariantRun(BaseModel):
     expected_catcher: Optional[str] = None
     caught_by_expected: Optional[bool] = None
     duration_seconds: float = 0.0
+    # Why the run errored (e.g. the app did not start), for diagnosis.
+    error: str = ""
 
 
 class CompileStats(BaseModel):
@@ -193,61 +199,105 @@ async def run_bench(
             score.valid = False
             score.invalid_reason = "no approved contracts" if not app.contracts else f"not approved: {unapproved}"
             continue
-        if live_llm is not None:
-            compiled, stats = await _compile_live(app, live_llm)
-            score.compiled = stats
-            if on_compiled:
-                on_compiled(app.name, stats)
-            if compiled is None:
-                score.valid = False
-                score.invalid_reason = "no compiled check passed on the good app"
-                continue
-            app = FixtureApp(name=app.name, root=app.root, contracts=[compiled], bugs=app.bugs, benign=app.benign)
+        with _Workspace(app) as workspace:
+            if live_llm is not None:
+                try:
+                    compiled, stats = await _compile_live(app, live_llm, workspace)
+                except AppStartError as exc:
+                    score.valid = False
+                    score.invalid_reason = f"the good app did not start: {exc}"
+                    continue
+                score.compiled = stats
+                if on_compiled:
+                    on_compiled(app.name, stats)
+                if compiled is None:
+                    score.valid = False
+                    score.invalid_reason = "no compiled check passed on the good app"
+                    continue
+                app = FixtureApp(name=app.name, root=app.root, contracts=[compiled], bugs=app.bugs, benign=app.benign)
 
-        good = Variant(app=app.name, kind="good", name="good")
-        plan: list[tuple[Variant, int]] = [(good, r) for r in range(repeats)]
-        plan += [(v, r) for v in app.benign for r in range(repeats)]
-        plan += [(v, 0) for v in app.bugs]
+            good = Variant(app=app.name, kind="good", name="good")
+            plan: list[tuple[Variant, int]] = [(good, r) for r in range(repeats)]
+            plan += [(v, r) for v in app.benign for r in range(repeats)]
+            plan += [(v, 0) for v in app.bugs]
 
-        for variant, repeat in plan:
-            run = await _run_variant(app, variant, repeat)
-            report.runs.append(run)
-            if on_run:
-                on_run(run)
-            if variant.kind == "good" and repeat == 0 and run.outcome != "pass":
-                score.valid = False
-                score.invalid_reason = (
-                    f"contract fails on the good app (refuted: {run.refuted}, unverified: {run.unverified})"
-                )
-                break
-            _score(score, run)
+            for variant, repeat in plan:
+                run = await _run_variant(app, variant, repeat, workspace)
+                report.runs.append(run)
+                if on_run:
+                    on_run(run)
+                if variant.kind == "good" and repeat == 0 and run.outcome != "pass":
+                    score.valid = False
+                    score.invalid_reason = (
+                        f"the good app did not start: {run.error}"
+                        if run.error
+                        else f"contract fails on the good app (refuted: {run.refuted}, unverified: {run.unverified})"
+                    )
+                    break
+                _score(score, run)
 
     report.duration_seconds = time.monotonic() - started
     return report
 
 
-async def _compile_live(app: FixtureApp, llm: LLMProvider) -> tuple[Optional[Contract], CompileStats]:
+class _Workspace:
+    """A working copy of one fixture app, reused by all of its variants.
+
+    Each variant starts from the good files plus its overlay; installed
+    dependencies survive, so a dev-server app installs once rather than per run.
+    """
+
+    def __init__(self, app: FixtureApp) -> None:
+        self.source = app.app_dir
+        self._tmp = tempfile.TemporaryDirectory(prefix=f"contexer-bench-{app.name}-", ignore_cleanup_errors=True)
+        self.path = Path(self._tmp.name) / "app"
+
+    def materialise(self, overlay: Optional[Path] = None) -> Path:
+        if self.path.exists():
+            for child in self.path.iterdir():
+                if child.name in _KEPT:
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        shutil.copytree(self.source, self.path, ignore=_IGNORED, dirs_exist_ok=True)
+        if overlay is not None:
+            for src in overlay.rglob("*"):
+                if src.is_file() and src.name not in ("BUG.md", "CHANGE.md"):
+                    dest = self.path / src.relative_to(overlay)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(src, dest)
+        return self.path
+
+    def __enter__(self) -> _Workspace:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._tmp.cleanup()
+
+
+async def _compile_live(
+    app: FixtureApp, llm: LLMProvider, workspace: _Workspace
+) -> tuple[Optional[Contract], CompileStats]:
     """Compile the app's goal with the model, then keep only checks that pass on the good app."""
     started = time.monotonic()
     goal = app.contracts[0].goal
     stats = CompileStats()
-    with tempfile.TemporaryDirectory(prefix=f"contexer-compile-{app.name}-") as tmp:
-        work = Path(tmp) / "app"
-        shutil.copytree(app.app_dir, work, ignore=_IGNORED)
-        run_dir = RunDir.create(work)
-        session = VerificationSession(work, run_dir, verifier=Verifier(llm_provider=None, runner=CheckRunner()))
-        context = RepositoryInspector().inspect(work)
-        with StaticAppServer(work) as server:
-            running = RunningApp(url=server.url, kind="static", repo_context=context)
-            await session.observe(running)
-            drafted = await session.compile(goal, GoalAnalyzer(llm_provider=llm), f"{app.name}-compiled", context)
-            stats.criteria = len(drafted.criteria)
-            stats.fallback = drafted.source == "rules"
-            stats.contract = drafted.to_file_dict()
-            executable = [c for c in drafted.criteria if c.check is not None]
-            stats.executable = len(executable)
-            candidate = drafted.model_copy(update={"criteria": executable}).approved_by("bench-live")
-            result = await session.verify(running, [candidate])
+    work = workspace.materialise()
+    run_dir = RunDir.create(work)
+    session = VerificationSession(work, run_dir, verifier=Verifier(llm_provider=None, runner=CheckRunner()))
+    with open_app(work, log_path=run_dir.server_log) as running:
+        context = running.repo_context
+        await session.observe(running)
+        drafted = await session.compile(goal, GoalAnalyzer(llm_provider=llm), f"{app.name}-compiled", context)
+        stats.criteria = len(drafted.criteria)
+        stats.fallback = drafted.source == "rules"
+        stats.contract = drafted.to_file_dict()
+        executable = [c for c in drafted.criteria if c.check is not None]
+        stats.executable = len(executable)
+        candidate = drafted.model_copy(update={"criteria": executable}).approved_by("bench-live")
+        result = await session.verify(running, [candidate])
     passing: set[str] = set()
     for outcome in result.contracts:
         for r in outcome.verification.criteria_results if outcome.verification else []:
@@ -265,21 +315,29 @@ async def _compile_live(app: FixtureApp, llm: LLMProvider) -> tuple[Optional[Con
     return pruned, stats
 
 
-async def _run_variant(app: FixtureApp, variant: Variant, repeat: int) -> VariantRun:
+async def _run_variant(app: FixtureApp, variant: Variant, repeat: int, workspace: _Workspace) -> VariantRun:
     started = time.monotonic()
-    with tempfile.TemporaryDirectory(prefix=f"contexer-bench-{app.name}-") as tmp:
-        work = Path(tmp) / "app"
-        shutil.copytree(app.app_dir, work, ignore=_IGNORED)
-        if variant.overlay is not None:
-            for src in variant.overlay.rglob("*"):
-                if src.is_file() and src.name not in ("BUG.md", "CHANGE.md"):
-                    dest = work / src.relative_to(variant.overlay)
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(src, dest)
-        run_dir = RunDir.create(work)
-        session = VerificationSession(work, run_dir, verifier=Verifier(llm_provider=None, runner=CheckRunner()))
-        with StaticAppServer(work) as server:
-            result = await session.verify(RunningApp(url=server.url, kind="static"), app.contracts)
+    work = workspace.materialise(variant.overlay)
+    run_dir = RunDir.create(work)
+    session = VerificationSession(work, run_dir, verifier=Verifier(llm_provider=None, runner=CheckRunner()))
+    try:
+        with open_app(work, log_path=run_dir.server_log) as running:
+            result = await session.verify(running, app.contracts)
+    except AppStartError as exc:
+        run = VariantRun(
+            app=variant.app,
+            kind=variant.kind,
+            name=variant.name,
+            repeat=repeat,
+            outcome="error",
+            expected_catcher=variant.expected_catcher,
+            duration_seconds=time.monotonic() - started,
+            error=f"{exc}\n{exc.log_tail}".strip()[-1500:],
+        )
+        if variant.kind == "bug":
+            run.bug_verdict = "flagged"
+            run.caught_by_expected = False if variant.expected_catcher else None
+        return run
     return _summarise(variant, repeat, result, time.monotonic() - started)
 
 
@@ -309,9 +367,11 @@ def _summarise(variant: Variant, repeat: int, result: RunResult, duration: float
         unverified=unverified,
         expected_catcher=variant.expected_catcher,
         duration_seconds=duration,
+        error="; ".join(result.decision.reasons)[:1500] if result.decision.outcome == "error" else "",
     )
     if variant.kind == "bug":
-        run.bug_verdict = "caught" if refuted else ("flagged" if unverified else "missed")
+        blocked = bool(unverified) or result.decision.outcome == "error"
+        run.bug_verdict = "caught" if refuted else ("flagged" if blocked else "missed")
         if variant.expected_catcher:
             run.caught_by_expected = variant.expected_catcher in refuted
     return run
@@ -324,7 +384,7 @@ def _score(score: AppScore, run: VariantRun) -> None:
         score.gating_checks_on_clean_runs += checks
         bad = len(run.refuted) + len(run.unverified)
         score.false_failing_checks += bad
-        if bad:
+        if bad or run.outcome != "pass":  # an app that did not start fails the run with no checks
             score.false_failure_runs += 1
         return
     score.bugs += 1

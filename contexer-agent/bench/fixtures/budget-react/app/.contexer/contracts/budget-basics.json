@@ -1,0 +1,528 @@
+{
+  "version": 1,
+  "id": "budget-basics",
+  "goal": "Users can add expenses with a description, amount and category, see them listed with a correct total, delete one, filter the list by category, and get an error for an amount of 0 or less",
+  "summary": "Budget tracker: add, total, delete, validate, filter",
+  "source": "user",
+  "created_at": "2026-10-25T00:00:00Z",
+  "approval": {
+    "by": "contexer-bench",
+    "at": "2026-10-25T16:24:30Z",
+    "sha256": "7ab8019e304751f59264d11cdec8a537cdba4be7e46e4b2c5e0f61f1b702ded4"
+  },
+  "criteria": [
+    {
+      "id": "add-expense",
+      "description": "Adding an expense lists it, totals it and clears the form",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Lunch"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "12.5"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Food"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Lunch"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "total"
+            },
+            "equals": "$12.50"
+          },
+          {
+            "kind": "value",
+            "target": {
+              "label": "Description"
+            },
+            "equals": ""
+          },
+          {
+            "kind": "value",
+            "target": {
+              "label": "Amount"
+            },
+            "equals": ""
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "total-sums",
+      "description": "The total is the sum of every expense",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Lunch"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "12.5"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Food"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Train"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "30"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Travel"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "count",
+            "target": {
+              "role": "listitem"
+            },
+            "min": 2,
+            "max": 2
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "total"
+            },
+            "equals": "$42.50"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "delete-one",
+      "description": "Deleting one expense keeps the others and updates the total",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Lunch"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "12.5"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Food"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Train"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "30"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Travel"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Delete Lunch"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "hidden",
+            "target": {
+              "text": "Lunch"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Train"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "total"
+            },
+            "equals": "$30.00"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "amount-required",
+      "description": "An amount of 0 is rejected with a message and adds nothing",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Coffee"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "0"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Food"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Enter an amount greater than 0"
+            }
+          },
+          {
+            "kind": "count",
+            "target": {
+              "role": "listitem"
+            },
+            "max": 0
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "total"
+            },
+            "equals": "$0.00"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "filter-category",
+      "description": "Showing one category hides the others, and All shows everything again",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Lunch"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "12.5"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Food"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Train"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "30"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Travel"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Show"
+            },
+            "value": "Travel"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Show"
+            },
+            "value": "All"
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Lunch"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Train"
+            }
+          },
+          {
+            "kind": "count",
+            "target": {
+              "role": "listitem"
+            },
+            "min": 2,
+            "max": 2
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "filter-hides-others",
+      "description": "Showing one category lists only that category",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Lunch"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "12.5"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Food"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Description"
+            },
+            "value": "Train"
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Amount"
+            },
+            "value": "30"
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Category"
+            },
+            "value": "Travel"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Add expense"
+            }
+          },
+          {
+            "action": "select",
+            "target": {
+              "label": "Show"
+            },
+            "value": "Travel"
+          }
+        ],
+        "expect": [
+          {
+            "kind": "hidden",
+            "target": {
+              "text": "Lunch"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Train"
+            }
+          },
+          {
+            "kind": "count",
+            "target": {
+              "role": "listitem"
+            },
+            "min": 1,
+            "max": 1
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    }
+  ]
+}

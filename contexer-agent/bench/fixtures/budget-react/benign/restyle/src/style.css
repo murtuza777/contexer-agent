@@ -1,0 +1,11 @@
+body { font-family: Georgia, serif; background: #fefce8; color: #1c1917; margin: 0; }
+main { max-width: 640px; margin: 24px auto; background: #fff; padding: 32px; border-radius: 4px; box-shadow: 0 1px 4px #0002; }
+form { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 24px; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 15px; }
+input, select { padding: 8px; border: 1px solid #d6d3d1; border-radius: 4px; }
+[role="alert"] { color: #9f1239; margin: 0; font-weight: 600; }
+ul { list-style: none; padding: 0; }
+li { display: flex; gap: 16px; padding: 10px 0; border-bottom: 1px dashed #d6d3d1; }
+li span:first-child { flex: 1; font-weight: 600; }
+.category { color: #78716c; font-style: italic; }
+.filter { flex-direction: row; align-items: center; gap: 8px; }

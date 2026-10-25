@@ -19,14 +19,18 @@ Each fixture in `fixtures/<app>/` has:
 | `bugs/<id>/` | File overlays introducing **one** realistic bug, with a `BUG.md` naming the check expected to catch it |
 | `benign/<id>/` | Overlays that change code but not behaviour (refactor, restyle, slow API) |
 
-Every variant is copied to a temporary directory, served, and verified in
-Chromium with no LLM. Scoring:
+Every variant is copied to a temporary directory and started the way
+`contexer verify` starts a project: static apps are served as files, and an
+app with a `package.json` runs its real dev server (`npm ci` once per app, so
+the React fixture needs network on its first run). Then it is verified in
+Chromium with no LLM. Fixtures with an `[auth]` section in `contexer.toml`
+sign in first, exactly as a user's project would. Scoring:
 
 | Variant | Result | Meaning |
 | --- | --- | --- |
-| Correct and benign | **False failure** | Any check not verified (refuted or unverified) |
+| Correct and benign | **False failure** | Any check not verified (refuted or unverified), or the app did not start |
 | Bug | **Caught** | A proven check is refuted |
-| Bug | **Flagged** | A check is only unverified, so the merge is blocked without proof of what broke |
+| Bug | **Flagged** | The merge is blocked without proof of what broke: a check is only unverified, or the app did not start |
 | Bug | **Missed** | Every check passed |
 
 **Validity rule** (from SWE-Lancer): a contract that does not pass on the
@@ -62,8 +66,9 @@ See [RESULTS.md](RESULTS.md).
 
 ## Adding a fixture
 
-1. Write the correct app in `fixtures/<name>/app/` (static HTML/JS, so it is
-   served without a build).
+1. Write the correct app in `fixtures/<name>/app/`: static HTML/JS, or a
+   `package.json` app with a `dev` script and a committed lockfile. Add an
+   `[auth]` section to its `contexer.toml` if it needs a signed-in user.
 2. Write its contract in `app/.contexer/contracts/<id>.json`, then
    `contexer contract approve <id> --dir fixtures/<name>/app`.
 3. Add `bugs/<id>/` overlays, each with a `BUG.md` naming the catching check,

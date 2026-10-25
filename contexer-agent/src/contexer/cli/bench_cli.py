@@ -94,13 +94,17 @@ def _run_line(run: VariantRun) -> str:
     if run.kind == "bug":
         style = {"caught": "green", "flagged": "yellow", "missed": "red"}[run.bug_verdict or "missed"]
         detail = f"refuted {run.refuted}" if run.refuted else (f"unverified {run.unverified}" if run.unverified else "")
+        if not detail and run.error:
+            detail = f"error: {run.error.splitlines()[0]}"
         expected = ""
         if run.expected_catcher and run.bug_verdict == "caught" and not run.caught_by_expected:
             expected = f" [dim](expected {run.expected_catcher})[/]"
         return f"  [{style}]{run.bug_verdict}[/] {escape(label)} [dim]{escape(detail)}[/]{expected} [dim]{run.duration_seconds:.1f}s[/]"
-    clean = not run.refuted and not run.unverified
+    clean = run.outcome == "pass" and not run.refuted and not run.unverified
     mark = "[green]clean[/]" if clean else "[red]false failure[/]"
     detail = "" if clean else f" refuted {run.refuted} unverified {run.unverified}"
+    if run.error:
+        detail += f" error: {run.error.splitlines()[0]}"
     return f"  {mark} {escape(label)}[dim]{escape(detail)} {run.duration_seconds:.1f}s[/]"
 
 
