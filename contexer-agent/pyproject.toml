@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contexer"
-version = "0.1.0"
-description = "Contexer — Autonomous Engineering Agent CLI"
+version = "0.2.0"
+description = "Acceptance gate for AI coding agents: proves in a real browser that a change does what was asked"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [
     { name = "Contexer Contributors" },
 ]
-keywords = ["cli", "agent", "autonomous", "engineering"]
+keywords = ["cli", "ai-agents", "acceptance-testing", "playwright", "ci", "code-review"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
