@@ -9,6 +9,10 @@ Everything is optional; detection fills the gaps. Example::
     ready_timeout = 120
     install = true
 
+    [compiler]
+    provider = "anthropic"   # or "openai", "openrouter"; default: whichever key is set
+    model = "claude-opus-5-5"
+
     [gate]
     judged = "advisory"
 
@@ -56,10 +60,20 @@ class AgentSettings(BaseModel):
     turn_timeout: float = 900.0
 
 
+class CompilerSettings(BaseModel):
+    """Which model compiles goals into checks (draft quality depends on it)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    provider: Optional[Literal["anthropic", "openai", "openrouter"]] = None
+    model: Optional[str] = None
+
+
 class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     app: AppSettings = Field(default_factory=AppSettings)
+    compiler: CompilerSettings = Field(default_factory=CompilerSettings)
     gate: GateSettings = Field(default_factory=GateSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
 

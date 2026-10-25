@@ -33,11 +33,12 @@ def bench(
 
     llm = None
     if live:
-        from contexer.cli.gate_cli import _llm_or_none
+        from contexer.cli.gate_cli import compiler_llm
 
-        llm = _llm_or_none()
+        llm = compiler_llm()
         if llm is None:
-            raise typer.BadParameter("--live needs an LLM (set OPENROUTER_API_KEY)")
+            raise typer.BadParameter("--live needs a model: set ANTHROPIC_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY")
+        console.print(f"[dim]Compiling with {escape(llm.name)} · {escape(llm.model)}[/]")
 
     def compiled(name: str, stats: CompileStats) -> None:
         dropped = f", dropped {stats.failed_on_good} (failed on the good app)" if stats.failed_on_good else ""

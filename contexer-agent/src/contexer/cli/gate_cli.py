@@ -166,7 +166,7 @@ async def run_verification(
             with console.status("[dim]Loading the app...[/dim]"):
                 await session.observe(app)
             if goal:
-                analyzer = GoalAnalyzer(llm_provider=llm or _llm_or_none())
+                analyzer = GoalAnalyzer(llm_provider=llm or compiler_llm(project))
                 with console.status("[dim]Compiling the goal into executable checks...[/dim]"):
                     drafted = await session.compile(goal, analyzer, store.unique_id(goal), app.repo_context)
                 path = store.save(drafted)
@@ -218,17 +218,23 @@ def warn_if_weak_draft(console: Console, contract: Contract) -> None:
     )
 
 
-def _llm_or_none() -> Optional[LLMProvider]:
+def compiler_llm(project_dir: Optional[Path] = None) -> Optional[LLMProvider]:
+    """The model that compiles goals into checks: [compiler] in contexer.toml, then env, then any key."""
+    from contexer.config.project import ProjectConfigError, load_project_config
     from contexer.config.settings import load_config
-    from contexer.llm.factory import create_llm_provider
+    from contexer.llm.factory import compiler_provider
 
+    settings = None
+    if project_dir is not None:
+        try:
+            settings = load_project_config(project_dir).compiler
+        except ProjectConfigError:
+            settings = None
     try:
-        config = load_config()
-        if not config.openrouter_api_key:
-            return None
-        return create_llm_provider(config)
+        return compiler_provider(load_config(), settings)
     except Exception:
         return None
+
 
 
 def _finish(result: RunResult, console: Console, json_output: bool, open_report: bool) -> None:
@@ -357,7 +363,7 @@ def contract_draft(
     async def _draft() -> Contract:
         run = RunDir.create(project_dir)
         session = VerificationSession(project_dir, run)
-        analyzer = GoalAnalyzer(llm_provider=_llm_or_none())
+        analyzer = GoalAnalyzer(llm_provider=compiler_llm(project_dir))
         try:
             with open_app(project_dir, url) as app:
                 await session.observe(app)

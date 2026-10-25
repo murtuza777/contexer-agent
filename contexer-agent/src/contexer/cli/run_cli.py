@@ -15,7 +15,7 @@ from rich.table import Table
 
 from contexer.agents import create_agent
 from contexer.appserver import AppStartError, open_app
-from contexer.cli.gate_cli import _llm_or_none, warn_if_weak_draft
+from contexer.cli.gate_cli import compiler_llm, warn_if_weak_draft
 from contexer.config.project import ProjectConfigError, load_project_config
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.controller import RunController, RunOutcome, RunSettings
@@ -108,7 +108,7 @@ def _draft(console: Console, project: Path, store: ContractStore, goal: str, url
     async def compile_contract() -> Contract:
         run_dir = RunDir.create(project)
         session = VerificationSession(project, run_dir)
-        analyzer = GoalAnalyzer(llm_provider=_llm_or_none())
+        analyzer = GoalAnalyzer(llm_provider=compiler_llm(project))
         cid = store.unique_id(goal)
         try:
             with open_app(project, url) as app:

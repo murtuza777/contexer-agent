@@ -32,6 +32,14 @@ class ContexerConfig:
     openrouter_model: str = DEFAULT_OPENROUTER_MODEL
     openrouter_site_url: Optional[str] = None
     openrouter_app_name: str = "Contexer"
+    # Direct provider keys, used to compile goals into checks (see llm.factory).
+    anthropic_api_key: Optional[str] = None
+    anthropic_model: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    openai_model: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    # Explicit choice for compiling goals; None means "pick from available keys".
+    compiler_provider: Optional[str] = None
 
     # -- agent & opencode -------------------------------------------------
     max_turns: int = 50
@@ -97,7 +105,8 @@ def load_config(env_file: Optional[str | Path] = None) -> ContexerConfig:
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
     model = os.environ.get("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL).strip()
-    provider = os.environ.get("CONTEXER_LLM_PROVIDER", "openrouter").strip().lower()
+    explicit_provider = os.environ.get("CONTEXER_LLM_PROVIDER", "").strip().lower()
+    provider = explicit_provider or "openrouter"
     site_url = os.environ.get("OPENROUTER_SITE_URL")
     app_name = os.environ.get("OPENROUTER_APP_NAME", "Contexer").strip()
     log_level = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
@@ -146,7 +155,17 @@ def load_config(env_file: Optional[str | Path] = None) -> ContexerConfig:
     raw_gh_cmd = os.environ.get("CONTEXER_GITHUB_MCP_COMMAND")
     github_mcp_command = raw_gh_cmd.strip() if raw_gh_cmd and raw_gh_cmd.strip() else None
 
+    def _env(name: str) -> Optional[str]:
+        value = os.environ.get(name, "").strip()
+        return value or None
+
     return ContexerConfig(
+        anthropic_api_key=_env("ANTHROPIC_API_KEY"),
+        anthropic_model=_env("ANTHROPIC_MODEL"),
+        openai_api_key=_env("OPENAI_API_KEY"),
+        openai_model=_env("OPENAI_MODEL"),
+        openai_base_url=_env("OPENAI_BASE_URL"),
+        compiler_provider=explicit_provider or None,
         log_level=log_level,
         verbose=verbose,
         llm_provider=provider,

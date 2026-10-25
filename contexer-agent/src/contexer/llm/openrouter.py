@@ -1,4 +1,4 @@
-"""OpenRouter language model provider implementation using OpenAI-compatible SDK."""
+"""OpenAI-compatible providers (OpenRouter, OpenAI, gateways) via the OpenAI SDK."""
 
 from __future__ import annotations
 
@@ -25,8 +25,15 @@ logger = logging.getLogger(__name__)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
-class OpenRouterProvider(LLMProvider):
-    """OpenRouter provider utilizing an OpenAI-compatible API interface."""
+class OpenAICompatibleProvider(LLMProvider):
+    """Any OpenAI-compatible chat completions API (OpenAI, OpenRouter, local gateways)."""
+
+    provider_name = "openai-compatible"
+    label = "OpenAI-compatible API"
+    key_env = "OPENAI_API_KEY"
+    key_help = ""
+    default_base_url = "https://api.openai.com/v1"
+    default_model = ""
 
     def __init__(
         self,
@@ -34,35 +41,39 @@ class OpenRouterProvider(LLMProvider):
         model: Optional[str] = None,
         site_url: Optional[str] = None,
         app_name: Optional[str] = None,
+        base_url: Optional[str] = None,
     ) -> None:
         self._api_key = api_key
-        self._model = model or DEFAULT_OPENROUTER_MODEL
+        self._model = model or self.default_model
         self._site_url = site_url
         self._app_name = app_name or "Contexer"
+        self._base_url = base_url or self.default_base_url
         self._client: Optional[Any] = None
 
     @property
     def name(self) -> str:
-        return "openrouter"
+        return self.provider_name
 
     @property
     def model(self) -> str:
         return self._model
 
     def validate_configuration(self) -> tuple[bool, Optional[str]]:
-        """Verify that the OpenRouter API key is configured."""
+        """Verify that the API key (and a model) are configured."""
         if not self._api_key or not self._api_key.strip():
+            help_line = f"\nYou can get an API key at {self.key_help}" if self.key_help else ""
             return (
                 False,
-                "OpenRouter API key is missing. Please configure OPENROUTER_API_KEY in your "
+                f"{self.label} API key is missing. Please configure {self.key_env} in your "
                 "environment or in a .env file:\n"
-                "  OPENROUTER_API_KEY=your_key_here\n"
-                "You can get an API key at https://openrouter.ai/keys",
+                f"  {self.key_env}=your_key_here{help_line}",
             )
+        if not self._model:
+            return False, f"No model configured for {self.label}."
         return True, None
 
     def _get_client(self) -> Any:
-        """Lazily initialize the AsyncOpenAI Client configured for OpenRouter."""
+        """Lazily initialize the AsyncOpenAI client for this endpoint."""
         if self._client is not None:
             return self._client
 
@@ -91,7 +102,7 @@ class OpenRouterProvider(LLMProvider):
                 return self._client
 
             self._client = AsyncOpenAI(
-                base_url=OPENROUTER_BASE_URL,
+                base_url=self._base_url,
                 api_key=self._api_key,
                 default_headers=headers if headers else None,
             )
@@ -112,30 +123,30 @@ class OpenRouterProvider(LLMProvider):
 
         if isinstance(exc, openai.AuthenticationError) or "auth" in lowered or "api key" in lowered or "401" in lowered:
             return LLMAuthenticationError(
-                f"OpenRouter authentication failed: {clean_msg}. "
-                "Please verify your OPENROUTER_API_KEY.",
+                f"{self.label} authentication failed: {clean_msg}. "
+                f"Please verify your {self.key_env}.",
                 original_error=exc,
             )
 
         if isinstance(exc, openai.RateLimitError) or "429" in lowered or "rate limit" in lowered or "quota" in lowered or "credits" in lowered:
             return LLMRateLimitError(
-                f"OpenRouter rate limit or credits exceeded: {clean_msg}",
+                f"{self.label} rate limit or credits exceeded: {clean_msg}",
                 original_error=exc,
             )
 
         if isinstance(exc, openai.NotFoundError) or "404" in lowered or "model not found" in lowered or "no such model" in lowered:
             return LLMModelUnavailableError(
-                f"OpenRouter model '{self._model}' is unavailable: {clean_msg}",
+                f"{self.label} model '{self._model}' is unavailable: {clean_msg}",
                 original_error=exc,
             )
 
         if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError)) or "connect" in lowered or "timeout" in lowered:
             return LLMNetworkError(
-                f"Network error communicating with OpenRouter API: {clean_msg}",
+                f"Network error communicating with {self.label}: {clean_msg}",
                 original_error=exc,
             )
 
-        return LLMError(f"OpenRouter API error: {clean_msg}", original_error=exc)
+        return LLMError(f"{self.label} API error: {clean_msg}", original_error=exc)
 
     def _prepare_messages(
         self,
@@ -227,7 +238,7 @@ class OpenRouterProvider(LLMProvider):
         tools: Optional[list[Any]] = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """Generate a full response from OpenRouter, supporting function calling."""
+        """Generate a full response, supporting function calling."""
         client = self._get_client()
         messages = self._prepare_messages(prompt, system_instruction)
 
@@ -291,7 +302,7 @@ class OpenRouterProvider(LLMProvider):
         tools: Optional[list[Any]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[LLMChunk]:
-        """Stream response chunks from OpenRouter, yielding tool calls or text tokens."""
+        """Stream response chunks, yielding tool calls or text tokens."""
         client = self._get_client()
         messages = self._prepare_messages(prompt, system_instruction)
 
@@ -375,3 +386,24 @@ class OpenRouterProvider(LLMProvider):
 
         except Exception as exc:
             raise self._wrap_error(exc)
+
+
+class OpenRouterProvider(OpenAICompatibleProvider):
+    """OpenRouter: one key, many models (including free ones)."""
+
+    provider_name = "openrouter"
+    label = "OpenRouter"
+    key_env = "OPENROUTER_API_KEY"
+    key_help = "https://openrouter.ai/keys"
+    default_base_url = OPENROUTER_BASE_URL
+    default_model = DEFAULT_OPENROUTER_MODEL
+
+
+class OpenAIProvider(OpenAICompatibleProvider):
+    """OpenAI, or any compatible gateway reached through OPENAI_BASE_URL."""
+
+    provider_name = "openai"
+    label = "OpenAI"
+    key_env = "OPENAI_API_KEY"
+    key_help = "https://platform.openai.com/api-keys"
+    default_model = "gpt-5"
