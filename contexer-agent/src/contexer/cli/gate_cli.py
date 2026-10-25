@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 
-from contexer.appserver import AppStartError, open_app
+from contexer.appserver import AppStartError, RunningApp, open_app
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.evidence import RunDir, write_evidence
 from contexer.evidence.report import result_json
@@ -203,6 +203,58 @@ def _resolve_contracts(store: ContractStore, refs: list[str], all_contracts: boo
     return contracts
 
 
+async def preview_draft(session: VerificationSession, app: RunningApp, contract: Contract) -> Optional[RunResult]:
+    """Run a draft's checks once on the app as it is now, so its reviewer sees how they fare."""
+    if not any(c.check for c in contract.criteria):
+        return None
+    try:
+        return await session.verify(app, [contract], require_approval=False)
+    except Exception:  # a preview must never cost the user their draft
+        return None
+
+
+def print_draft_preview(console: Console, result: Optional[RunResult]) -> None:
+    """Facts for the person approving a draft: which checks already pass, fail, or cannot run yet."""
+    if result is None or result.decision.outcome == "error":
+        return
+    executed = [
+        r
+        for o in result.contracts
+        for r in (o.verification.criteria_results if o.verification else [])
+        if r.check_result is not None
+    ]
+    if not executed:
+        return
+    passing = [r for r in executed if r.verdict == "verified"]
+    failing = [r for r in executed if r.verdict == "refuted"]
+    blocked = [r for r in executed if r.verdict == "unverified"]
+    console.print("[bold]Tried on the app as it is now[/] [dim](before any change)[/]")
+    if passing:
+        console.print(
+            f"  [green]✓ {len(passing)} already pass[/] [dim]and will guard that behaviour from now on: "
+            f"{escape(', '.join(r.criterion_id for r in passing))}[/]"
+        )
+    if failing:
+        console.print(f"  [red]✗ {len(failing)} fail[/] [dim]: the change must make these pass, or the check is wrong[/]")
+        for r in failing:
+            detail = r.check_result.summary() if r.check_result else r.evidence
+            console.print(f"    [dim]{escape(r.criterion_id)}: {escape(detail[:160])}[/]")
+    if blocked:
+        console.print(
+            f"  [yellow]? {len(blocked)} could not run[/] [dim]: the element is not there yet, "
+            "or the check names it differently[/]"
+        )
+        for r in blocked:
+            step = r.check_result.failed_step if r.check_result and r.check_result.failed_step else r.evidence
+            console.print(f"    [dim]{escape(r.criterion_id)}: {escape(step[:160])}[/]")
+    if passing and not failing and not blocked:
+        console.print(
+            "  [yellow]Every check already passes.[/] [dim]If the goal asks for new behaviour, "
+            "these checks do not test it yet.[/]"
+        )
+    console.print()
+
+
 def warn_if_weak_draft(console: Console, contract: Contract) -> None:
     """Say loudly when a draft did not come from the model, before anyone approves it."""
     if contract.source != "rules":
@@ -212,8 +264,8 @@ def warn_if_weak_draft(console: Console, contract: Contract) -> None:
         Panel(
             "The model did not return usable checks, so this draft was built from simple rules and only "
             f"has {executable} executable check(s) — far too few to define done.\n"
-            "Retry (free models are unreliable), set a stronger OPENROUTER_MODEL, or edit the contract file "
-            "and add checks before approving it.",
+            "Retry, use a stronger drafting model (ANTHROPIC_API_KEY or OPENAI_API_KEY, or [compiler] in "
+            "contexer.toml), or edit the contract file and add checks before approving it.",
             title="Weak draft",
             border_style="yellow",
         )
@@ -362,24 +414,26 @@ def contract_draft(
     store = ContractStore(project_dir)
     cid = contract_id or store.unique_id(goal)
 
-    async def _draft() -> Contract:
+    async def _draft() -> tuple[Contract, Optional[RunResult]]:
         run = RunDir.create(project_dir)
         session = VerificationSession(project_dir, run)
         analyzer = GoalAnalyzer(llm_provider=compiler_llm(project_dir))
         try:
             with open_app(project_dir, url) as app:
                 await session.observe(app)
-                return await session.compile(goal, analyzer, cid, app.repo_context)
+                drafted = await session.compile(goal, analyzer, cid, app.repo_context)
+                return drafted, await preview_draft(session, app, drafted)
         except AppStartError as exc:
             console.print(f"[yellow]![/] {escape(str(exc))} [dim]Drafting without the live UI.[/]")
-            return await session.compile(goal, analyzer, cid)
+            return await session.compile(goal, analyzer, cid), None
 
-    with console.status("[dim]Compiling the goal into executable checks...[/dim]"):
-        contract = asyncio.run(_draft())
+    with console.status("[dim]Compiling the goal into checks, then trying them on the app as it is...[/dim]"):
+        contract, preview = asyncio.run(_draft())
     path = store.save(contract)
     for line in contract.describe_lines():
         console.print(escape(line))
     console.print()
+    print_draft_preview(console, preview)
     warn_if_weak_draft(console, contract)
     console.print(f"[dim]Saved draft:[/] {escape(str(path))}")
     console.print(f"[dim]Review it, then:[/] contexer contract approve {escape(contract.id)}")

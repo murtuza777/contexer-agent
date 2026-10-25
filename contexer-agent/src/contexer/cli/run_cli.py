@@ -15,11 +15,12 @@ from rich.table import Table
 
 from contexer.agents import create_agent
 from contexer.appserver import AppStartError, open_app
-from contexer.cli.gate_cli import compiler_llm, warn_if_weak_draft
+from contexer.cli.gate_cli import compiler_llm, preview_draft, print_draft_preview, warn_if_weak_draft
 from contexer.config.project import ProjectConfigError, load_project_config
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.controller import RunController, RunOutcome, RunSettings
 from contexer.evidence import RunDir
+from contexer.gate import RunResult
 from contexer.gate.session import VerificationSession
 from contexer.workflow.criteria import GoalAnalyzer
 
@@ -59,8 +60,9 @@ def run(
         raise typer.BadParameter(str(exc)) from exc
     store = ContractStore(project)
 
+    preview: Optional[RunResult] = None
     if goal:
-        contract = _draft(console, project, store, goal, url)
+        contract, preview = _draft(console, project, store, goal, url)
     else:
         try:
             contract = store.load(contract_id or "")
@@ -68,7 +70,7 @@ def run(
             raise typer.BadParameter(str(exc)) from exc
 
     if contract.status != "approved":
-        contract = _approve(console, store, contract, yes)
+        contract = _approve(console, store, contract, yes, preview)
 
     settings = RunSettings(
         max_repair_rounds=rounds if rounds is not None else config.agent.max_repair_rounds,
@@ -104,8 +106,10 @@ def run(
     raise typer.Exit(code=outcome.exit_code)
 
 
-def _draft(console: Console, project: Path, store: ContractStore, goal: str, url: Optional[str]) -> Contract:
-    async def compile_contract() -> Contract:
+def _draft(
+    console: Console, project: Path, store: ContractStore, goal: str, url: Optional[str]
+) -> tuple[Contract, Optional[RunResult]]:
+    async def compile_contract() -> tuple[Contract, Optional[RunResult]]:
         run_dir = RunDir.create(project)
         session = VerificationSession(project, run_dir)
         analyzer = GoalAnalyzer(llm_provider=compiler_llm(project))
@@ -113,19 +117,24 @@ def _draft(console: Console, project: Path, store: ContractStore, goal: str, url
         try:
             with open_app(project, url) as app:
                 await session.observe(app)
-                return await session.compile(goal, analyzer, cid, app.repo_context)
+                drafted = await session.compile(goal, analyzer, cid, app.repo_context)
+                return drafted, await preview_draft(session, app, drafted)
         except AppStartError:
-            return await session.compile(goal, analyzer, cid)  # nothing runs yet: checks define the contract
+            # nothing runs yet: the checks define the contract
+            return await session.compile(goal, analyzer, cid), None
 
-    with console.status("[dim]Compiling the goal into executable checks...[/dim]"):
-        contract = asyncio.run(compile_contract())
+    with console.status("[dim]Compiling the goal into checks, then trying them on the app as it is...[/dim]"):
+        contract, preview = asyncio.run(compile_contract())
     store.save(contract)
-    return contract
+    return contract, preview
 
 
-def _approve(console: Console, store: ContractStore, contract: Contract, yes: bool) -> Contract:
+def _approve(
+    console: Console, store: ContractStore, contract: Contract, yes: bool, preview: Optional[RunResult] = None
+) -> Contract:
     console.print()
     console.print(Panel("\n".join(escape(line) for line in contract.describe_lines()), title=f"Definition of done · {contract.id}"))
+    print_draft_preview(console, preview)
     warn_if_weak_draft(console, contract)
     if not yes and not typer.confirm("Approve these checks as the definition of done?", default=False):
         store.save(contract)

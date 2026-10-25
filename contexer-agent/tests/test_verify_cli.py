@@ -93,3 +93,40 @@ def test_weak_rule_based_draft_is_flagged_before_approval() -> None:
     out.truncate(0)
     warn_if_weak_draft(console, Contract(id="y", goal="g", source="llm"))
     assert out.getvalue() == ""
+
+
+def test_draft_shows_how_its_checks_fare_on_the_app_before_approval(
+    todo_app: Path, monkeypatch: pytest.MonkeyPatch, fake_llm
+) -> None:
+    from contexer.cli import gate_cli
+
+    add_a = [
+        {"action": "fill", "target": {"placeholder": "What needs doing?"}, "value": "A"},
+        {"action": "click", "target": {"role": "button", "name": "Add"}},
+    ]
+    reply = json.dumps(
+        {
+            "summary": "todo",
+            "acceptance_criteria": [
+                {"id": "shows-task", "description": "Adding shows the task",
+                 "check": {"steps": add_a, "expect": [{"kind": "visible", "target": {"text": "A"}}]}},
+                {"id": "wrong-count", "description": "A made-up count",
+                 "check": {"steps": add_a,
+                           "expect": [{"kind": "text", "target": {"test_id": "remaining-count"}, "equals": "5 left"}]}},
+                {"id": "archive-all", "description": "Archive all tasks (not built yet)",
+                 "check": {"steps": [{"action": "click", "target": {"role": "button", "name": "Archive all"}}],
+                           "expect": [{"kind": "count", "target": {"role": "listitem"}, "max": 0}]}},
+            ],
+        }
+    )
+    monkeypatch.setattr(gate_cli, "compiler_llm", lambda *_: fake_llm(reply))
+    result = _invoke("contract", "draft", "Users can archive all tasks", "--dir", str(todo_app), "--id", "archive")
+
+    assert result.exit_code == 0, result.output
+    out = " ".join(result.output.split())
+    assert "Tried on the app as it is now" in out
+    assert "already pass" in out and "shows-task" in out
+    assert "1 fail" in out and "wrong-count" in out and "5 left" in out
+    assert "1 could not run" in out and "archive-all" in out
+    # The preview informs the reviewer; it never approves anything.
+    assert ContractStore(todo_app).load("archive").status == "draft"
