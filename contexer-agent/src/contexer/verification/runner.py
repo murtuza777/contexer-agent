@@ -18,8 +18,10 @@ from contexer.verification.checks import (
     Expectation,
     ExpectationOutcome,
     Locator,
+    MissingSecretError,
     Step,
     expand_secrets,
+    redact,
 )
 
 if TYPE_CHECKING:
@@ -135,7 +137,7 @@ class CheckRunner:
                                     await page.screenshot(path=str(screenshot), type="jpeg", quality=70, timeout=5000)
                                 except Exception as exc:
                                     logger.debug("Sign-in screenshot skipped: %s", exc)
-                        raise SignInError("; ".join(problem))
+                        raise SignInError(redact("; ".join(problem), _typed_values(flow)))
                     return cast(dict[str, Any], await context.storage_state())
                 finally:
                     await context.close()
@@ -210,6 +212,8 @@ class CheckRunner:
         started = time.monotonic()
         page_errors: list[str] = []
         console_errors: list[str] = []
+        # Expanded ${NAME} values; masked in everything the result records.
+        secret_values: list[str] = []
 
         def finish(
             passed: bool,
@@ -228,11 +232,12 @@ class CheckRunner:
                 page_errors=list(page_errors),
                 console_errors=list(console_errors),
                 duration_seconds=time.monotonic() - started,
-            )
+            ).redacted(secret_values)
 
         missing = [name for name in check.secrets() if name not in os.environ]
         if missing:
             return finish(False, failed_step=f"secret(s) not set: {', '.join(missing)} (set them in the environment or .env)"), None
+        secret_values.extend(os.environ[name] for name in check.secrets())
 
         page: Optional[Page] = None
         try:
@@ -453,6 +458,18 @@ async def _describe_failed_action(target: PWLocator, step: Step, exc: BaseExcept
     except Exception:
         pass
     return f"the action did not complete: {_short(exc)}"
+
+
+def _typed_values(flow: Check) -> list[str]:
+    """Everything a sign-in flow types is a credential, whether literal or ``${NAME}``."""
+    values: list[str] = []
+    for step in flow.steps:
+        if step.action == "fill" and step.value:
+            try:
+                values.append(expand_secrets(step.value))
+            except MissingSecretError:
+                continue  # never typed, so it cannot appear anywhere
+    return values
 
 
 async def _alert_text(page: Page) -> str:

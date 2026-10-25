@@ -341,6 +341,18 @@ def expand_secrets(value: str, env: Optional[dict[str, str]] = None) -> str:
     return _SECRET.sub(lookup, value)
 
 
+MASK = "••••••"
+# Shorter values would mask ordinary words; a real credential is longer.
+_MIN_REDACTED_LENGTH = 3
+
+
+def redact(text: str, values: list[str]) -> str:
+    """Replace every occurrence of a sensitive value with :data:`MASK`."""
+    for value in sorted({v for v in values if len(v) >= _MIN_REDACTED_LENGTH}, key=len, reverse=True):
+        text = text.replace(value, MASK)
+    return text
+
+
 class ExpectationOutcome(BaseModel):
     """What the browser observed for one expectation."""
 
@@ -376,6 +388,23 @@ class CheckResult(BaseModel):
             return "Executed in browser: " + "; ".join(o.description for o in self.outcomes)
         failed = [o for o in self.outcomes if not o.passed]
         return "; ".join(f"expected {o.description}, got {o.actual}" for o in failed)
+
+    def redacted(self, values: list[str]) -> CheckResult:
+        """A copy with sensitive values (expanded ``${NAME}`` secrets) masked in every text field."""
+        if not any(len(v) >= _MIN_REDACTED_LENGTH for v in values):
+            return self
+        return self.model_copy(
+            update={
+                "failed_step": redact(self.failed_step, values) if self.failed_step else self.failed_step,
+                "ui_at_failure": redact(self.ui_at_failure, values),
+                "page_errors": [redact(e, values) for e in self.page_errors],
+                "console_errors": [redact(e, values) for e in self.console_errors],
+                "outcomes": [
+                    o.model_copy(update={"actual": redact(o.actual, values), "description": redact(o.description, values)})
+                    for o in self.outcomes
+                ],
+            }
+        )
 
     def failure_report(self) -> str:
         """Multi-line expected-vs-actual report used in repair prompts."""

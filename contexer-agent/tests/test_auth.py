@@ -150,6 +150,38 @@ async def test_an_agent_that_breaks_sign_in_is_told_why_and_not_kept(members_app
     assert "No check could run" in agent.prompts[1] and "Could not sign in" in agent.prompts[1]
 
 
+FORM = (
+    "<!doctype html><meta charset='utf-8'><label>Email <input></label>"
+    "<label>Password <input type=password></label><label>API token <input></label>"
+)
+
+
+async def test_typed_secrets_never_reach_the_evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "index.html").write_text(FORM, encoding="utf-8")
+    monkeypatch.setenv("SNAP_PASSWORD", "hunter2-pass")
+    monkeypatch.setenv("SNAP_TOKEN", "tok-9f8e7d")
+    check = Check.model_validate(
+        {
+            "steps": [
+                {"action": "fill", "target": {"label": "Email"}, "value": "ada@example.com"},
+                {"action": "fill", "target": {"label": "Password"}, "value": "${SNAP_PASSWORD}"},
+                {"action": "fill", "target": {"label": "API token"}, "value": "${SNAP_TOKEN}"},
+                {"action": "click", "target": {"role": "button", "name": "Sign in"}},  # no such button
+            ],
+            "expect": [{"kind": "url", "contains": "/"}],
+        }
+    )
+    with StaticAppServer(tmp_path) as server:
+        [result] = await CheckRunner(action_timeout=1.0).run(server.url, [("blocked", check)])
+
+    assert result.blocked and result.ui_at_failure
+    evidence = result.model_dump_json() + result.failure_report()
+    assert "hunter2-pass" not in evidence and "tok-9f8e7d" not in evidence
+    assert 'textbox "Password": ••••••' in result.ui_at_failure  # password fields are always masked
+    assert 'textbox "API token": ••••••' in result.ui_at_failure  # ${NAME} values wherever they show
+    assert 'textbox "Email": ada@example.com' in result.ui_at_failure  # ordinary input stays useful
+
+
 def test_members_fixture_contract_is_approved() -> None:
     [contract] = ContractStore(FIXTURE / "app").list()
     assert contract.status == "approved"

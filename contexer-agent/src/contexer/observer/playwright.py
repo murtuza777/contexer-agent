@@ -63,9 +63,35 @@ async def capture_ui_snapshot(page: Page) -> str:
     except Exception as e:
         logger.debug("Locator extras unavailable: %s", e)
     snapshot = "\n".join(p for p in parts if p).strip()
+    snapshot = await _mask_password_values(page, snapshot)
     if len(snapshot) > UI_SNAPSHOT_MAX_CHARS:
         snapshot = snapshot[:UI_SNAPSHOT_MAX_CHARS] + "\n- ... (truncated)"
     return snapshot
+
+
+_PASSWORD_VALUES_JS = "() => Array.from(document.querySelectorAll('input[type=password]'), i => i.value).filter(Boolean)"
+
+
+async def _mask_password_values(page: Page, snapshot: str) -> str:
+    """The ARIA tree shows what was typed into a password field (``textbox "Password": hunter2``); hide it.
+
+    The snapshot ends up in reports, result.json and prompts to the coding agent's model.
+    """
+    try:
+        values = await page.evaluate(_PASSWORD_VALUES_JS)
+    except Exception as e:
+        logger.debug("Password fields unavailable: %s", e)
+        return snapshot
+    if not isinstance(values, list) or not values:
+        return snapshot
+    suffixes = {f": {v}" for v in values if isinstance(v, str)}
+    lines = snapshot.splitlines()
+    for i, line in enumerate(lines):
+        for suffix in suffixes:
+            if line.endswith(suffix):
+                lines[i] = line[: -len(suffix)] + ": ••••••"
+                break
+    return "\n".join(lines)
 
 
 class PlaywrightObserver:
