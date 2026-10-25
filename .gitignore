@@ -49,6 +49,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+# Fixture apps are JavaScript projects, where lib/ is source code.
+!contexer-agent/bench/fixtures/**/lib/
 lib64/
 parts/
 sdist/
