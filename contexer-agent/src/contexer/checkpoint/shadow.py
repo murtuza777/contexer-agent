@@ -53,6 +53,17 @@ class SnapshotError(Exception):
     """A git operation on the snapshot repository failed."""
 
 
+def unsafe_work_tree(path: str | Path) -> str | None:
+    """Why ``path`` must not be snapshotted, if it must not: a home folder or a drive root holds far
+    more than an app, and a snapshot would copy all of it."""
+    resolved = Path(path).resolve()
+    if resolved == Path(resolved.anchor):
+        return f"{resolved} is the root of a drive"
+    if resolved == Path.home().resolve():
+        return f"{resolved} is your home folder"
+    return None
+
+
 class ShadowRepo:
     """Snapshots and restores one project directory."""
 
@@ -102,6 +113,9 @@ class ShadowRepo:
     def _ensure(self) -> None:
         if (self.git_dir / "HEAD").is_file():
             return
+        unsafe = unsafe_work_tree(self.work_tree)
+        if unsafe:
+            raise SnapshotError(f"{unsafe}; run Contexer in your app's folder")
         from contexer.contract.store import ensure_contexer_dir
 
         ensure_contexer_dir(self.work_tree)  # keeps shadow.git out of the user's repo

@@ -84,3 +84,20 @@ def test_users_own_git_repo_is_untouched(tmp_path: Path) -> None:
     # Only .contexer/.gitignore is offered for commit; the snapshot repository is ignored.
     assert [l for l in status_after.splitlines() if ".contexer" in l] == ["?? .contexer/.gitignore"]
     assert status_before == "?? app.js\n"
+
+
+def test_a_home_folder_or_drive_root_is_never_snapshotted(monkeypatch, tmp_path) -> None:
+    from pathlib import Path
+
+    import pytest
+
+    from contexer.checkpoint import ShadowRepo, SnapshotError
+    from contexer.checkpoint.shadow import unsafe_work_tree
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    assert "home folder" in unsafe_work_tree(tmp_path)
+    assert "root of a drive" in unsafe_work_tree(Path(tmp_path.anchor))
+    assert unsafe_work_tree(tmp_path / "my-app") is None
+    with pytest.raises(SnapshotError, match="home folder"):
+        ShadowRepo(tmp_path).snapshot()
+    assert not (tmp_path / ".contexer").exists()

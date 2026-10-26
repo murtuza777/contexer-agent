@@ -17,6 +17,7 @@ from rich.table import Table
 
 from contexer.agents import CodingAgentAdapter, create_agent
 from contexer.appserver import AppStartError, open_app
+from contexer.checkpoint.shadow import unsafe_work_tree
 from contexer.cli.gate_cli import (
     compiler_llm,
     preview_draft,
@@ -67,6 +68,9 @@ def run(
         raise typer.BadParameter("give a GOAL, --contract ID or --issue N")
     console = Console()
     project = project_dir.resolve()
+    unsafe = unsafe_work_tree(project)
+    if unsafe:
+        raise typer.BadParameter(f"{unsafe}; run Contexer in your app's folder, or pass --dir")
     pr = pr or issue is not None  # work on an issue ends in a pull request that closes it
     handoff_plan: Optional[HandoffPlan] = None
     if pr:
