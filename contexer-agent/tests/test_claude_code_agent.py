@@ -146,3 +146,13 @@ def test_agent_env_strips_only_parent_session_plumbing(monkeypatch) -> None:
     env = agent_env()
     assert "CLAUDECODE" not in env and "CLAUDE_CODE_MESSAGING_TOKEN" not in env
     assert env["ANTHROPIC_API_KEY"] == "user-key"  # the user's own credentials pass through untouched
+
+
+def test_agent_env_holds_no_repository_tokens(monkeypatch) -> None:
+    """Issue text reaches the agent's prompt; a token in its environment could push or comment."""
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"):
+        monkeypatch.setenv(name, "secret")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "model-key")
+    env = agent_env()
+    assert not {"GITHUB_TOKEN", "GH_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"} & set(env)
+    assert env["OPENROUTER_API_KEY"] == "model-key"

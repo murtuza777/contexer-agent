@@ -7,7 +7,7 @@ import os
 import shutil
 import webbrowser
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import typer
 from rich.console import Console
@@ -111,8 +111,33 @@ def run(
         judged_policy=config.gate.judged,
         replay_others=not no_replay,
     )
-    others = [c for c in store.list() if c.id != contract.id and c.status == "approved"]
+    outcome = execute_run(console, project, agent, contract, store, settings, url)
+    handoff: Optional[Handoff] = None
+    handoff_error: Optional[str] = None
+    if handoff_plan is not None and outcome.terminal not in ("tampered", "cancelled"):
+        with console.status("[dim]Committing the work to a branch and opening a pull request...[/dim]"):
+            try:
+                handoff = hand_off(handoff_plan, outcome, contract, issue=issue)
+            except HandoffError as exc:
+                handoff_error = str(exc)
+    _render(console, outcome, handoff, handoff_error, pr)
+    if open_report:
+        webbrowser.open(Path(outcome.run_dir, "report.html").resolve().as_uri())
+    raise typer.Exit(code=outcome.exit_code)
 
+
+def execute_run(
+    console: Console,
+    project: Path,
+    agent: CodingAgentAdapter,
+    contract: Contract,
+    store: ContractStore,
+    settings: RunSettings,
+    url: Optional[str] = None,
+    on_progress: Optional[Callable[[str, str], None]] = None,
+) -> RunOutcome:
+    """Drive the agent to the approved contract, printing progress; Ctrl+C ends in a "cancelled" outcome."""
+    others = [c for c in store.list() if c.id != contract.id and c.status == "approved"] if settings.replay_others else []
     budget_note = ""
     if settings.budget_usd:
         # Codex reports tokens, not cost: the round and time limits bound its runs instead.
@@ -129,6 +154,8 @@ def run(
         style = _EVENT_STYLE.get(kind, "")
         prefix = "  " if kind in ("agent", "app") else ""
         console.print(f"{prefix}[{style}]{escape(message)}[/]" if style else f"{prefix}{escape(message)}")
+        if on_progress is not None:
+            on_progress(kind, message)
 
     controller = RunController(project, agent, settings, url=url, on_event=on_event)
     try:
@@ -140,18 +167,7 @@ def run(
         outcome = controller.last_outcome
     finally:
         agent.close()
-    handoff: Optional[Handoff] = None
-    handoff_error: Optional[str] = None
-    if handoff_plan is not None and outcome.terminal not in ("tampered", "cancelled"):
-        with console.status("[dim]Committing the work to a branch and opening a pull request...[/dim]"):
-            try:
-                handoff = hand_off(handoff_plan, outcome, contract, issue=issue)
-            except HandoffError as exc:
-                handoff_error = str(exc)
-    _render(console, outcome, handoff, handoff_error, pr)
-    if open_report:
-        webbrowser.open(Path(outcome.run_dir, "report.html").resolve().as_uri())
-    raise typer.Exit(code=outcome.exit_code)
+    return outcome
 
 
 def issue_goal(console: Console, plan: Optional[HandoffPlan], number: int, store: ContractStore) -> tuple[str, str]:

@@ -3,10 +3,15 @@
 Each turn applies a queued set of file writes (``None`` deletes the file), so
 the full controller — snapshots, verification, repair, revert — can be
 exercised without a network or a model.
+
+``contexer run --agent scripted --model turns.json`` reads the turns from a
+JSON list of ``{"path": "content" | null}`` objects, to try a setup (an
+Actions workflow, a pull request hand-off) end to end without a model.
 """
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Optional
@@ -25,6 +30,16 @@ class ScriptedAgent(CodingAgentAdapter):
         self.sessions: list[Optional[str]] = []
         self._fail_after = fail_after
         self._session_counter = 0
+
+    @classmethod
+    def from_file(cls, path: str | Path) -> "ScriptedAgent":
+        try:
+            turns = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"the scripted agent needs --model turns.json, a JSON list of file writes: {exc}") from exc
+        if not isinstance(turns, list) or not all(isinstance(t, dict) for t in turns):
+            raise ValueError("the scripted agent's turns file must be a JSON list of {path: content} objects")
+        return cls(turns)
 
     async def run_turn(
         self,

@@ -18,6 +18,7 @@ from typing import Optional
 import httpx
 
 from contexer.agents.base import AgentTurn, CodingAgentAdapter, ProgressFn
+from contexer.agents.claude_code import agent_env
 from contexer.opencode.adapter import OpenCodeAdapter
 from contexer.opencode.models import ExecutionStatus
 from contexer.procutil import ProcessTree, spawn_tree
@@ -134,7 +135,7 @@ class OpenCodeAgent(CodingAgentAdapter):
             if exe is None:
                 raise RuntimeError("the opencode CLI is not installed")
             port = self.base_url.rsplit(":", 1)[-1]
-            self._server = spawn_tree([exe, "serve", "--port", port], workdir)
+            self._server = spawn_tree([exe, "serve", "--port", port], workdir, agent_env())
             deadline = time.monotonic() + 60
             while not _healthy(self.base_url):
                 if self._server.poll() is not None or time.monotonic() > deadline:

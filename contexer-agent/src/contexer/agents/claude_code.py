@@ -63,6 +63,16 @@ DENIED_TOOLS = (
 # agent Contexer starts is a separate session and must not inherit them.
 _PARENT_SESSION_PREFIXES = ("CLAUDE_CODE_", "CLAUDE_AGENT_SDK_")
 _PARENT_SESSION_VARS = {"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PREVIEW_CLASSIFIER_FLOOR"}
+# Contexer pushes and opens the pull request itself. The agent edits files and needs no way into the
+# repository: text from an issue reaches its prompt, and in Actions these tokens can push and comment.
+_REPOSITORY_TOKENS = {
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "CONTEXER_GITHUB_TOKEN",
+    "ACTIONS_RUNTIME_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+    "ACTIONS_ID_TOKEN_REQUEST_URL",
+}
 
 _EDIT_TOOLS = {"Edit", "MultiEdit", "Write", "NotebookEdit"}
 
@@ -242,11 +252,13 @@ def _handle_event(event: dict[str, Any], state: _StreamState, on_progress: Optio
 
 
 def agent_env() -> dict[str, str]:
-    """The environment for a spawned agent: the user's, minus a parent agent session's plumbing."""
+    """The environment for a spawned agent: the user's, minus a parent agent session's plumbing and repository tokens."""
     env = {
         k: v
         for k, v in os.environ.items()
-        if k not in _PARENT_SESSION_VARS and not k.startswith(_PARENT_SESSION_PREFIXES)
+        if k not in _PARENT_SESSION_VARS
+        and k not in _REPOSITORY_TOKENS
+        and not k.startswith(_PARENT_SESSION_PREFIXES)
     }
     env.setdefault("CI", "1")
     return env

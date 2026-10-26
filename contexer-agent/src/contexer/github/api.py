@@ -1,8 +1,9 @@
 """A small GitHub REST client for issues, pull requests and comments.
 
-The token comes from ``GITHUB_TOKEN`` or ``GH_TOKEN`` (as in Actions), else
-from the GitHub CLI's own login (``gh auth token``), so a developer who
-already uses ``gh`` needs nothing more.
+The token comes from ``CONTEXER_GITHUB_TOKEN`` (a personal or app token, so
+the pull requests Contexer opens in Actions trigger other workflows), then
+``GITHUB_TOKEN`` or ``GH_TOKEN``, else from the GitHub CLI's own login
+(``gh auth token``), so a developer who already uses ``gh`` needs nothing more.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ class GitHubError(Exception):
 
 
 def github_token() -> Optional[str]:
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    token = os.environ.get("CONTEXER_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if token:
         return token
     gh = shutil.which("gh")

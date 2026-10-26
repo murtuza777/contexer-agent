@@ -1,0 +1,111 @@
+name: Contexer issue agent
+description: >-
+  Label an issue "contexer" and Contexer posts the checks that define done. When someone with
+  write access replies "/contexer approve", a coding agent builds it, Contexer proves every
+  check in a real browser, and opens a pull request that closes the issue.
+author: murtuza777
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  agent:
+    description: "Coding agent: opencode, claude-code or codex. Its model key comes from the job's env."
+    default: opencode
+  model:
+    description: Model for the coding agent (provider/model for OpenCode). Empty uses the agent's default.
+    default: ""
+  working-directory:
+    description: The app's directory inside the repository.
+    default: "."
+  label:
+    description: The label that asks Contexer to draft checks for an issue.
+    default: contexer
+  github-token:
+    description: >-
+      Token that comments, pushes the branch and opens the pull request. Pull requests opened with
+      the default token do not start other workflows; pass a personal or app token for that.
+    default: ${{ github.token }}
+  python-version:
+    description: Python used to run Contexer.
+    default: "3.12"
+  node-version:
+    description: Node.js for JavaScript apps and the coding agents.
+    default: "22"
+
+outputs:
+  command:
+    description: "What the event asked for: draft, build or ignore."
+    value: ${{ steps.plan.outputs.command }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v7.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install Contexer
+      shell: bash
+      run: |
+        python -m pip install --quiet "${{ github.action_path }}/../contexer-agent"
+        echo "PLAYWRIGHT_VERSION=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_ENV"
+
+    - name: Read the event
+      id: plan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: contexer issue event --plan --label "${{ inputs.label }}"
+
+    - if: steps.plan.outputs.command != 'ignore'
+      uses: actions/setup-node@v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - if: steps.plan.outputs.command != 'ignore'
+      name: Cache Chromium
+      uses: actions/cache@v6.1.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: contexer-chromium-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+
+    - if: steps.plan.outputs.command != 'ignore'
+      name: Install Chromium
+      shell: bash
+      run: |
+        python -m playwright install chromium
+        # The slow apt step runs only when the browser cannot start (GitHub's Ubuntu images ship its libraries).
+        if ! python -c "from playwright.sync_api import sync_playwright as s; p = s().start(); p.chromium.launch().close(); p.stop()"; then
+          python -m playwright install-deps chromium
+        fi
+
+    - if: steps.plan.outputs.command == 'build'
+      name: Install the coding agent
+      shell: bash
+      run: |
+        case "${{ inputs.agent }}" in
+          opencode) npm install --global --silent opencode-ai ;;
+          claude-code|claude) npm install --global --silent @anthropic-ai/claude-code ;;
+          codex) npm install --global --silent @openai/codex ;;
+          scripted) ;;
+          *) echo "Unknown agent '${{ inputs.agent }}' (use opencode, claude-code or codex)"; exit 1 ;;
+        esac
+
+    - if: steps.plan.outputs.command != 'ignore'
+      name: Contexer
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        args=(issue event --label "${{ inputs.label }}" --agent "${{ inputs.agent }}")
+        if [ -n "${{ inputs.model }}" ]; then args+=(--model "${{ inputs.model }}"); fi
+        contexer "${args[@]}"
+
+    - if: always() && steps.plan.outputs.command != 'ignore'
+      name: Upload evidence report
+      uses: actions/upload-artifact@v7.0.1
+      with:
+        name: contexer-report-issue-${{ github.event.issue.number }}-${{ github.run_attempt }}
+        path: ${{ inputs.working-directory }}/.contexer/runs/
+        if-no-files-found: ignore

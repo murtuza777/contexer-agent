@@ -13,6 +13,7 @@ and the approved contract, never other work in the checkout.
 
 from __future__ import annotations
 
+import base64
 import os
 import subprocess
 from dataclasses import dataclass
@@ -112,7 +113,7 @@ def hand_off(
 
     if plan.remote is None:
         return Handoff(branch, commit, False, None, False, not succeeded, note + "The repository has no remote to push to.")
-    pushed = _git(plan.root, "push", "--quiet", "--set-upstream", plan.remote, branch, timeout=180)
+    pushed = _git(plan.root, *_push_auth(plan), "push", "--quiet", "--set-upstream", plan.remote, branch, timeout=180)
     if pushed is None:
         return Handoff(
             branch, commit, False, None, False, not succeeded,
@@ -255,7 +256,21 @@ def _branch_taken(plan: HandoffPlan, branch: str) -> bool:
         return True
     if plan.remote is None:
         return False
-    return bool(_git(plan.root, "ls-remote", "--heads", plan.remote, branch, timeout=60))
+    return bool(_git(plan.root, *_push_auth(plan), "ls-remote", "--heads", plan.remote, branch, timeout=60))
+
+
+def _push_auth(plan: HandoffPlan) -> list[str]:
+    """In Actions, push with the token directly.
+
+    The issue workflow checks out without persisted credentials, so the coding agent finds no token in
+    .git/config; only this push uses one.
+    """
+    token = github_token() if os.environ.get("GITHUB_ACTIONS") == "true" and plan.repo else None
+    if token is None:
+        return []
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    return ["-c", f"http.{server}/.extraheader=AUTHORIZATION: basic {basic}"]
 
 
 def _identity(root: Path) -> list[str]:
