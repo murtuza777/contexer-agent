@@ -24,6 +24,8 @@ From a goal or a GitHub issue to a pull request that carries its proof.
   snapshot a run took.
 - `--agent scripted --model turns.json` replays file edits, to try a setup
   end to end without a model.
+- `contexer setup` checks that Chromium starts and offers to install it, so
+  a first run does not fail at its first check.
 
 ### Fixed
 

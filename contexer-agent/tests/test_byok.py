@@ -209,3 +209,27 @@ def test_a_draft_names_the_model_that_wrote_it_and_flags_a_fallback(fake_llm) ->
     print_drafted_by(Console(file=out, width=200), analyzer)
     assert "Drafted by dots-studio/dots-3-note-preview:free" in out.getvalue()
     assert "fake-model was unavailable" in out.getvalue()
+
+
+def test_setup_offers_chromium_only_when_it_is_missing(monkeypatch) -> None:
+    from rich.console import Console
+
+    from contexer.cli import setup_cli
+
+    calls: list[list[str]] = []
+    states = iter([(False, "Chromium is not installed."), (True, "Chromium 140.0")])
+
+    async def status() -> tuple[bool, str]:
+        return next(states)
+
+    monkeypatch.setattr("contexer.observer.browser.chromium_status", status)
+    monkeypatch.setattr(setup_cli.subprocess, "call", lambda argv: calls.append(argv) or 0)
+    monkeypatch.setattr(setup_cli.typer, "confirm", lambda *_a, **_k: True)
+    assert setup_cli.ensure_browser(Console(record=True), ask=True)
+    assert calls == [[setup_cli.sys.executable, "-m", "playwright", "install", "chromium"]]
+
+    states = iter([(False, "Chromium is not installed.")])
+    console = Console(record=True)
+    assert not setup_cli.ensure_browser(console, ask=False)  # --yes never downloads 150 MB unasked
+    assert "python -m playwright install chromium" in console.export_text()
+    assert len(calls) == 1

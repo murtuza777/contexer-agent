@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
+import sys
 from typing import Optional
 
 import typer
@@ -105,8 +107,30 @@ def setup(
         console.print("  building  [yellow]no coding agent installed[/] [dim](npm i -g opencode-ai, then run setup again)[/]")
     if pasted and api_key:
         console.print(f"  key       {escape(spec.key_env)} {escape(mask(api_key))} [dim]in {escape(str(contexer_home()))}, never in a project[/]")
+    ensure_browser(console, ask=not yes)
     console.print()
     console.print('[dim]Next:[/] contexer doctor · contexer run "<what must be true>" [dim](in your app\'s folder)[/]')
+
+
+def ensure_browser(console: Console, ask: bool) -> bool:
+    """Every check runs in Chromium; offer to install it now rather than fail at the first check."""
+    from contexer.observer.browser import chromium_status
+
+    ok, detail = asyncio.run(chromium_status())
+    if ok:
+        console.print(f"  browser   {escape(detail)}")
+        return True
+    console.print(f"  browser   [yellow]{escape(detail)}[/]")
+    command = [sys.executable, "-m", "playwright", "install", "chromium"]
+    if not ask or not typer.confirm("Install Chromium for Contexer now (about 150 MB)?", default=True):
+        console.print("  [dim]Install it later with:[/] python -m playwright install chromium")
+        return False
+    if subprocess.call(command) != 0:
+        console.print("[yellow]Chromium did not install.[/] On Linux it may also need: python -m playwright install-deps chromium")
+        return False
+    ok, detail = asyncio.run(chromium_status())
+    console.print(f"  browser   {'' if ok else '[yellow]'}{escape(detail)}{'' if ok else '[/]'}")
+    return ok
 
 
 def models(
