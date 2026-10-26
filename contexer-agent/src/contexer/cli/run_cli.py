@@ -17,8 +17,14 @@ from rich.table import Table
 
 from contexer.agents import create_agent
 from contexer.appserver import AppStartError, open_app
-from contexer.cli.gate_cli import compiler_llm, preview_draft, print_draft_preview, warn_if_weak_draft
-from contexer.config.project import ProjectConfigError, load_project_config, load_project_env
+from contexer.cli.gate_cli import (
+    compiler_llm,
+    preview_draft,
+    print_draft_preview,
+    print_drafted_by,
+    warn_if_weak_draft,
+)
+from contexer.config.project import AgentSettings, ProjectConfigError, load_project_config, load_project_env
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.controller import RunController, RunOutcome, RunSettings
 from contexer.evidence import RunDir
@@ -64,9 +70,9 @@ def run(
     store = ContractStore(project)
 
     preview: Optional[RunResult] = None
-    weak_reason: Optional[str] = None
+    analyzer: Optional[GoalAnalyzer] = None
     if goal:
-        contract, preview, weak_reason = _draft(console, project, store, goal, url)
+        contract, preview, analyzer = _draft(console, project, store, goal, url)
     else:
         try:
             contract = store.load(contract_id or "")
@@ -74,7 +80,7 @@ def run(
             raise typer.BadParameter(str(exc)) from exc
 
     if contract.status != "approved":
-        contract = _approve(console, store, contract, yes, preview, weak_reason)
+        contract = _approve(console, store, contract, yes, preview, analyzer)
 
     settings = RunSettings(
         max_repair_rounds=rounds if rounds is not None else config.agent.max_repair_rounds,
@@ -84,7 +90,7 @@ def run(
         replay_others=not no_replay,
     )
     try:
-        agent = create_agent(agent_name or config.agent.name, model or config.agent.model)
+        agent = create_agent(*choose_agent(config.agent, agent_name, model))
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     others = [c for c in store.list() if c.id != contract.id and c.status == "approved"]
@@ -119,7 +125,7 @@ def run(
 
 def _draft(
     console: Console, project: Path, store: ContractStore, goal: str, url: Optional[str]
-) -> tuple[Contract, Optional[RunResult], Optional[str]]:
+) -> tuple[Contract, Optional[RunResult], GoalAnalyzer]:
     analyzer = GoalAnalyzer(llm_provider=compiler_llm(project))
 
     async def compile_contract() -> tuple[Contract, Optional[RunResult]]:
@@ -138,7 +144,7 @@ def _draft(
     with console.status("[dim]Compiling the goal into checks, then trying them on the app as it is...[/dim]"):
         contract, preview = asyncio.run(compile_contract())
     store.save(contract)
-    return contract, preview, analyzer.last_error
+    return contract, preview, analyzer
 
 
 def _approve(
@@ -147,12 +153,14 @@ def _approve(
     contract: Contract,
     yes: bool,
     preview: Optional[RunResult] = None,
-    weak_reason: Optional[str] = None,
+    analyzer: Optional[GoalAnalyzer] = None,
 ) -> Contract:
     console.print()
     console.print(Panel("\n".join(escape(line) for line in contract.describe_lines()), title=f"Definition of done · {contract.id}"))
     print_draft_preview(console, preview)
-    warn_if_weak_draft(console, contract, weak_reason)
+    if analyzer is not None:
+        print_drafted_by(console, analyzer)
+    warn_if_weak_draft(console, contract, analyzer.last_error if analyzer else None)
     if yes and contract.source == "rules":
         # Building against a rule-based fallback wastes the agent's budget on a contract nobody chose.
         console.print(
@@ -167,6 +175,21 @@ def _approve(
     approved = store.approve(contract.id)
     console.print(f"[green]✓[/] Approved [bold]{escape(approved.id)}[/]")
     return approved
+
+
+def choose_agent(project: AgentSettings, flag_name: Optional[str], flag_model: Optional[str]) -> tuple[str, Optional[str]]:
+    """Coding agent and model: --agent/--model, then [agent] in contexer.toml, then `contexer setup`, then Claude Code."""
+    set_in_project = project.model_fields_set
+    name = (
+        flag_name
+        or (project.name if "name" in set_in_project else None)
+        or os.environ.get("CONTEXER_AGENT")
+        or project.name
+    )
+    model = flag_model or project.model
+    if model is None and name == os.environ.get("CONTEXER_AGENT"):
+        model = os.environ.get("CONTEXER_AGENT_MODEL")  # saved together with that agent
+    return name, model
 
 
 _ACCOUNT_PROBLEMS = ("credit balance", "credits", "unauthorized", "401", "authentication", "api key", "not logged in", "login")

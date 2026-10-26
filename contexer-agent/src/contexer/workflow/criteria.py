@@ -97,6 +97,8 @@ class GoalAnalyzer:
         self.timeout = timeout
         # Why the last analysis did not use the model (rate limit, auth, no JSON), for the person reviewing it.
         self.last_error: Optional[str] = None
+        # The model that actually answered: a router or fallback may differ from the one asked for.
+        self.drafted_by: Optional[str] = None
 
     async def analyze(
         self,
@@ -198,6 +200,7 @@ class GoalAnalyzer:
             )
         except asyncio.TimeoutError as exc:
             raise TimeoutError(f"the model did not answer within {self.timeout:.0f}s") from exc
+        self.drafted_by = getattr(response, "model", None) or self.llm_provider.model
         data = parse_json_object(response.text, expect_key="acceptance_criteria")
 
         criteria: list[AcceptanceCriterion] = []

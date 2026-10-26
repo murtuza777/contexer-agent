@@ -74,6 +74,15 @@ def main(
     code: 0 pass, 1 fail, 2 needs action, 3 error.
     """
     _configure_terminal_encoding()
+    from dotenv import find_dotenv, load_dotenv
+
+    from contexer.config.user import apply_user_settings
+
+    # Precedence: exported variables, then the nearest .env, then `contexer setup`.
+    dotenv_path = find_dotenv(usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path, override=False)
+    apply_user_settings()
     if ctx.invoked_subcommand is not None:
         return
     from contexer.cli.repl import ContexerApp

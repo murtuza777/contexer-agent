@@ -88,5 +88,5 @@ class TestLLMFactory:
 
     def test_unsupported_provider_raises_value_error(self) -> None:
         cfg = ContexerConfig(llm_provider="unsupported_vendor")
-        with pytest.raises(ValueError, match="Unsupported LLM provider"):
+        with pytest.raises(ValueError, match="Unknown provider 'unsupported_vendor'. Choose one of: openrouter"):
             create_llm_provider(cfg)

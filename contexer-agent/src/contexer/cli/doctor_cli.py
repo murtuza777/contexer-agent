@@ -57,7 +57,7 @@ def doctor(
 
 def environment_findings() -> list[Finding]:
     from contexer.cli.gate_cli import compiler_llm
-    from contexer.config.settings import load_config
+    from contexer.config.settings import OPENROUTER_FREE_ROUTER, load_config
     from contexer.observer.browser import chromium_status
 
     findings: list[Finding] = []
@@ -84,11 +84,25 @@ def environment_findings() -> list[Finding]:
         )
     )
 
+    from contexer.config.user import contexer_home, load_user_settings
+
+    saved = load_user_settings()
+    findings.append(
+        Finding(
+            "Settings",
+            "ok" if saved.provider else "warn",
+            f"{saved.provider} · {saved.model or 'default model'} (saved in {contexer_home()})"
+            if saved.provider
+            else "no provider chosen yet",
+            "Run `contexer setup` to bring your own key and pick models",
+        )
+    )
+
     config = load_config()
     llm = compiler_llm(None)
     if llm is not None:
         detail = f"{llm.name} · {llm.model}"
-        status: Status = "warn" if llm.name == "openrouter" and llm.model == "openrouter/free" else "ok"
+        status: Status = "warn" if llm.name == "openrouter" and llm.model == OPENROUTER_FREE_ROUTER else "ok"
         findings.append(
             Finding(
                 "Drafting model",

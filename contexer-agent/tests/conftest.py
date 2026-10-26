@@ -57,3 +57,15 @@ class FakeLLM(LLMProvider):
 @pytest.fixture
 def fake_llm() -> Callable[..., FakeLLM]:
     return FakeLLM
+
+
+@pytest.fixture(autouse=True)
+def _isolated_user_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch):
+    """No test reads or writes a real ~/.contexer, and none leaks environment changes into the next."""
+    import os
+
+    monkeypatch.setenv("CONTEXER_HOME", str(tmp_path_factory.mktemp("contexer-home")))
+    saved = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(saved)

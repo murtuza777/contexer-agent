@@ -45,7 +45,10 @@ def register(app: typer.Typer) -> None:
     from contexer.cli.demo_cli import demo
     from contexer.cli.init_cli import init
     from contexer.cli.doctor_cli import doctor
+    from contexer.cli.setup_cli import models, setup
 
+    app.command("setup")(setup)
+    app.command("models")(models)
     app.command("run")(run)
     app.command("verify")(verify)
     app.command("replay")(replay)
@@ -173,6 +176,7 @@ async def run_verification(
                     drafted = await session.compile(goal, analyzer, store.unique_id(goal), app.repo_context)
                 path = store.save(drafted)
                 console.print(f"[dim]Draft contract:[/] {escape(str(path))}")
+                print_drafted_by(console, analyzer)
                 warn_if_weak_draft(console, drafted, analyzer.last_error)
                 contracts = [drafted, *contracts]
             with console.status(f"[dim]Running {sum(len(c.criteria) for c in contracts)} checks in Chromium...[/dim]"):
@@ -253,6 +257,21 @@ def print_draft_preview(console: Console, result: Optional[RunResult]) -> None:
             "these checks do not test it yet.[/]"
         )
     console.print()
+
+
+def print_drafted_by(console: Console, analyzer: GoalAnalyzer) -> None:
+    """Which model wrote the checks, and say so when it is not the one that was asked."""
+    asked = analyzer.llm_provider.model if analyzer.llm_provider else None
+    served = analyzer.drafted_by
+    if not served:
+        return
+    if asked and served != asked:
+        console.print(
+            f"[yellow]Drafted by {escape(served)}[/] [dim]({escape(asked)} was unavailable, so the provider "
+            "fell back; review these checks with extra care or retry later)[/]"
+        )
+    else:
+        console.print(f"[dim]Drafted by {escape(served)}[/]")
 
 
 def warn_if_weak_draft(console: Console, contract: Contract, reason: Optional[str] = None) -> None:
@@ -443,6 +462,7 @@ def contract_draft(
         console.print(escape(line))
     console.print()
     print_draft_preview(console, preview)
+    print_drafted_by(console, analyzer)
     warn_if_weak_draft(console, contract, analyzer.last_error)
     console.print(f"[dim]Saved draft:[/] {escape(str(path))}")
     console.print(f"[dim]Review it, then:[/] contexer contract approve {escape(contract.id)}")

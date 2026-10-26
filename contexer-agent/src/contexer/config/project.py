@@ -28,7 +28,7 @@ import tomllib
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from contexer.verification.checks import Check, Expectation, Step
 
@@ -95,8 +95,17 @@ class CompilerSettings(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    provider: Optional[Literal["anthropic", "openai", "openrouter"]] = None
+    provider: Optional[str] = None  # any id from contexer.llm.catalog (`contexer models --providers`)
     model: Optional[str] = None
+
+    @field_validator("provider")
+    @classmethod
+    def _known_provider(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        from contexer.llm.catalog import provider_spec
+
+        return provider_spec(value).id  # ValueError names the providers that exist
 
 
 class ProjectConfig(BaseModel):
