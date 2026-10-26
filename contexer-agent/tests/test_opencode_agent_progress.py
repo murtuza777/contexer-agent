@@ -70,3 +70,19 @@ async def test_tool_calls_are_reported_once_each_while_the_turn_runs(tmp_path: P
     assert progress[0] == "OpenCode session ses_1 working"
     assert progress[1:] == ["glob **/*", "read app.js", "edit app.js", "bash npm test"]
     assert turn.tool_calls == 4
+
+
+def test_an_openrouter_key_picks_a_model_that_works_headless(monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.config.settings import DEFAULT_OPENROUTER_CODING_MODEL
+
+    for name in ("OPENCODE_MODEL_PROVIDER", "OPENCODE_MODEL_ID"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    agent = OpenCodeAgent(start_server=False)
+    assert (agent.provider, agent.model_id) == ("openrouter", DEFAULT_OPENROUTER_CODING_MODEL)
+
+    # An explicit choice always wins.
+    assert OpenCodeAgent(model="openrouter/other/model:free", start_server=False).model_id == "other/model:free"
+    monkeypatch.setenv("OPENCODE_MODEL_PROVIDER", "anthropic")
+    monkeypatch.setenv("OPENCODE_MODEL_ID", "claude-sonnet-5-5")
+    assert OpenCodeAgent(start_server=False).provider == "anthropic"

@@ -16,6 +16,11 @@ from dotenv import find_dotenv, load_dotenv
 DEFAULT_OPENROUTER_MODEL = "openrouter/free"
 DEFAULT_OPENCODE_MODEL_PROVIDER = "opencode"
 DEFAULT_OPENCODE_MODEL_ID = "nemotron-3.5-lightning-free"
+# OpenCode's own free models refuse programmatic use. With an OpenRouter key,
+# OpenCode uses this free model instead: it built a feature that passed every
+# check in a live `contexer run` (2026-10-26). Free models come and go on
+# OpenRouter; set OPENCODE_MODEL_PROVIDER/OPENCODE_MODEL_ID or --model to pin another.
+DEFAULT_OPENROUTER_CODING_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 
 
 @dataclass

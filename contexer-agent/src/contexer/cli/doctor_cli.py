@@ -108,12 +108,18 @@ def environment_findings() -> list[Finding]:
         )
 
     agents = [name for name in ("claude", "opencode", "codex") if shutil.which(name)]
+    detail = ", ".join(agents) if agents else "none found (only `contexer run` needs one)"
+    if "opencode" in agents and os.environ.get("OPENROUTER_API_KEY"):
+        from contexer.agents.opencode_agent import OpenCodeAgent
+
+        opencode = OpenCodeAgent(start_server=False)
+        detail += f"; `--agent opencode` uses {opencode.provider}/{opencode.model_id}"
     findings.append(
         Finding(
             "Coding agents",
             "ok" if agents else "warn",
-            ", ".join(agents) if agents else "none found (only `contexer run` needs one)",
-            "Install Claude Code (npm i -g @anthropic-ai/claude-code) or OpenCode for `contexer run`",
+            detail,
+            "Install Claude Code (npm i -g @anthropic-ai/claude-code), Codex or OpenCode for `contexer run`",
         )
     )
 

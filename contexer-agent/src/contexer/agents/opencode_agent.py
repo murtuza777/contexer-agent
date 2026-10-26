@@ -9,6 +9,7 @@ If no server answers at the configured URL, the adapter starts
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import time
 from pathlib import Path
@@ -31,10 +32,14 @@ class OpenCodeAgent(CodingAgentAdapter):
         base_url: Optional[str] = None,
         start_server: bool = True,
     ) -> None:
-        from contexer.config.settings import load_config
+        from contexer.config.settings import DEFAULT_OPENROUTER_CODING_MODEL, load_config
 
         config = load_config()
         provider, model_id = config.opencode_model_provider, config.opencode_model_id
+        configured = any(os.environ.get(k) for k in ("OPENCODE_MODEL_PROVIDER", "OPENCODE_MODEL_ID"))
+        if not model and not configured and os.environ.get("OPENROUTER_API_KEY"):
+            # OpenCode's own free models refuse headless use; an OpenRouter key works.
+            provider, model_id = "openrouter", DEFAULT_OPENROUTER_CODING_MODEL
         if model and "/" in model:
             provider, model_id = model.split("/", 1)
         elif model:
