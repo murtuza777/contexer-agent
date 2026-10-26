@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import webbrowser
 from pathlib import Path
 from typing import Optional
@@ -167,6 +169,26 @@ def _approve(
     return approved
 
 
+_ACCOUNT_PROBLEMS = ("credit balance", "credits", "unauthorized", "401", "authentication", "api key", "not logged in", "login")
+
+
+def agent_hint(outcome: RunOutcome) -> Optional[str]:
+    """What to do when the coding agent itself could not run (no credit, not logged in)."""
+    if outcome.terminal != "agent_error":
+        return None
+    reason = outcome.reason.lower()
+    if not any(problem in reason for problem in _ACCOUNT_PROBLEMS):
+        return None
+    if os.environ.get("OPENROUTER_API_KEY") and shutil.which("opencode"):
+        return "the agent's account cannot run it; `--agent opencode` runs it on your OpenRouter key's free models."
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return (
+            "the agent's account cannot run it. Install OpenCode (npm i -g opencode-ai) and use "
+            "`--agent opencode` to run it on your OpenRouter key's free models."
+        )
+    return "the agent's account cannot run it: log in to it, add credit, or choose another with --agent."
+
+
 def _render(console: Console, outcome: RunOutcome) -> None:
     table = Table(show_header=True, header_style="dim", box=None, pad_edge=False)
     for col in ("#", "turn", "agent", "files", "verdict", "note"):
@@ -186,6 +208,9 @@ def _render(console: Console, outcome: RunOutcome) -> None:
     lines = [f"[bold {style}]{escape(outcome.terminal.replace('_', ' ').upper())}[/] — {escape(outcome.reason)}"]
     if outcome.cost_usd:
         lines.append(f"[dim]Agent spend:[/] ${outcome.cost_usd:.2f}")
+    hint = agent_hint(outcome)
+    if hint:
+        lines.append(f"[yellow]Next:[/] {escape(hint)}")
     lines.append(f"[dim]Report:[/] {escape(str(Path(outcome.run_dir, 'report.html')))}")
     lines.append(f"[dim]{outcome.duration_seconds:.0f}s[/]")
     console.print()

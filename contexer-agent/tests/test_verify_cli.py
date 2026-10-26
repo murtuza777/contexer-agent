@@ -151,3 +151,25 @@ def test_a_rate_limited_draft_says_why_and_is_never_auto_approved(
     assert "--yes never approves a weak draft" in out
     drafts = [c for c in ContractStore(todo_app).list() if c.id != "todo-basics"]
     assert [c.status for c in drafts] == ["draft"]  # kept for review, not approved
+
+
+def test_an_agent_without_credit_gets_a_way_forward(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import shutil as _shutil
+
+    from contexer.cli.run_cli import agent_hint
+    from contexer.controller.run import RunOutcome
+
+    no_credit = RunOutcome(
+        run_id="r", contract_id="c", agent="claude-code", terminal="agent_error",
+        reason="The coding agent did not complete: api_error: Credit balance is too low",
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.setattr(_shutil, "which", lambda name: "opencode" if name == "opencode" else None)
+    assert "--agent opencode" in (agent_hint(no_credit) or "")
+    monkeypatch.setattr(_shutil, "which", lambda name: None)
+    assert "npm i -g opencode-ai" in (agent_hint(no_credit) or "")
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    assert "--agent" in (agent_hint(no_credit) or "")
+    # Other failures (a real bug in the work) get no account hint.
+    failed = no_credit.model_copy(update={"terminal": "failed_checks", "reason": "Not all checks passed"})
+    assert agent_hint(failed) is None
