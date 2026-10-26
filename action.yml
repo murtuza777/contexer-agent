@@ -40,8 +40,28 @@ runs:
     - name: Install Contexer
       shell: bash
       run: |
+        start=$SECONDS
         python -m pip install --quiet "${{ github.action_path }}/contexer-agent"
-        python -m playwright install --with-deps chromium
+        echo "PLAYWRIGHT_VERSION=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_ENV"
+        echo "Contexer installed in $((SECONDS - start))s"
+
+    - name: Cache Chromium
+      uses: actions/cache@v6.1.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: contexer-chromium-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+
+    - name: Install Chromium
+      shell: bash
+      run: |
+        start=$SECONDS
+        python -m playwright install chromium
+        # GitHub's Ubuntu images ship Google Chrome, so Chromium's system libraries are
+        # usually present; the slow apt step runs only when the browser cannot start.
+        if ! python -c "from playwright.sync_api import sync_playwright as s; p = s().start(); p.chromium.launch().close(); p.stop()"; then
+          python -m playwright install-deps chromium
+        fi
+        echo "Chromium ready in $((SECONDS - start))s"
 
     - name: Replay approved contracts
       id: gate
