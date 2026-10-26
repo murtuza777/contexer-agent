@@ -30,6 +30,12 @@ from contexer.workflow.criteria import GoalAnalyzer
 from contexer.workflow.inspector import RepositoryContext
 
 
+# A dev server compiles each page and API route the first time it is hit, which
+# on a cold start or a busy machine takes seconds; static files answer at once.
+DEV_SERVER_TIMEOUT_SCALE = 2.5
+DEV_SERVER_LOAD_TIMEOUT = 60.0
+
+
 class _FromProject:
     """Sentinel: read [auth] from the project's contexer.toml."""
 
@@ -91,6 +97,8 @@ class VerificationSession:
         kwargs: dict[str, Any] = {"screenshot": True, "screenshot_dir": self.run.path}
         if state is not None:
             kwargs["storage_state"] = state
+        if app.kind == "dev":
+            kwargs["timeout"] = DEV_SERVER_LOAD_TIMEOUT
         self.load = await self.observer.observe(app.url, **kwargs)
         return self.load
 
@@ -144,6 +152,8 @@ class VerificationSession:
                     extra["storage_state"] = state
                 if self.reset:
                     extra["before_each"] = self._reset_before_each(app)
+                if app.kind == "dev":
+                    extra["timeout_scale"] = DEV_SERVER_TIMEOUT_SCALE
                 verification = await self.verifier.verify(
                     contract.goal,
                     load,

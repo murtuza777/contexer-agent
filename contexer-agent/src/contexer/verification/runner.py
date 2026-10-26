@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import os
 import re
@@ -74,6 +75,7 @@ class CheckRunner:
         artifacts_dir: Optional[Path] = None,
         storage_state: Optional[dict[str, Any]] = None,
         before_each: Optional[Callable[[], Awaitable[Optional[str]]]] = None,
+        timeout_scale: float = 1.0,
     ) -> list[CheckResult]:
         """Execute ``(criterion_id, check)`` pairs in order and return one result each.
 
@@ -81,9 +83,17 @@ class CheckRunner:
         run with it unless they say ``"login": false``. ``before_each`` runs
         before every check (the ``[app] reset`` command) and returns why it
         failed, or ``None``; a check whose reset failed cannot run.
+        ``timeout_scale`` stretches every wait for this run (a dev server
+        compiles each page and API route the first time it is hit).
         """
         if not checks:
             return []
+        if timeout_scale != 1.0:
+            scaled = copy.copy(self)
+            scaled.navigation_timeout *= timeout_scale
+            scaled.action_timeout *= timeout_scale
+            scaled.expect_timeout *= timeout_scale
+            return await scaled.run(url, checks, artifacts_dir, storage_state, before_each)
         from playwright.async_api import async_playwright
 
         if artifacts_dir is not None:

@@ -69,12 +69,14 @@ class Verifier:
         artifacts_dir: Optional[Path] = None,
         storage_state: Optional[dict[str, Any]] = None,
         before_each: Optional[Callable[[], Awaitable[Optional[str]]]] = None,
+        timeout_scale: float = 1.0,
     ) -> VerificationResult:
         """Verify the application at ``observation.url`` against ``analysis``.
 
         ``artifacts_dir`` receives per-check screenshots (and traces, if the
-        runner records them). ``storage_state`` and ``before_each`` are passed
-        to the runner (signed-in state; the ``[app] reset`` before each check).
+        runner records them). ``storage_state``, ``before_each`` and
+        ``timeout_scale`` are passed to the runner (signed-in state; the
+        ``[app] reset`` before each check; longer waits for a dev server).
         """
         if not observation.success:
             err = observation.error or "Application was not reachable."
@@ -119,6 +121,8 @@ class Verifier:
                 extra["storage_state"] = storage_state
             if before_each is not None:
                 extra["before_each"] = before_each
+            if timeout_scale != 1.0:
+                extra["timeout_scale"] = timeout_scale
             check_results = await self.runner.run(observation.url, pairs, **extra)
             for criterion, outcome in zip(asserted, check_results):
                 results.append(

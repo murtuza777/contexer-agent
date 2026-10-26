@@ -242,3 +242,24 @@ async def test_unreachable_app_fails_navigation(runner: CheckRunner) -> None:
     assert not result.passed
     assert result.failed_step is not None and result.failed_step.startswith("navigation to")
     assert result.blocked is False  # an unreachable app is a real failure
+
+
+@pytest.mark.anyio
+async def test_timeout_scale_gives_a_slow_dev_server_time_to_answer(tmp_path: Path) -> None:
+    # The text appears 3 s after the click, like a cold API route compiling on first use.
+    page = (
+        "<!doctype html><meta charset='utf-8'><button onclick=\"setTimeout(() => "
+        "document.body.insertAdjacentHTML('beforeend', '<p>Saved</p>'), 3000)\">Save</button>"
+    )
+    (tmp_path / "index.html").write_text(page, encoding="utf-8")
+    check = Check.model_validate(
+        {"steps": [{"action": "click", "target": {"role": "button", "name": "Save"}}],
+         "expect": [{"kind": "visible", "target": {"text": "Saved"}}]}
+    )
+    runner = CheckRunner(expect_timeout=2.0)
+    with StaticAppServer(tmp_path) as server:
+        [strict] = await runner.run(server.url, [("strict", check)])
+        [patient] = await runner.run(server.url, [("patient", check)], timeout_scale=2.5)
+    assert not strict.passed
+    assert patient.passed
+    assert runner.expect_timeout == 2.0  # the scale applies to that run only
