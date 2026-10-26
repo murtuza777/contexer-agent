@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any, AsyncIterator, Optional
 
-from contexer.config.settings import DEFAULT_OPENROUTER_MODEL
+from contexer.config.settings import DEFAULT_OPENROUTER_MODEL, OPENROUTER_FREE_ROUTER
 from contexer.llm.base import (
     LLMAuthenticationError,
     LLMChunk,
@@ -71,6 +71,23 @@ class OpenAICompatibleProvider(LLMProvider):
         if not self._model:
             return False, f"No model configured for {self.label}."
         return True, None
+
+    def _request_extras(self) -> dict[str, Any]:
+        """Provider-specific request fields; none for a plain OpenAI-compatible API."""
+        return {}
+
+    @classmethod
+    def for_spec(
+        cls, spec: Any, model: Optional[str], base_url: str, api_key: Optional[str] = None
+    ) -> OpenAICompatibleProvider:
+        """A provider from the BYOK catalogue (Groq, DeepSeek, Gemini, a local Ollama, your own gateway...)."""
+        key = api_key or spec.key() or ("local" if spec.local else None)
+        provider = cls(api_key=key, model=model, base_url=base_url)
+        provider.provider_name = spec.id
+        provider.label = spec.label
+        provider.key_env = spec.key_env
+        provider.key_help = spec.keys_url
+        return provider
 
     def _get_client(self) -> Any:
         """Lazily initialize the AsyncOpenAI client for this endpoint."""
@@ -242,7 +259,7 @@ class OpenAICompatibleProvider(LLMProvider):
         client = self._get_client()
         messages = self._prepare_messages(prompt, system_instruction)
 
-        api_kwargs: dict[str, Any] = dict(kwargs)
+        api_kwargs: dict[str, Any] = {**self._request_extras(), **kwargs}
         if tools:
             api_kwargs["tools"] = tools
 
@@ -286,10 +303,12 @@ class OpenAICompatibleProvider(LLMProvider):
                     "total_token_count": getattr(response.usage, "total_tokens", 0),
                 }
 
+            served = getattr(response, "model", None)
             return LLMResponse(
                 text=text,
                 tool_calls=tool_calls,
-                model=self._model,
+                # The model that answered: a router or a fallback may differ from the one asked for.
+                model=served if isinstance(served, str) and served else self._model,
                 usage=usage_dict,
             )
         except Exception as exc:
@@ -306,7 +325,7 @@ class OpenAICompatibleProvider(LLMProvider):
         client = self._get_client()
         messages = self._prepare_messages(prompt, system_instruction)
 
-        api_kwargs: dict[str, Any] = dict(kwargs)
+        api_kwargs: dict[str, Any] = {**self._request_extras(), **kwargs}
         if tools:
             api_kwargs["tools"] = tools
 
@@ -397,6 +416,14 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     key_help = "https://openrouter.ai/keys"
     default_base_url = OPENROUTER_BASE_URL
     default_model = DEFAULT_OPENROUTER_MODEL
+
+    def _request_extras(self) -> dict[str, Any]:
+        # The default is one specific free model; free models come and go, so if it is
+        # down, rate-limited or retired, OpenRouter's own fallback list moves on to the
+        # free router. A model the user chose is used as given.
+        if self._model == DEFAULT_OPENROUTER_MODEL:
+            return {"extra_body": {"models": [self._model, OPENROUTER_FREE_ROUTER]}}
+        return {}
 
 
 class OpenAIProvider(OpenAICompatibleProvider):

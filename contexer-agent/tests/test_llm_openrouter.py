@@ -41,9 +41,19 @@ class TestOpenRouterProviderValidation:
         assert msg is None
 
     def test_default_model_assigned(self) -> None:
+        from contexer.config.settings import DEFAULT_OPENROUTER_MODEL
+
         provider = OpenRouterProvider(api_key="sk-or-v1-test_key")
-        assert provider.model == "openrouter/free"
+        assert provider.model == DEFAULT_OPENROUTER_MODEL
         assert provider.name == "openrouter"
+
+    def test_the_default_model_falls_back_to_the_free_router_and_a_chosen_one_does_not(self) -> None:
+        default = OpenRouterProvider(api_key="sk-or-v1-test_key")
+        assert default._request_extras() == {
+            "extra_body": {"models": ["nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter/free"]}
+        }
+        chosen = OpenRouterProvider(api_key="sk-or-v1-test_key", model="google/gemma-4-31b-it:free")
+        assert chosen._request_extras() == {}
 
     def test_custom_model_assigned(self) -> None:
         provider = OpenRouterProvider(
@@ -158,7 +168,7 @@ class TestOpenRouterGenerationMocked:
         response = asyncio.run(provider.generate("Explain algorithms"))
         assert isinstance(response, LLMResponse)
         assert response.text == "Here is the code solution"
-        assert response.model == "openrouter/free"
+        assert response.model == "google/gemma-4-31b-it:free"  # the model that answered, not the one asked for
         assert response.usage["total_tokens"] == 50
 
     def test_stream_success(self) -> None:

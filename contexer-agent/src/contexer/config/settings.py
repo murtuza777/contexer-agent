@@ -13,7 +13,13 @@ from typing import Optional
 
 from dotenv import find_dotenv, load_dotenv
 
-DEFAULT_OPENROUTER_MODEL = "openrouter/free"
+# OpenRouter's router, which sends each request to a different free model.
+OPENROUTER_FREE_ROUTER = "openrouter/free"
+# Drafting default: one specific free model, measured with `bench --live` on
+# 2026-10-26 at 33/40 seeded bugs caught and 0/164 false failures, where the
+# router varied between 25% and 83% per run. Requests fall back to the router
+# when it is unavailable (see OpenRouterProvider).
+DEFAULT_OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 DEFAULT_OPENCODE_MODEL_PROVIDER = "opencode"
 DEFAULT_OPENCODE_MODEL_ID = "nemotron-3.5-lightning-free"
 # OpenCode's own free models refuse programmatic use. With an OpenRouter key,
@@ -45,6 +51,10 @@ class ContexerConfig:
     openai_base_url: Optional[str] = None
     # Explicit choice for compiling goals; None means "pick from available keys".
     compiler_provider: Optional[str] = None
+    # Model and endpoint for whichever provider drafts (CONTEXER_LLM_MODEL /
+    # CONTEXER_LLM_BASE_URL); they win over the provider-specific variables.
+    llm_model: Optional[str] = None
+    llm_base_url: Optional[str] = None
 
     # -- agent & opencode -------------------------------------------------
     max_turns: int = 50
@@ -171,6 +181,8 @@ def load_config(env_file: Optional[str | Path] = None) -> ContexerConfig:
         openai_model=_env("OPENAI_MODEL"),
         openai_base_url=_env("OPENAI_BASE_URL"),
         compiler_provider=explicit_provider or None,
+        llm_model=_env("CONTEXER_LLM_MODEL"),
+        llm_base_url=_env("CONTEXER_LLM_BASE_URL"),
         log_level=log_level,
         verbose=verbose,
         llm_provider=provider,
