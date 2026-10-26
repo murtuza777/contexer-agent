@@ -187,7 +187,7 @@ which must still pass.
 
 | Contracts | Seeded bugs caught | False-failing checks on correct code |
 | --- | --- | --- |
-| Hand-written (6 apps, 35 bugs) | **35/35** caught with proof | **0/248** (38 clean runs) |
+| Hand-written (7 apps, 40 bugs) | **40/40** caught with proof | **0/278** (44 clean runs) |
 | Compiled by the LLM from one-line goals (`--live`, free models) | 25–83% per run | 0 in every run |
 
 - **Hand-written row:** the contracts and the bugs were written by the same
@@ -207,8 +207,9 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 - **Fixtures:** todo, a shop (filters, search, cart arithmetic, async data),
   a signup form (validation, error states, a submit that reloads the page), a
   notes app (pinning, search in body text, deletes), a members area behind a
-  sign-in (welcome, projects, sign-out, a guard for signed-out visitors), and
-  a React 19 + Vite 8 budget tracker started through its own dev server.
+  sign-in (welcome, projects, sign-out, a guard for signed-out visitors), a
+  React 19 + Vite 8 budget tracker, and a Next.js 16 guestbook whose entries
+  live on the server. The last two start through their own dev servers.
   They live in [`contexer-agent/bench/fixtures`](contexer-agent/bench/fixtures).
   Each bug has a `BUG.md` naming the check expected to catch it, and every
   bug was caught by that check.
@@ -224,7 +225,7 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 
 ## Status
 
-What works today, with tests (442 passing) and CI on Linux:
+What works today, with tests (455 passing) and CI on Linux:
 
 - Contracts, approval and hashing; `verify`, `replay`, `contract`, `run`,
   `doctor` and `bench` (including `--live`).
@@ -233,6 +234,8 @@ What works today, with tests (442 passing) and CI on Linux:
   `contexer.toml`): `npm ci` from the lockfile, a reinstall when an agent
   changes dependencies, and killing the whole process tree on Windows.
 - Apps behind a login (`[auth]`), with secrets masked in all evidence.
+- Apps that keep data on a server: `[app] reset` before every check.
+- Coding agents: Claude Code, Codex and OpenCode.
 - Drafting with Anthropic, OpenAI or OpenRouter models.
 - The repair controller: snapshots, keep-best, revert, fresh session on a
   repeated failure, tamper guard and regression replay.

@@ -8,6 +8,18 @@
   `codex exec --json` in the `workspace-write` sandbox, resumes the same
   thread for repair turns, and reports progress and edited files. Codex
   reports no cost, so `--budget` does not apply to it.
+- **`[app] reset`**, a command run before every check that puts server-side
+  data back, because checks share the app's database. A failing reset blocks
+  its check instead of refuting it. The drafting guide also asks for unique
+  names for created items.
+- **Benchmark:** `guestbook-next`, a Next.js 16 app whose entries live on the
+  server, started through `npm ci` and `next dev`.
+
+### Fixed
+
+- On Windows, a configured command with a quoted path (for example
+  `"C:\Program Files\nodejs\node.exe" app.js`) failed with "is not
+  recognized", because `cmd.exe` cannot read `\"`-escaped quotes.
 
 ## 0.2.0 — 2026-10-25
 

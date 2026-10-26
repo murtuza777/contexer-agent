@@ -5,7 +5,7 @@ hand-written benchmark on Linux on every push.
 
 ## Hand-written contracts (measures the runner)
 
-`contexer bench --repeats 2`, 2026-10-25 (610 s):
+`contexer bench --repeats 2`, 2026-10-26 (874 s):
 
 | App | What it exercises | Seeded bugs | Caught (proven) | Flagged | Missed | False-failing checks on correct and benign code |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -15,22 +15,30 @@ hand-written benchmark on Linux on every push.
 | notes | static JS | 6 | 6 | 0 | 0 | 0 / 36 (6 runs) |
 | members | behind a sign-in (`[auth]`), a signed-out guard | 5 | 5 | 0 | 0 | 0 / 36 (6 runs) |
 | budget-react | React 19 + Vite 8 through its real dev server | 6 | 6 | 0 | 0 | 0 / 36 (6 runs) |
-| **total** | | **35** | **35** | 0 | 0 | **0 / 248** (38 runs) |
+| guestbook-next | Next.js 16, data kept on the server, `[app] reset` | 5 | 5 | 0 | 0 | 0 / 30 (6 runs) |
+| **total** | | **40** | **40** | 0 | 0 | **0 / 278** (44 runs) |
 
-Every bug was caught by the check its `BUG.md` names. The two new apps cover
-what most real projects look like: `members` signs in once and starts every
-check signed in (one check runs signed out), and `budget-react` is installed
-with `npm ci` and started with `vite`, exactly as `contexer verify` starts a
-user's project. The 2026-10-15 run of the first four apps scored the same:
-24/24 caught, 0/176 false failures.
+Every bug was caught by the check its `BUG.md` names. The three newest apps
+look like real projects:
+
+- `members` signs in once and starts every check signed in; one check runs
+  signed out.
+- `budget-react` is installed with `npm ci` and started with `vite`, exactly
+  as `contexer verify` starts a user's project.
+- `guestbook-next` keeps its data in the server process, so checks would see
+  each other's entries. Its `[app] reset` clears them before each check;
+  without it, the correct app fails 3 of 5 checks.
+
+The 2026-10-15 run of the first four apps scored the same: 24/24 caught, 0/176
+false failures.
 
 The benign variants are a full JS refactor, visual restyles, a 600ms deferred
 render, a 900ms slow API, a 500ms async submit, a 500ms slow save, a session
-moved from local storage to a cookie, and a React save behind a 400ms
-simulated API call. All of them passed every check: auto-retrying
-expectations absorb timing, role-based locators survive restyles and
-refactors, and the replayed sign-in state carries both cookies and local
-storage.
+moved from local storage to a cookie, a React save behind a 400ms simulated
+API call, and a server store rewritten to use a Map. All of them passed every
+check: auto-retrying expectations absorb timing, role-based locators survive
+restyles and refactors, and the replayed sign-in state carries both cookies
+and local storage.
 
 **Caveat:** the contracts and the bugs were written by the same author. This
 shows the runner is reliable and classifies failures correctly, not that

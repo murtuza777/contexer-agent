@@ -210,9 +210,14 @@ Static projects keep `StaticAppServer`.
 - A readiness probe with Playwright `webServer` semantics: 2xx, 3xx and
   400–403 count as ready. It probes both `127.0.0.1` and `localhost`.
 - If the process exits early, it reports the last log lines.
+- If the expected port never answers, it falls back to a URL parsed from the
+  logs.
 - Dependencies install from the lockfile exactly (`npm ci`,
-  `pnpm install --frozen-lockfile`), so a gate run never rewrites it, and are
-  reinstalled when an agent changes `package.json` or a lockfile.
+  `pnpm install --frozen-lockfile`) when `node_modules` is missing, so a gate
+  run never rewrites it, and are reinstalled when an agent changes
+  `package.json` or a lockfile.
+- On Windows, shell commands reach `cmd.exe` verbatim (`/s`), so quoted paths
+  work.
 
 **Sign-in (`[auth]`)** — done 2026-10-25. The flow is check-DSL steps and
 expectations. It runs once per verification; its browser state (cookies,
@@ -221,9 +226,12 @@ and `"login": false` runs a check signed out. `${NAME}` values expand from
 the environment or the project `.env` at run time. Typed secrets and
 password fields are masked in all evidence, and signed-in checks keep no
 trace unless `--trace on` is passed.
-- If the expected port never answers, it falls back to a URL parsed from the
-  logs.
-- Dependencies are installed automatically when `node_modules` is missing.
+
+**Server-side data (`[app] reset`)** — done 2026-10-25. Checks share the
+running app's server, so data one check saves is there for the next: on the
+guestbook fixture, 3 of 5 correct checks failed without a reset. The reset
+command runs before every check, and a failing reset blocks its check as
+unverified. The drafting guide asks for unique names for created items.
 
 **Done when:**
 
@@ -231,7 +239,7 @@ trace unless `--trace on` is passed.
   beforehand.
 - No `node` process is left running afterwards, checked on Windows.
 
-### C3. Benchmark — done (static, signed-in and React + Vite fixtures, `--live`)
+### C3. Benchmark — done (static, signed-in, React + Vite and Next.js fixtures, `--live`)
 
 **Layout:**
 
@@ -263,9 +271,10 @@ benchmark refuses to score a contract that fails it.
 
 The first fixtures were static apps, which kept the benchmark hermetic and
 fast. Since 2026-10-25 variants start exactly as `contexer verify` starts a
-project, `members` signs in through `[auth]`, and `budget-react` runs
-React 19 + Vite 8 through `npm ci` and its dev server: 35/35 bugs caught,
-0/248 false-failing checks. A Next.js fixture and StrykerJS-generated mutants
+project, `members` signs in through `[auth]`, `budget-react` runs
+React 19 + Vite 8 through `npm ci` and its dev server, and `guestbook-next`
+runs Next.js 16 with server-side data and `[app] reset`. The 2026-10-26 run
+caught 40/40 bugs with 0/278 false-failing checks. StrykerJS-generated mutants
 follow later.
 
 ### C4. Agent adapters — done for Claude Code, Codex, OpenCode, scripted

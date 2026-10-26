@@ -88,6 +88,7 @@ ready_path = "/"
 ready_timeout = 120
 install = true                           # npm ci (lockfile) / npm install when node_modules is missing,
                                          # and again when an agent changes dependencies
+reset = "npm run db:reset"               # before every check (see below); {url} and {port} are filled in
 
 [auth]                                   # sign in before checks (see below)
 url = "/login"
@@ -131,6 +132,22 @@ in memory only). Use a dedicated test account:
   screenshot. `contexer doctor` reports unset secrets before you run.
 - Sessions kept only in `sessionStorage` are not carried over; cookie and
   local-storage sessions are.
+
+### Apps that save data on a server
+
+Every check gets a fresh browser, but all checks talk to the same running app,
+so whatever one check saves on the server is still there for the next. Then a
+correct app fails "shows 2 entries" because an earlier check added one.
+`[app] reset` runs before each check to put the data back, for example
+`npm run db:reset` or `curl -sf -X POST {url}/api/test/reset`:
+
+- It must be fast, because it runs once per check, and it must keep the
+  `[auth]` test account.
+- If it fails, its check is blocked as unverified, with the command's output.
+  It is never counted as refuted.
+- The drafting model is told to give the items a check creates unique names
+  and to assert on those names, so drafted checks tolerate leftover data. A
+  reset is still the reliable fix.
 
 ## Architecture
 
