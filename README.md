@@ -144,6 +144,29 @@ Or do it all in one step:
 Contexer shows the checklist and asks you to approve it before any code
 changes.
 
+### Hand it over as a pull request
+
+```bash
+contexer run "Users can clear completed tasks" --pr   # ends in a pull request with the evidence
+contexer run --issue 42                               # the goal comes from issue #42; the PR closes it
+```
+
+With `--pr`, a run ends on a new branch `contexer/<contract>` with one commit,
+pushed, and a pull request whose description lists every check with its
+verdict, the regression replay, the attempts and the agent's cost. When every
+check passed the pull request is ready for review; otherwise it is a draft
+that says what still fails. The commit holds only the files the run changed
+plus the approved contract, never other work in your checkout. Contexer checks
+the checkout before it spends anything: a git repository with a commit, on a
+branch, with no uncommitted changes to tracked files. It uses `GITHUB_TOKEN` or
+your `gh` login; without either it pushes the branch and prints the link that
+opens the pull request.
+
+Stopped a run with Ctrl+C? The agent is stopped at once, the project goes back
+to the best attempt (or to how it was), and the unfinished work is kept:
+`contexer restore <run> --stopped` brings it back, `--attempt N` any attempt,
+and `--undo` reverses a restore.
+
 ### Free, with only an OpenRouter key
 
 With `OPENROUTER_API_KEY` in your environment or `.env`, and
@@ -160,9 +183,12 @@ Chromium. In the first live run (2026-10-26), on the signed-in members app,
 this built "delete a project" in 101 s. The result passed all 5 new checks and
 the 6 that already existed, with no repair round.
 
-Free models are rate-limited: about 50 requests a day without credits, and
-each agent step is one request. Expect a few runs a day, and pick another
-model with `--model openrouter/<id>` if this one disappears.
+Free models are rate-limited: 50 requests a day without credits, and each
+agent step is one request; a small change took about 15. Before drafting,
+`contexer run` reads how many are left today and says so when they are about
+to run out, instead of stopping halfway (`contexer doctor` shows the count
+too). Expect a few runs a day, and pick another model with
+`--model openrouter/<id>` if this one disappears.
 
 ### Apps behind a login
 
@@ -220,6 +246,32 @@ Make `contexer/acceptance` a required check and nothing merges until the
 behaviour is proven. This repository runs the action on its own todo fixture
 ([`acceptance-gate.yml`](.github/workflows/acceptance-gate.yml)).
 
+## Hand it issues
+
+`contexer init --issues` adds a workflow that takes GitHub issues to proven
+pull requests:
+
+1. **Label an issue `contexer`.** Contexer drafts the checks from the issue,
+   tries each one on the app as it is, and posts them as a comment. Someone
+   with write access can edit the checks right in that comment.
+2. **Reply `/contexer approve`.** Contexer approves the checks in your name, the
+   coding agent builds it, and Contexer proves every check in Chromium,
+   repairing if needed. One comment on the issue follows the run live.
+3. **Review the pull request.** It closes the issue and carries the evidence.
+
+Only an approval from someone with write access starts a build: the workflow
+ignores other commenters, and Contexer checks the approver's access through
+the API. A draft comment written by a person, rather than by the workflow, is
+never treated as the checklist. The coding agent gets the model key and
+nothing else: no GitHub token in its environment or in `.git/config`, since
+the issue's text reaches its prompt. Contexer pushes and opens the pull
+request itself.
+
+The workflow file explains its two settings: the model key as a repository
+secret (`OPENROUTER_API_KEY` works with free models), and allowing GitHub
+Actions to create pull requests. Locally, `contexer issue draft 42` and
+`contexer issue build 42 --by <login>` do the same steps.
+
 ## How accurate is it?
 
 `contexer bench` replays contracts against fixture apps with seeded bugs. It
@@ -269,7 +321,7 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 
 ## Status
 
-What works today, with tests (476 passing) and CI on Linux:
+What works today, with tests (506 passing) and CI on Linux:
 
 - **Live end-to-end runs** with a real coding agent (OpenCode on a free
   OpenRouter model, 2026-10-26):
@@ -295,6 +347,11 @@ What works today, with tests (476 passing) and CI on Linux:
   repeated failure, tamper guard and regression replay.
 - GitHub: the commit status, the job summary, and a reusable action that
   takes about 40 s on a pull request.
+- Hand-off as a pull request (`--pr`), work from an issue (`--issue`), and the
+  issue workflow: checks posted on a labelled issue, `/contexer approve`, a
+  live status comment, and a pull request that closes the issue.
+- Ctrl+C stops the agent at once and puts the project back; any attempt can
+  be restored (`contexer restore`).
 
 Honest gaps:
 
@@ -302,6 +359,9 @@ Honest gaps:
   Codex are tested against their real stream protocols with fake binaries, and
   the real Codex CLI accepts Contexer's exact invocations up to authentication.
   A run on either awaits an account with credit.
+- The pull-request hand-off and the issue workflow are tested against real
+  git with a local remote and a simulated GitHub API, and their read calls
+  against the real API; they have not yet opened a real pull request.
 - No GitHub App (check runs, approve button) yet; not on PyPI yet.
 - No visual-design checks. Sign-in sessions kept only in `sessionStorage`
   are not carried into checks (cookie and local-storage sessions are).

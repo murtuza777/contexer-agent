@@ -46,7 +46,7 @@ serves static sites itself and starts the project's dev server.
 | --- | --- |
 | `contexer doctor` | Check everything Contexer needs, with the fix for each problem |
 | `contexer demo [--fix]` | Create a todo app with a seeded bug and prove its contract; no key or agent needed |
-| `contexer init [--ci]` | Detect how the app starts and prepare `.contexer/`; `--ci` writes the gate workflow |
+| `contexer init [--ci] [--issues]` | Detect how the app starts and prepare `.contexer/`; `--ci` writes the gate workflow, `--issues` the issue workflow |
 | `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
 | `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |
 | `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
@@ -54,6 +54,9 @@ serves static sites itself and starts the project's dev server.
 | `contexer contract list` / `show ID` | Review contracts |
 | `contexer contract approve ID` | Lock a contract at its current content (sha256). Any later edit needs re-approval |
 | `contexer run "GOAL"` / `--contract ID` | Approve the checklist, drive the coding agent, prove, repair, and keep the best attempt |
+| `contexer run ... --pr` / `--issue N` | End in a pull request with the evidence; with `--issue` the goal comes from the issue and the PR closes it |
+| `contexer issue draft N` / `build N --by LOGIN` / `event` | Post an issue's checks for approval; build them once approved; in Actions, act on the triggering event |
+| `contexer restore RUN --attempt N` / `--stopped` / `--undo` | Put the files back to a snapshot a run took |
 | `contexer bench [--live]` | Seeded-bug benchmark: catch rate and false-failure rate |
 | `contexer runs` | Recent runs with outcome, check counts and report paths |
 | `contexer` | The interactive shell (`/loop`, `/verify`, `/project`, ...) |
@@ -164,7 +167,7 @@ correct app fails "shows 2 entries" because an earlier check added one.
 | `checkpoint/` | Shadow-git snapshots and exact restores |
 | `controller/` | Implement → prove → repair: keep-best, revert, repeated-failure detection, tamper guard |
 | `evidence/` | Run directories and the self-contained HTML report |
-| `github/` | Commit status and job summary |
+| `github/` | Commit status and job summary; the pull-request hand-off; the issue flow (draft comment, approval, live status) |
 | `bench/` | Seeded-bug benchmark, including `--live` scoring of LLM-compiled contracts |
 | `workflow/`, `runtime/`, `cli/repl.py` | The interactive shell and its earlier loop |
 

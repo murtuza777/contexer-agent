@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased
+
+From a goal or a GitHub issue to a pull request that carries its proof.
+
+### Added
+
+- **`contexer run --pr`** ends in a pull request: a branch
+  `contexer/<contract>`, one commit with only the files the run changed and
+  the approved contract, and a description that lists every check with its
+  verdict, the regression replay, the attempts and the cost. Proven runs are
+  ready for review; unfinished ones open as drafts that say what still
+  fails. The checkout is checked before anything is spent.
+- **`contexer run --issue N`** takes the goal from a GitHub issue; the pull
+  request closes it.
+- **Issues to pull requests on GitHub.** `contexer init --issues` adds a
+  workflow: label an issue `contexer` and the checks are posted on it; a reply
+  of `/contexer approve` from someone with write access builds, proves and
+  opens the pull request, while one comment follows the run live. Also
+  `contexer issue draft|build|event`, and the `murtuza777/contexer-agent/issue`
+  action.
+- **`contexer restore RUN --attempt N | --stopped | --undo`** brings back any
+  snapshot a run took.
+- `--agent scripted --model turns.json` replays file edits, to try a setup
+  end to end without a model.
+
+### Fixed
+
+- **Ctrl+C** stops the coding agent at once. Before, Claude Code and Codex kept
+  editing files after Contexer exited on Linux and macOS, and an OpenCode
+  server kept working on the session. A stopped run puts back the best attempt
+  or the project as it was, keeps the unfinished work, and exits 130.
+- **OpenRouter's free limit.** `contexer run` reads how many free requests are
+  left before it starts, stops when none are, and asks when fewer than 25
+  are. When a limit stops a run anyway, the result says so and names the
+  command that continues.
+- `contexer run` in a home folder or a drive root is refused instead of
+  snapshotting everything in it.
+
+### Security
+
+- Coding agents get no GitHub token in their environment, and the issue
+  workflow checks out without stored credentials: issue text reaches the
+  agent's prompt, and only Contexer pushes.
+- Only the workflow's own comment counts as the drafted checklist; a comment
+  that imitates it is ignored.
+
 ## 0.3.0 — 2026-10-26
 
 Bring your own key, any of 14 providers, and the first live end-to-end runs:
