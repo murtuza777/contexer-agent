@@ -86,3 +86,25 @@ def test_an_openrouter_key_picks_a_model_that_works_headless(monkeypatch: pytest
     monkeypatch.setenv("OPENCODE_MODEL_PROVIDER", "anthropic")
     monkeypatch.setenv("OPENCODE_MODEL_ID", "claude-sonnet-5-5")
     assert OpenCodeAgent(start_server=False).provider == "anthropic"
+
+
+async def test_a_timed_out_turn_is_aborted_so_it_stops_editing(tmp_path: Path) -> None:
+    class _Hangs(_FakeAdapter):
+        aborted: list[str] = []
+
+        async def send_prompt(self, session_id: str, prompt: str, wait: bool, timeout: float) -> OpenCodeExecutionResult:
+            return OpenCodeExecutionResult(
+                session_id=session_id, status=ExecutionStatus.FAILED,
+                error=f"Execution timed out after {timeout:.1f} seconds.",
+            )
+
+        async def abort(self, session_id: str) -> bool:
+            self.aborted.append(session_id)
+            return True
+
+    agent = OpenCodeAgent(model="openrouter/some/model:free", start_server=False)
+    fake = _Hangs(tmp_path)
+    agent._ensure_server = lambda workdir: fake  # type: ignore[method-assign]
+    turn = await agent.run_turn(tmp_path, "Add delete buttons", timeout=1)
+    assert turn.status == "timeout"
+    assert fake.aborted == ["ses_1"]

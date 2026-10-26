@@ -92,6 +92,13 @@ class OpenCodeAgent(CodingAgentAdapter):
             ExecutionStatus.ABORTED: "cancelled",
         }.get(result.status, "failed")
         timed_out = bool(result.error and "timed out" in result.error)
+        if timed_out:
+            # The server keeps working after we stop waiting; left alone it would edit files while
+            # Contexer checks them, or during the next repair turn.
+            try:
+                await adapter.abort(session_id)
+            except Exception:
+                pass
         return AgentTurn(
             status="timeout" if timed_out else status,  # type: ignore[arg-type]
             session_id=session_id,

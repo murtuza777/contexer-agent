@@ -19,6 +19,8 @@ Rules:
 - Make the smallest complete change that satisfies every check. Use exactly the accessible names, visible texts,
   labels, placeholders and data-testid values the checks reference.
 - Contexer starts and stops the app. Do not start, stop or restart a dev server yourself.
+- Contexer runs the browser checks itself. Do not install Playwright or browsers, and do not write or run
+  end-to-end tests for these checks: that only costs time.
 - Do not modify anything under .contexer/ — the approved contract lives there and edits to it refute the run.
 - Do not commit, push, or rewrite git history.
 - The app must load and run without uncaught exceptions or console errors.
