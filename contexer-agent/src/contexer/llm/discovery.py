@@ -85,6 +85,42 @@ def check_key(
     list_models(spec, api_key, base_url, transport)
 
 
+# A small change took about 15 free-model requests in our live runs: drafting, the agent's steps, a repair.
+LOW_FREE_REQUESTS = 25
+
+
+@dataclass
+class FreeQuota:
+    """OpenRouter's daily allowance of requests to ``:free`` models."""
+
+    used: int
+    limit: int
+    remaining: int
+
+
+def is_free_model(model: str) -> bool:
+    """An OpenRouter model that counts against the daily free-request limit."""
+    return model.endswith(":free") or model == "openrouter/free"
+
+
+def openrouter_free_quota(
+    api_key: str,
+    base_url: str = "https://openrouter.ai/api/v1",
+    transport: Optional[httpx.BaseTransport] = None,
+) -> Optional[FreeQuota]:
+    """Free requests left today, or None when OpenRouter does not say or cannot be reached.
+
+    Reading the key's status is not itself a model request.
+    """
+    try:
+        with httpx.Client(timeout=8, transport=transport) as client:
+            response = client.get(f"{base_url.rstrip('/')}/key", headers={"Authorization": f"Bearer {api_key}"})
+        counts = (response.json().get("data") or {}).get("free_model_daily_requests")
+        return FreeQuota(int(counts["used"]), int(counts["limit"]), int(counts["remaining"]))
+    except (httpx.HTTPError, ValueError, AttributeError, KeyError, TypeError):
+        return None
+
+
 async def try_model(provider: Any) -> tuple[bool, str, float]:
     """One tiny real request: (worked, detail, seconds). Proves the model answers before a run needs it."""
     started = time.monotonic()

@@ -7,7 +7,7 @@ import os
 import shutil
 import webbrowser
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from rich.console import Console
@@ -15,7 +15,7 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from contexer.agents import create_agent
+from contexer.agents import CodingAgentAdapter, create_agent
 from contexer.appserver import AppStartError, open_app
 from contexer.cli.gate_cli import (
     compiler_llm,
@@ -30,6 +30,7 @@ from contexer.controller import RunController, RunOutcome, RunSettings
 from contexer.evidence import RunDir
 from contexer.gate import RunResult
 from contexer.gate.session import VerificationSession
+from contexer.llm import discovery
 from contexer.workflow.criteria import GoalAnalyzer
 
 _EVENT_STYLE = {
@@ -68,11 +69,17 @@ def run(
     except ProjectConfigError as exc:
         raise typer.BadParameter(str(exc)) from exc
     store = ContractStore(project)
+    try:
+        agent = create_agent(*choose_agent(config.agent, agent_name, model))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    drafting = compiler_llm(project) if goal else None
+    check_free_quota(console, drafting, agent, yes)
 
     preview: Optional[RunResult] = None
     analyzer: Optional[GoalAnalyzer] = None
     if goal:
-        contract, preview, analyzer = _draft(console, project, store, goal, url)
+        contract, preview, analyzer = _draft(console, project, store, goal, url, drafting)
     else:
         try:
             contract = store.load(contract_id or "")
@@ -89,10 +96,6 @@ def run(
         judged_policy=config.gate.judged,
         replay_others=not no_replay,
     )
-    try:
-        agent = create_agent(*choose_agent(config.agent, agent_name, model))
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
     others = [c for c in store.list() if c.id != contract.id and c.status == "approved"]
 
     budget_note = ""
@@ -129,9 +132,9 @@ def run(
 
 
 def _draft(
-    console: Console, project: Path, store: ContractStore, goal: str, url: Optional[str]
+    console: Console, project: Path, store: ContractStore, goal: str, url: Optional[str], drafting: Any = None
 ) -> tuple[Contract, Optional[RunResult], GoalAnalyzer]:
-    analyzer = GoalAnalyzer(llm_provider=compiler_llm(project))
+    analyzer = GoalAnalyzer(llm_provider=drafting)
 
     async def compile_contract() -> tuple[Contract, Optional[RunResult]]:
         run_dir = RunDir.create(project)
@@ -182,6 +185,39 @@ def _approve(
     return approved
 
 
+def check_free_quota(console: Console, drafting: Any, agent: CodingAgentAdapter, yes: bool) -> None:
+    """Say before the run, not halfway through it, when OpenRouter's free requests are about to run out."""
+    users = []
+    if drafting is not None and getattr(drafting, "provider_name", "") == "openrouter" and discovery.is_free_model(drafting.model):
+        users.append("drafting")
+    if getattr(agent, "provider", "") == "openrouter" and discovery.is_free_model(getattr(agent, "model_id", "")):
+        users.append("the coding agent")
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if not users or not key:
+        return
+    quota = discovery.openrouter_free_quota(key)
+    if quota is None or quota.remaining >= discovery.LOW_FREE_REQUESTS:
+        return
+    detail = (
+        f"OpenRouter's free models allow {quota.limit} requests a day and {quota.remaining} are left today "
+        f"(the count resets at 00:00 UTC). This run uses them for {' and '.join(users)}; a small change took "
+        "about 15 in our runs, a larger one can take 40 or more."
+    )
+    remedy = "Buying $10 of OpenRouter credit raises the limit to 1,000 a day, or `contexer setup` picks another provider."
+    if quota.remaining <= 0:
+        console.print(Panel(f"{detail}\n{remedy}", title="No free requests left today", border_style="red"))
+        raise typer.Exit(code=3)
+    console.print(
+        Panel(
+            f"{detail}\nIf they run out, the run stops and keeps its best attempt. {remedy}",
+            title="Few free requests left",
+            border_style="yellow",
+        )
+    )
+    if not yes and not typer.confirm("Start anyway?", default=False):
+        raise typer.Exit(code=2)
+
+
 def choose_agent(project: AgentSettings, flag_name: Optional[str], flag_model: Optional[str]) -> tuple[str, Optional[str]]:
     """Coding agent and model: --agent/--model, then [agent] in contexer.toml, then `contexer setup`, then Claude Code."""
     set_in_project = project.model_fields_set
@@ -197,14 +233,23 @@ def choose_agent(project: AgentSettings, flag_name: Optional[str], flag_model: O
     return name, model
 
 
+_RATE_LIMITED = ("rate limit", "too many requests", "429")
 _ACCOUNT_PROBLEMS = ("credit balance", "credits", "unauthorized", "401", "authentication", "api key", "not logged in", "login")
 
 
 def agent_hint(outcome: RunOutcome) -> Optional[str]:
     """What to do when the coding agent itself could not run (no credit, not logged in)."""
+    reason = " ".join([outcome.reason, *(a.agent.error or "" for a in outcome.attempts)]).lower()
+    again = f"`contexer run --contract {outcome.contract_id}`"
+    if "free-models-per-day" in reason:
+        return (
+            "OpenRouter's daily free-model requests ran out (the count resets at 00:00 UTC). Run "
+            f"{again} then, buy $10 of credit for 1,000 a day, or `contexer setup` another provider."
+        )
+    if any(limit in reason for limit in _RATE_LIMITED):
+        return f"the model's provider is rate-limiting requests. Wait a minute, then {again} continues from the approved checks."
     if outcome.terminal != "agent_error":
         return None
-    reason = outcome.reason.lower()
     if not any(problem in reason for problem in _ACCOUNT_PROBLEMS):
         return None
     if os.environ.get("OPENROUTER_API_KEY") and shutil.which("opencode"):

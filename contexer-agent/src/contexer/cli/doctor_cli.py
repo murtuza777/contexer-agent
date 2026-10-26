@@ -16,6 +16,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from contexer import __version__
+from contexer.llm import discovery
 
 if TYPE_CHECKING:
     from contexer.config.project import AuthSettings
@@ -136,6 +137,18 @@ def environment_findings() -> list[Finding]:
             "Install Claude Code (npm i -g @anthropic-ai/claude-code), Codex or OpenCode for `contexer run`",
         )
     )
+
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    quota = discovery.openrouter_free_quota(openrouter_key) if openrouter_key else None
+    if quota is not None:
+        findings.append(
+            Finding(
+                "Free requests",
+                "ok" if quota.remaining >= discovery.LOW_FREE_REQUESTS else "warn",
+                f"{quota.remaining} of {quota.limit} OpenRouter free-model requests left today (reset at 00:00 UTC)",
+                "A small change takes about 15; $10 of OpenRouter credit raises the limit to 1,000 a day",
+            )
+        )
 
     token = config.github_token or os.environ.get("GITHUB_TOKEN")
     findings.append(
