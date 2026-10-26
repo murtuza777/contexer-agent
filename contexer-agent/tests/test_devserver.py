@@ -183,3 +183,37 @@ def test_ensure_running_restarts_a_dead_server(tmp_path: Path) -> None:
         assert httpx.get(url).status_code == 200
     finally:
         server.stop()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Job Objects are Windows-only")
+def test_a_launcher_that_starts_its_child_at_once_cannot_escape_the_kill(tmp_path: Path) -> None:
+    # The shape of npm's opencode.cmd: cmd.exe starts the real program in its first instant.
+    # Before processes were created suspended, that child landed outside the job and outlived stop().
+    import ctypes
+    from ctypes import wintypes
+
+    from contexer.procutil import spawn_tree
+
+    child = tmp_path / "child.py"
+    child.write_text("import os, time\nopen('child.pid', 'w').write(str(os.getpid()))\ntime.sleep(60)\n", encoding="utf-8")
+    launcher = tmp_path / "launch.cmd"
+    launcher.write_text(f'@"{sys.executable}" "{child}"\r\n', encoding="utf-8")
+    tree = spawn_tree([str(launcher)], tmp_path)
+    try:
+        deadline = time.monotonic() + 20
+        while not (tmp_path / "child.pid").exists() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        pid = int((tmp_path / "child.pid").read_text())
+        kernel32 = ctypes.WinDLL("kernel32")
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        member = wintypes.BOOL()
+        kernel32.IsProcessInJob(handle, tree._job._handle, ctypes.byref(member))  # type: ignore[union-attr]
+        kernel32.CloseHandle(handle)
+        assert member.value, "the launched program escaped the kill-on-close job"
+    finally:
+        tree.kill()
+    deadline = time.monotonic() + 10
+    while _pid_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert not _pid_alive(pid)

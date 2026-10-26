@@ -87,7 +87,11 @@ def spawn_tree(
     """Start ``argv`` with merged stdout/stderr piped, in its own killable tree."""
     kwargs: dict[str, Any] = {}
     if sys.platform == "win32":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+        # Start suspended: a process created before the job is attached stays outside it
+        # forever, and cmd.exe can start its child (node → opencode serve) in that instant.
+        kwargs["creationflags"] = (
+            subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW | _CREATE_SUSPENDED
+        )
     else:
         kwargs["start_new_session"] = True
     proc = subprocess.Popen(
@@ -99,8 +103,28 @@ def spawn_tree(
         stderr=subprocess.STDOUT,
         **kwargs,
     )
-    job = _assign_to_job(proc) if sys.platform == "win32" else None
+    job = None
+    if sys.platform == "win32":
+        try:
+            job = _assign_to_job(proc)
+        finally:
+            _resume(proc)
     return ProcessTree(proc, job)
+
+
+_CREATE_SUSPENDED = 0x00000004
+
+
+def _resume(proc: subprocess.Popen[bytes]) -> None:
+    """Resume a process created suspended (subprocess keeps only its process handle, not the thread's)."""
+    import ctypes
+
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.argtypes = [ctypes.c_void_p]
+    status = ntdll.NtResumeProcess(ctypes.c_void_p(int(proc._handle)))  # type: ignore[attr-defined]
+    if status != 0:
+        proc.kill()
+        raise OSError(f"could not resume the child process (NTSTATUS {status:#x})")
 
 
 def _assign_to_job(proc: subprocess.Popen[bytes]) -> Optional[KillOnCloseJob]:
