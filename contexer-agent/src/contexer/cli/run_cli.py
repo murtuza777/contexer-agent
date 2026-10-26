@@ -62,8 +62,9 @@ def run(
     store = ContractStore(project)
 
     preview: Optional[RunResult] = None
+    weak_reason: Optional[str] = None
     if goal:
-        contract, preview = _draft(console, project, store, goal, url)
+        contract, preview, weak_reason = _draft(console, project, store, goal, url)
     else:
         try:
             contract = store.load(contract_id or "")
@@ -71,7 +72,7 @@ def run(
             raise typer.BadParameter(str(exc)) from exc
 
     if contract.status != "approved":
-        contract = _approve(console, store, contract, yes, preview)
+        contract = _approve(console, store, contract, yes, preview, weak_reason)
 
     settings = RunSettings(
         max_repair_rounds=rounds if rounds is not None else config.agent.max_repair_rounds,
@@ -116,11 +117,12 @@ def run(
 
 def _draft(
     console: Console, project: Path, store: ContractStore, goal: str, url: Optional[str]
-) -> tuple[Contract, Optional[RunResult]]:
+) -> tuple[Contract, Optional[RunResult], Optional[str]]:
+    analyzer = GoalAnalyzer(llm_provider=compiler_llm(project))
+
     async def compile_contract() -> tuple[Contract, Optional[RunResult]]:
         run_dir = RunDir.create(project)
         session = VerificationSession(project, run_dir)
-        analyzer = GoalAnalyzer(llm_provider=compiler_llm(project))
         cid = store.unique_id(goal)
         try:
             with open_app(project, url) as app:
@@ -134,16 +136,28 @@ def _draft(
     with console.status("[dim]Compiling the goal into checks, then trying them on the app as it is...[/dim]"):
         contract, preview = asyncio.run(compile_contract())
     store.save(contract)
-    return contract, preview
+    return contract, preview, analyzer.last_error
 
 
 def _approve(
-    console: Console, store: ContractStore, contract: Contract, yes: bool, preview: Optional[RunResult] = None
+    console: Console,
+    store: ContractStore,
+    contract: Contract,
+    yes: bool,
+    preview: Optional[RunResult] = None,
+    weak_reason: Optional[str] = None,
 ) -> Contract:
     console.print()
     console.print(Panel("\n".join(escape(line) for line in contract.describe_lines()), title=f"Definition of done · {contract.id}"))
     print_draft_preview(console, preview)
-    warn_if_weak_draft(console, contract)
+    warn_if_weak_draft(console, contract, weak_reason)
+    if yes and contract.source == "rules":
+        # Building against a rule-based fallback wastes the agent's budget on a contract nobody chose.
+        console.print(
+            f"[yellow]Not approved:[/] --yes never approves a weak draft. Review "
+            f"{escape(str(store.path_for(contract.id)))}, then `contexer contract approve {escape(contract.id)}`."
+        )
+        raise typer.Exit(code=2)
     if not yes and not typer.confirm("Approve these checks as the definition of done?", default=False):
         store.save(contract)
         console.print(f"[yellow]Not approved.[/] Edit {escape(str(store.path_for(contract.id)))} and run again.")

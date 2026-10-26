@@ -130,3 +130,24 @@ def test_draft_shows_how_its_checks_fare_on_the_app_before_approval(
     assert "1 could not run" in out and "archive-all" in out
     # The preview informs the reviewer; it never approves anything.
     assert ContractStore(todo_app).load("archive").status == "draft"
+
+
+FREE_TIER_429 = "OpenRouter rate limit or credits exceeded: Rate limit exceeded: free-models-per-day. Add 10 credits"
+
+
+def test_a_rate_limited_draft_says_why_and_is_never_auto_approved(
+    todo_app: Path, monkeypatch: pytest.MonkeyPatch, fake_llm
+) -> None:
+    from contexer.cli import run_cli
+    from contexer.llm.base import LLMRateLimitError
+
+    monkeypatch.setattr(run_cli, "compiler_llm", lambda *_: fake_llm(LLMRateLimitError(FREE_TIER_429)))
+    result = _invoke("run", "Users can archive all tasks", "--dir", str(todo_app), "--yes")
+
+    assert result.exit_code == 2, result.output
+    out = " ".join(result.output.split())
+    assert "Weak draft" in out and "free-models-per-day" in out
+    assert "daily free-model limit is used up" in out
+    assert "--yes never approves a weak draft" in out
+    drafts = [c for c in ContractStore(todo_app).list() if c.id != "todo-basics"]
+    assert [c.status for c in drafts] == ["draft"]  # kept for review, not approved

@@ -95,6 +95,8 @@ class GoalAnalyzer:
     def __init__(self, llm_provider: Optional[LLMProvider] = None, timeout: float = COMPILE_TIMEOUT_SECONDS) -> None:
         self.llm_provider = llm_provider
         self.timeout = timeout
+        # Why the last analysis did not use the model (rate limit, auth, no JSON), for the person reviewing it.
+        self.last_error: Optional[str] = None
 
     async def analyze(
         self,
@@ -109,6 +111,7 @@ class GoalAnalyzer:
         names for elements that already exist.
         """
         best: Optional[GoalAnalysis] = None
+        self.last_error = None if self.llm_provider else "no drafting model is configured"
         for attempt in range(1, MAX_ANALYSIS_ATTEMPTS + 1) if self.llm_provider else ():
             try:
                 # First ask for JSON mode (routers drop it for models without support);
@@ -116,6 +119,7 @@ class GoalAnalyzer:
                 candidate = await self._analyze_with_llm(goal, repo_context, ui_snapshot, json_mode=attempt == 1)
             except Exception as exc:
                 err_msg = str(exc)
+                self.last_error = (err_msg.splitlines()[0] if err_msg else type(exc).__name__)[:300]
                 if "429" in err_msg or "rate limit" in err_msg.lower():
                     logger.info("LLM quota reached; using dynamic rule-based analysis.")
                     break  # retrying a rate-limited API only makes it worse

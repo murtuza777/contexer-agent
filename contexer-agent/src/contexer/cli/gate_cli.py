@@ -173,7 +173,7 @@ async def run_verification(
                     drafted = await session.compile(goal, analyzer, store.unique_id(goal), app.repo_context)
                 path = store.save(drafted)
                 console.print(f"[dim]Draft contract:[/] {escape(str(path))}")
-                warn_if_weak_draft(console, drafted)
+                warn_if_weak_draft(console, drafted, analyzer.last_error)
                 contracts = [drafted, *contracts]
             with console.status(f"[dim]Running {sum(len(c.criteria) for c in contracts)} checks in Chromium...[/dim]"):
                 result = await session.verify(
@@ -255,16 +255,23 @@ def print_draft_preview(console: Console, result: Optional[RunResult]) -> None:
     console.print()
 
 
-def warn_if_weak_draft(console: Console, contract: Contract) -> None:
-    """Say loudly when a draft did not come from the model, before anyone approves it."""
+def warn_if_weak_draft(console: Console, contract: Contract, reason: Optional[str] = None) -> None:
+    """Say loudly when a draft did not come from the model, and why, before anyone approves it."""
     if contract.source != "rules":
         return
     executable = sum(1 for c in contract.criteria if c.check)
+    why = f"Why: {reason}\n" if reason else ""
+    hint = "Retry"
+    if reason and "free-models-per-day" in reason:
+        hint = "OpenRouter's daily free-model limit is used up (it resets at 00:00 UTC; credits raise it). Retry later"
+    elif reason and ("rate limit" in reason.lower() or "429" in reason):
+        hint = "The model is rate-limited. Retry in a minute"
     console.print(
         Panel(
             "The model did not return usable checks, so this draft was built from simple rules and only "
             f"has {executable} executable check(s) — far too few to define done.\n"
-            "Retry, use a stronger drafting model (ANTHROPIC_API_KEY or OPENAI_API_KEY, or [compiler] in "
+            f"{why}"
+            f"{hint}, use a stronger drafting model (ANTHROPIC_API_KEY or OPENAI_API_KEY, or [compiler] in "
             "contexer.toml), or edit the contract file and add checks before approving it.",
             title="Weak draft",
             border_style="yellow",
@@ -415,10 +422,11 @@ def contract_draft(
     store = ContractStore(project_dir)
     cid = contract_id or store.unique_id(goal)
 
+    analyzer = GoalAnalyzer(llm_provider=compiler_llm(project_dir))
+
     async def _draft() -> tuple[Contract, Optional[RunResult]]:
         run = RunDir.create(project_dir)
         session = VerificationSession(project_dir, run)
-        analyzer = GoalAnalyzer(llm_provider=compiler_llm(project_dir))
         try:
             with open_app(project_dir, url) as app:
                 await session.observe(app)
@@ -435,7 +443,7 @@ def contract_draft(
         console.print(escape(line))
     console.print()
     print_draft_preview(console, preview)
-    warn_if_weak_draft(console, contract)
+    warn_if_weak_draft(console, contract, analyzer.last_error)
     console.print(f"[dim]Saved draft:[/] {escape(str(path))}")
     console.print(f"[dim]Review it, then:[/] contexer contract approve {escape(contract.id)}")
 
