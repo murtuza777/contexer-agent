@@ -269,8 +269,19 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 
 ## Status
 
-What works today, with tests (455 passing) and CI on Linux:
+What works today, with tests (476 passing) and CI on Linux:
 
+- **Live end-to-end runs** with a real coding agent (OpenCode on a free
+  OpenRouter model, 2026-10-26):
+  - "delete a project" in a signed-in app: built, and proven on the first
+    attempt;
+  - "edit an expense" in React + Vite: the agent hung until the turn limit,
+    and Contexer proved its change anyway (9/9 checks, including the 6 that
+    already existed);
+  - from a clean `pip install` + `contexer setup`: the first attempt missed 2
+    of 8 checks, Contexer sent the evidence back, and the repair passed 8/8
+    in 111 s.
+- Bring your own key (`contexer setup`, `contexer models`) for 14 providers.
 - Contracts, approval and hashing; `verify`, `replay`, `contract`, `run`,
   `doctor` and `bench` (including `--live`).
 - Drafts that are tried on the running app before approval.
@@ -280,20 +291,17 @@ What works today, with tests (455 passing) and CI on Linux:
 - Apps behind a login (`[auth]`), with secrets masked in all evidence.
 - Apps that keep data on a server: `[app] reset` before every check.
 - Coding agents: Claude Code, Codex and OpenCode.
-- Drafting with Anthropic, OpenAI or OpenRouter models.
 - The repair controller: snapshots, keep-best, revert, fresh session on a
   repeated failure, tamper guard and regression replay.
-- GitHub: the commit status, the job summary, and a reusable action.
+- GitHub: the commit status, the job summary, and a reusable action that
+  takes about 40 s on a pull request.
 
 Honest gaps:
 
-- **No live coding-agent run yet.** The Claude Code, Codex and OpenCode
-  adapters are tested against their real stream protocols with fake binaries,
-  and the full loop is tested with a scripted agent. The real Codex CLI
-  accepts the exact invocations Contexer uses, up to authentication. A
-  complete live run hasn't happened yet: the development machine has no
-  Claude API credit or OpenAI key, and OpenCode's free tier refuses
-  programmatic use.
+- Live runs so far used OpenCode with a free OpenRouter model. Claude Code and
+  Codex are tested against their real stream protocols with fake binaries, and
+  the real Codex CLI accepts Contexer's exact invocations up to authentication.
+  A run on either awaits an account with credit.
 - No GitHub App (check runs, approve button) yet; not on PyPI yet.
 - No visual-design checks. Sign-in sessions kept only in `sessionStorage`
   are not carried into checks (cookie and local-storage sessions are).

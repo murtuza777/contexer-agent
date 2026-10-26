@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contexer"
-version = "0.2.0"
+version = "0.3.0"
 description = "Acceptance gate for AI coding agents: proves in a real browser that a change does what was asked"
 readme = "README.md"
 license = "MIT"

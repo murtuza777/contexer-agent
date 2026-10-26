@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-26
+
+Bring your own key, any of 14 providers, and the first live end-to-end runs:
+a free model built features through OpenCode, and Contexer proved them,
+including one that needed a repair round.
+
+### Live runs (OpenCode + `nvidia/nemotron-3-ultra-550b-a55b:free`)
+
+- **Signed-in members app, "delete a project":** built in 101 s, then 5/5 new
+  checks and 6/6 existing ones passed with no repair.
+- **React + Vite, "edit an expense":** the agent hung on its own
+  `npm run dev &` until the 15-minute turn limit. Contexer proved its change
+  anyway: 9/9, including the 6 existing checks.
+- **Clean `pip install` from GitHub, then `contexer setup`, then `contexer run`:**
+  2 of 8 checks failed on the first attempt. Contexer sent the evidence back,
+  the agent repaired it, and the result was 8/8 in 111 s.
 
 ### Added
 
@@ -58,6 +73,19 @@
   which refuses headless use.
 - The project's `.env` is loaded before drafting and before the coding agent
   starts, so a model key kept there reaches both, also with `--dir`.
+- On Windows, a launcher that starts its program at once (npm's
+  `opencode.cmd`) escaped the kill-on-close job, so `opencode serve` kept
+  running after Contexer stopped. Processes now start suspended until they
+  are inside the job.
+- A timed-out OpenCode turn is aborted, so the agent cannot keep editing
+  files while Contexer checks them.
+- A repair turn no longer re-lists the previous turn's OpenCode tool calls.
+
+### Performance
+
+- The GitHub Action caches Chromium and skips `apt` when the browser already
+  starts (it does on GitHub's Ubuntu images). The gate went from about 10
+  minutes to 37 s on this repository.
 
 ## 0.2.0 — 2026-10-25
 
