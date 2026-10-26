@@ -115,6 +115,11 @@ def run(
     controller = RunController(project, agent, settings, url=url, on_event=on_event)
     try:
         outcome = asyncio.run(controller.run(contract, others))
+    except KeyboardInterrupt:
+        if controller.last_outcome is None:  # stopped before the first snapshot
+            console.print("[yellow]Stopped.[/] Nothing was changed.")
+            raise typer.Exit(code=130)
+        outcome = controller.last_outcome
     finally:
         agent.close()
     _render(console, outcome)

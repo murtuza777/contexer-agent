@@ -1,4 +1,7 @@
-"""``contexer runs``: what was verified or built here, newest first, with links to the evidence."""
+"""``contexer runs``: what was verified or built here, newest first, with links to the evidence.
+
+``contexer restore`` puts the files back to a snapshot one of those runs took.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from contexer.checkpoint import ShadowRepo
 from contexer.contract.store import CONTEXER_DIR
 from contexer.evidence.rundir import RUNS_DIR
 
@@ -90,3 +94,25 @@ def _load(path: Path) -> Optional[dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def restore(
+    run_id: str = typer.Argument(..., help="The run, as `contexer runs` lists it."),
+    attempt: Optional[int] = typer.Option(None, "--attempt", "-a", min=0, help="An attempt (0 is the project before the run)."),
+    stopped: bool = typer.Option(False, "--stopped", help="The unfinished work of a run you stopped."),
+    undo: bool = typer.Option(False, "--undo", help="The files as they were before the last restore from this run."),
+    project_dir: Path = typer.Option(Path("."), "--dir", "-d", help="Project directory.", file_okay=False),
+) -> None:
+    """Put the files back to a snapshot a run took. Ignored files such as .env and node_modules are not touched."""
+    if sum((attempt is not None, stopped, undo)) != 1:
+        raise typer.BadParameter("choose one of --attempt N, --stopped or --undo")
+    console = Console()
+    name = "stopped" if stopped else "undo" if undo else str(attempt)
+    shadow = ShadowRepo(project_dir.resolve())
+    commit = shadow.resolve(f"{run_id}/{name}")
+    if commit is None:
+        console.print(f"[red]No snapshot '{escape(name)}' for run {escape(run_id)}.[/] `contexer runs` lists the runs.")
+        raise typer.Exit(code=1)
+    shadow.snapshot(f"{run_id}/undo", "before a restore")  # so the restore itself can be undone
+    shadow.restore(commit)
+    console.print(f"[green]✓[/] Files restored to {escape(run_id)} {escape(name)}. Undo: `contexer restore {escape(run_id)} --undo`")

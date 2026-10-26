@@ -114,6 +114,31 @@ async def test_a_hung_agent_times_out_and_is_killed(fake_claude: Path, workdir: 
     assert turn.duration_seconds < 20
 
 
+async def test_stopping_a_turn_kills_the_agent_at_once(fake_claude: Path, workdir: Path, monkeypatch) -> None:
+    """Ctrl+C cancels the turn: the agent must not keep editing files after Contexer stops."""
+    import asyncio
+    import time
+
+    monkeypatch.setenv("FAKE_CLAUDE_MODE", "hang")
+    agent = ClaudeCodeAgent(executable=str(fake_claude))
+    task = asyncio.create_task(agent.run_turn(workdir, "x", timeout=120))
+    deadline = time.monotonic() + 30
+    while not (workdir / "argv.json").exists() or not agent._in_flight:
+        assert time.monotonic() < deadline, "the fake agent never started"
+        await asyncio.sleep(0.1)
+    tree = next(iter(agent._in_flight))
+    started = time.monotonic()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert tree.poll() is not None, "the agent process is still running"
+    assert time.monotonic() - started < 10
+    while agent._in_flight and time.monotonic() - started < 10:
+        await asyncio.sleep(0.1)  # the worker thread notices the exit and lets go
+    assert not agent._in_flight
+    assert (workdir / "app.js").read_text(encoding="utf-8") == "broken\n"  # it never got to edit
+
+
 def test_agent_env_strips_only_parent_session_plumbing(monkeypatch) -> None:
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "secret")

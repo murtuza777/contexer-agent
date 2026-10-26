@@ -13,6 +13,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -42,6 +43,7 @@ class ProcessTree:
     def __init__(self, proc: subprocess.Popen[bytes], job: Optional[KillOnCloseJob]) -> None:
         self.proc = proc
         self._job = job
+        self._lock = threading.Lock()  # Ctrl+C may stop a tree while its worker thread is stopping it
 
     @property
     def pid(self) -> int:
@@ -51,7 +53,11 @@ class ProcessTree:
         return self.proc.poll()
 
     def kill(self, grace: float = 10.0) -> None:
-        """Stop the whole tree; safe to call more than once."""
+        """Stop the whole tree; safe to call more than once, and from more than one thread."""
+        with self._lock:
+            self._kill(grace)
+
+    def _kill(self, grace: float) -> None:
         proc = self.proc
         if proc.poll() is None:
             if sys.platform == "win32":

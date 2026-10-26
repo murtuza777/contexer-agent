@@ -86,7 +86,11 @@ class CodexAgent(CodingAgentAdapter):
         on_progress: Optional[ProgressFn] = None,
     ) -> AgentTurn:
         # budget_usd is accepted for the interface; Codex reports no cost to enforce it with.
-        return await asyncio.to_thread(self._run_blocking, Path(workdir), prompt, session_id, timeout, on_progress)
+        try:
+            return await asyncio.to_thread(self._run_blocking, Path(workdir), prompt, session_id, timeout, on_progress)
+        except asyncio.CancelledError:
+            self.stop()  # Ctrl+C: otherwise the worker thread waits for the agent to finish its turn
+            raise
 
     # -- blocking implementation (runs in a worker thread) ------------------------
 
@@ -114,13 +118,17 @@ class CodexAgent(CodingAgentAdapter):
         except OSError:
             pass
 
-        reader.join(timeout)
-        timed_out = reader.is_alive()
-        if timed_out:
-            tree.kill()
-            reader.join(5)
-        else:
-            tree.kill(grace=5)  # reap anything the agent left running
+        self._track(tree)
+        try:
+            reader.join(timeout)
+            timed_out = reader.is_alive()
+            if timed_out:
+                tree.kill()
+                reader.join(5)
+            else:
+                tree.kill(grace=5)  # reap anything the agent left running
+        finally:
+            self._untrack(tree)
         return state.to_turn(timed_out=timed_out, duration=time.monotonic() - started, returncode=tree.poll())
 
 

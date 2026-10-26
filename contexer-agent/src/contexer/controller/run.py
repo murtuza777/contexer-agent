@@ -14,10 +14,13 @@ exactly two things, implementing and repairing. Per attempt:
 
 The run ends at the first passing attempt, or after ``max_repair_rounds``
 with the best attempt restored, or when the budget or wall clock runs out.
+Stopped with Ctrl+C, it kills the agent and puts back the best attempt (or
+the project as it was), keeping the unfinished work as a snapshot.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from contextlib import ExitStack
@@ -51,6 +54,7 @@ TerminalState = Literal[
     "tampered",
     "agent_error",
     "app_error",
+    "cancelled",
 ]
 
 _DEPENDENCY_FILES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"}
@@ -112,6 +116,7 @@ class RunOutcome(BaseModel):
             "timed_out": 2,
             "agent_error": 3,
             "app_error": 3,
+            "cancelled": 130,  # the shell's code for Ctrl+C
         }[self.terminal]
 
 
@@ -132,6 +137,8 @@ class RunController:
         self.url = url
         self.on_event = on_event or (lambda _kind, _msg: None)
         self.runner = runner or CheckRunner(trace="on-failure")
+        # Set as soon as a run ends, also when Ctrl+C ends it with an exception.
+        self.last_outcome: Optional[RunOutcome] = None
 
     async def run(self, contract: Contract, others: Optional[list[Contract]] = None) -> RunOutcome:
         if contract.status != "approved":
@@ -167,7 +174,14 @@ class RunController:
         # (after any revert), so "changed files" means the agent's changes.
         current = baseline
 
+        def on_exit(exc_type: Optional[type[BaseException]], _exc: object, _tb: object) -> bool:
+            if exc_type is not None and issubclass(exc_type, (asyncio.CancelledError, KeyboardInterrupt)):
+                # Registered first, so it runs after the app has stopped.
+                self._stopped(outcome, run, contract, shadow, snapshots, best, results, started)
+            return False
+
         with ExitStack() as stack:
+            stack.push(on_exit)
             app: Optional[RunningApp] = None
             for n in range(1, self.settings.max_repair_rounds + 2):
                 if time.monotonic() - started > self.settings.wall_clock:
@@ -342,7 +356,36 @@ class RunController:
         outcome.diff = shadow.diff(baseline, end_snapshot)
         outcome.duration_seconds = time.monotonic() - started
         self._write_evidence(outcome, run, contract)
+        self.last_outcome = outcome
         return outcome
+
+    def _stopped(
+        self,
+        outcome: RunOutcome,
+        run: RunDir,
+        contract: Contract,
+        shadow: ShadowRepo,
+        snapshots: dict[int, str],
+        best: Optional[int],
+        results: dict[int, RunResult],
+        started: float,
+    ) -> None:
+        """Ctrl+C: keep the unfinished work as a snapshot, then put back a state that was proven or found."""
+        unfinished = shadow.snapshot(f"{run.run_id}/stopped", "stopped before the run ended")
+        target = best if best is not None else 0
+        put_back = "the best attempt reached" if best is not None else "the project as it was"
+        kept = ""
+        if shadow.changed_paths(snapshots[target], unfinished):
+            shadow.restore(snapshots[target])
+            kept = f" The unfinished work is kept: `contexer restore {run.run_id} --stopped` brings it back."
+        outcome.terminal = "cancelled"
+        outcome.reason = f"Stopped before the run ended; left {put_back}.{kept}"
+        outcome.best_attempt = best
+        outcome.final = results.get(best) if best is not None else None
+        outcome.diff = shadow.diff(snapshots[0], snapshots[target])
+        outcome.duration_seconds = time.monotonic() - started
+        self._write_evidence(outcome, run, contract)
+        self.last_outcome = outcome
 
     def _write_evidence(self, outcome: RunOutcome, run: RunDir, contract: Contract) -> None:
         """``run.json`` (the whole outcome) and a report for the state the run left behind."""

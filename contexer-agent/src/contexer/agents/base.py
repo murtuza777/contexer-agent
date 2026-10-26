@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Callable, Literal, Optional
+from typing import TYPE_CHECKING, Callable, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from contexer.procutil import ProcessTree
 
 TurnStatus = Literal["completed", "failed", "timeout", "budget_exceeded", "cancelled"]
 
@@ -43,6 +46,7 @@ class CodingAgentAdapter(ABC):
     """Runs one turn of a coding agent in a project directory."""
 
     name: str = "agent"
+    _in_flight: "Optional[set[ProcessTree]]" = None
 
     @abstractmethod
     async def run_turn(
@@ -62,3 +66,18 @@ class CodingAgentAdapter(ABC):
 
     def close(self) -> None:
         """Release anything the adapter started (servers, sessions)."""
+        self.stop()
+
+    def stop(self) -> None:
+        """Kill any turn still running, so the agent cannot keep editing files after Contexer stops."""
+        for tree in list(self._in_flight or ()):
+            tree.kill(grace=2)
+
+    def _track(self, tree: "ProcessTree") -> None:
+        if self._in_flight is None:
+            self._in_flight = set()
+        self._in_flight.add(tree)
+
+    def _untrack(self, tree: "ProcessTree") -> None:
+        if self._in_flight is not None:
+            self._in_flight.discard(tree)

@@ -81,6 +81,14 @@ class OpenCodeAgent(CodingAgentAdapter):
             finally:
                 watcher.cancel()
             await tools.poll(adapter, session_id, on_progress)  # the calls made since the last poll
+        except asyncio.CancelledError:
+            # Ctrl+C: the server would carry on with the turn, editing files after Contexer stopped.
+            if session_id is not None and self._adapter is not None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(self._adapter.abort(session_id)), 5)
+                except Exception:
+                    pass
+            raise
         except Exception as exc:
             return AgentTurn(
                 status="failed",

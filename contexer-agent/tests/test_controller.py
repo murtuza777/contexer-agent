@@ -129,3 +129,58 @@ async def test_unapproved_contract_is_rejected(project: Path) -> None:
     contract = _contract(project).model_copy(update={"approval": None})
     with pytest.raises(ValueError, match="approved"):
         await _controller(project, ScriptedAgent([])).run(contract)
+
+
+class _StuckAgent(ScriptedAgent):
+    """Edits a file, then works forever: the run is stopped in the middle of the turn."""
+
+    def __init__(self) -> None:
+        super().__init__([])
+        self.started = None
+
+    async def run_turn(self, workdir, prompt, **kwargs):
+        import asyncio
+
+        (Path(workdir) / "app.js").write_text("half-written\n", encoding="utf-8")
+        (Path(workdir) / "new-file.js").write_text("// unfinished\n", encoding="utf-8")
+        self.started.set()
+        await asyncio.sleep(3600)
+
+
+async def test_stopping_a_run_puts_the_project_back_and_keeps_the_unfinished_work(project: Path) -> None:
+    import asyncio
+    import json
+
+    from typer.testing import CliRunner
+
+    from contexer.cli import app
+
+    agent = _StuckAgent()
+    agent.started = asyncio.Event()
+    controller = _controller(project, agent)
+    task = asyncio.create_task(controller.run(_contract(project)))
+    await asyncio.wait_for(agent.started.wait(), 30)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    outcome = controller.last_outcome
+    assert outcome is not None and outcome.terminal == "cancelled" and outcome.exit_code == 130
+    assert "contexer restore" in outcome.reason
+    assert (project / "app.js").read_text(encoding="utf-8") == GOOD_JS  # as it was found
+    assert not (project / "new-file.js").exists()
+    assert (project / ".env").read_text(encoding="utf-8") == "SECRET=keep-me\n"
+    run = json.loads((Path(outcome.run_dir) / "run.json").read_text(encoding="utf-8"))
+    assert run["terminal"] == "cancelled"
+    assert (Path(outcome.run_dir) / "report.html").is_file()
+
+    # The unfinished work comes back on request, and that restore can be undone.
+    cli = CliRunner()
+    result = cli.invoke(app, ["restore", outcome.run_id, "--stopped", "--dir", str(project)])
+    assert result.exit_code == 0, result.output
+    assert (project / "app.js").read_text(encoding="utf-8") == "half-written\n"
+    assert (project / "new-file.js").is_file()
+    result = cli.invoke(app, ["restore", outcome.run_id, "--undo", "--dir", str(project)])
+    assert result.exit_code == 0, result.output
+    assert (project / "app.js").read_text(encoding="utf-8") == GOOD_JS
+    assert cli.invoke(app, ["restore", outcome.run_id, "--attempt", "7", "--dir", str(project)]).exit_code == 1

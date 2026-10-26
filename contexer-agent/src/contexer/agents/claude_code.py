@@ -119,9 +119,13 @@ class ClaudeCodeAgent(CodingAgentAdapter):
         budget_usd: Optional[float] = None,
         on_progress: Optional[ProgressFn] = None,
     ) -> AgentTurn:
-        return await asyncio.to_thread(
-            self._run_blocking, Path(workdir), prompt, session_id, timeout, budget_usd, on_progress
-        )
+        try:
+            return await asyncio.to_thread(
+                self._run_blocking, Path(workdir), prompt, session_id, timeout, budget_usd, on_progress
+            )
+        except asyncio.CancelledError:
+            self.stop()  # Ctrl+C: otherwise the worker thread waits for the agent to finish its turn
+            raise
 
     # -- blocking implementation (runs in a worker thread) ------------------------
 
@@ -150,13 +154,17 @@ class ClaudeCodeAgent(CodingAgentAdapter):
         except OSError:
             pass
 
-        reader.join(timeout)
-        timed_out = reader.is_alive()
-        if timed_out:
-            tree.kill()
-            reader.join(5)
-        else:
-            tree.kill(grace=5)  # reap anything the agent left running
+        self._track(tree)
+        try:
+            reader.join(timeout)
+            timed_out = reader.is_alive()
+            if timed_out:
+                tree.kill()
+                reader.join(5)
+            else:
+                tree.kill(grace=5)  # reap anything the agent left running
+        finally:
+            self._untrack(tree)
         return state.to_turn(timed_out=timed_out, duration=time.monotonic() - started, returncode=tree.poll())
 
 

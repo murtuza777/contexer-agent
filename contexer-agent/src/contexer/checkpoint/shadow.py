@@ -80,6 +80,15 @@ class ShadowRepo:
         self._git("add", "--all", "--", ".")
         self._git("read-tree", "-u", "--reset", commit)
 
+    def resolve(self, ref: str) -> Optional[str]:
+        """The commit a snapshot ref (``<run>/<n>``) points to, if it exists."""
+        if not (self.git_dir / "HEAD").is_file():
+            return None
+        try:
+            return self._git("rev-parse", "--verify", "--quiet", f"refs/contexer/{ref}^{{commit}}").strip() or None
+        except SnapshotError:
+            return None
+
     def changed_paths(self, a: str, b: str) -> list[str]:
         out = self._git("diff", "--name-only", "--no-renames", a, b)
         return [line for line in out.splitlines() if line]
