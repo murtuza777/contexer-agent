@@ -86,8 +86,29 @@ Contexer isn't on PyPI yet, so install it from GitHub (Python 3.11+):
 ```bash
 pip install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"
 python -m playwright install chromium
+contexer setup         # bring your own key: pick a provider and models, tested live
 contexer doctor        # checks Chromium, git, Node, model keys and agents, with the fix for each
 ```
+
+### Bring your own key
+
+`contexer setup` asks for a provider, your key and a model, then tests the
+model with one real request before saving anything. Supported providers:
+OpenRouter (including free models), Anthropic, OpenAI, Google Gemini, Groq,
+DeepSeek, Mistral, Together AI, xAI, Fireworks, Cerebras, NVIDIA, a local
+Ollama, or any OpenAI-compatible endpoint (`--provider custom --base-url ...`).
+
+```bash
+contexer models --providers               # the providers, and which keys you already have
+contexer models --provider openrouter --free --search coder
+contexer setup --provider groq --model <id> --agent opencode   # or run it with no flags and answer
+contexer setup --show                     # what is saved (keys masked)
+```
+
+Settings and keys are saved per user in `~/.contexer/`, never in a project.
+Exported variables, a `.env` and a project's `contexer.toml` still take
+precedence. The coding agent inherits the same key: Claude Code for
+Anthropic, Codex for OpenAI, and OpenCode for every other provider.
 
 See it catch a real bug in about ten seconds, with no API key and no agent:
 
@@ -104,7 +125,7 @@ contexer init --ci     # detect how the app starts; add the GitHub merge-gate wo
 # 1. Describe what must be true. Contexer starts your app (static, Vite or Next.js),
 #    compiles the goal into checks grounded in the live UI, and tries each check on the
 #    app as it is: which already pass, which fail, which can't run yet.
-#    Needs ANTHROPIC_API_KEY, OPENAI_API_KEY or OPENROUTER_API_KEY.
+#    Uses the model from `contexer setup` (or any provider key in the environment).
 contexer contract draft "Users can add a task and complete it, and the count updates"
 
 # 2. Read the checklist and lock it in. Commit .contexer/contracts/.
@@ -208,15 +229,18 @@ which must still pass.
 | Contracts | Seeded bugs caught | False-failing checks on correct code |
 | --- | --- | --- |
 | Hand-written (7 apps, 40 bugs) | **40/40** caught with proof | **0/278** (44 clean runs) |
-| Compiled by the LLM from one-line goals (`--live`, free models) | 25–83% per run | 0 in every run |
+| Drafted from one-line goals by a pinned free model (`nemotron-3-ultra:free`, 7 apps) | **33/40** (82%) | **0/164** |
+| Drafted by `openrouter/free`, which picks a random free model per request | 25–83% per run | 0 in every run |
 
 - **Hand-written row:** the contracts and the bugs were written by the same
   author, so this row measures the runner's reliability, not how good
   generated contracts are.
-- **Live row:** this measures generated contracts. It varies a lot from run to
-  run with free models. Its misses are edge cases the goal didn't spell out,
-  plus checks the model got wrong, which is why a person approves every
-  contract.
+- **Drafted rows:** these measure generated contracts, i.e. what a user gets
+  from a one-line goal. A pinned model is far steadier than the random
+  router. The misses are edge cases the goal didn't spell out (a delete check
+  that happened to remove the last item, so "always deletes the last item"
+  slipped through), which is why a person approves every contract after
+  seeing how each check fares on the current app.
 
 Full method, per-run tables and the diagnosis of bad compiled checks are in
 [bench/RESULTS.md](contexer-agent/bench/RESULTS.md).
@@ -273,10 +297,11 @@ Honest gaps:
 - No GitHub App (check runs, approve button) yet; not on PyPI yet.
 - No visual-design checks. Sign-in sessions kept only in `sessionStorage`
   are not carried into checks (cookie and local-storage sessions are).
-- Draft quality depends on the model. Free OpenRouter models are slow
-  (minutes) and vary from run to run (25–83% of seeded bugs caught). A paid
-  model has not been benchmarked yet, for lack of a paid key on the
-  development machine. Replays never call a model.
+- Draft quality depends on the model. The pinned free model caught 82% of
+  seeded bugs from one-line goals; the random free router varies from 25% to
+  83%. Free models take 1–2 minutes per draft and allow about 50 requests a
+  day. A paid model has not been benchmarked yet, for lack of a paid key on
+  the development machine. Replays never call a model.
 
 ## Docs
 

@@ -22,8 +22,11 @@ for anything missing.
 `.env.example`). With several keys set, the first in that order is used;
 `CONTEXER_LLM_PROVIDER` or `[compiler]` in `contexer.toml` picks one
 explicitly. Draft quality depends on the model, so prefer a strong one (the
-Anthropic default is `claude-opus-5-5`). Replaying approved contracts never
-calls a model.
+Anthropic default is `claude-opus-5-5`). With only an OpenRouter key, drafts
+come from the free `nvidia/nemotron-3-ultra-550b-a55b:free` (33/40 seeded bugs
+caught in `bench --live`), falling back to `openrouter/free` when it is
+unavailable; `OPENROUTER_MODEL` overrides it. Replaying approved contracts
+never calls a model.
 
 **Optional, for `contexer run`:** a coding agent on `PATH`:
 

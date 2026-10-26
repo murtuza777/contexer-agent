@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Bring your own key.** `contexer setup` picks a provider, takes your key
+  without echoing it, lets you choose a drafting model from the provider's
+  own list, and tests that model with one real request before saving
+  anything. Supported: OpenRouter (free models included), Anthropic, OpenAI,
+  Google Gemini, Groq, DeepSeek, Mistral, Together AI, xAI, Fireworks,
+  Cerebras, NVIDIA, a local Ollama, and any OpenAI-compatible endpoint.
+  Settings and keys live in `~/.contexer/`, never in a project, and the coding
+  agent inherits the key: Claude Code for Anthropic, Codex for OpenAI,
+  OpenCode for the rest. `contexer setup --show` prints them with keys masked.
+- **`contexer models`** lists a provider's models with context size, free
+  models and tool support, plus `--free` and `--search` filters.
+  `--providers` lists every provider and the keys you already have.
+- Every draft names the model that wrote it, and warns when a router or
+  fallback answered instead of the model that was asked for.
+
 - **Codex.** `contexer run --agent codex` (or `[agent] name = "codex"`) drives
   `codex exec --json` in the `workspace-write` sandbox, resumes the same
   thread for repair turns, and reports progress and edited files. Codex
@@ -21,6 +36,18 @@
   checks and the 6 existing ones. Tested with OpenCode 1.4.3 and 1.19.4.
 - **OpenCode progress.** Each tool call (`read app.js`, `edit app.js`,
   `bash npm test`) is shown while the turn runs, instead of only "working".
+
+### Changed
+
+- **Drafting default.** With an OpenRouter key, drafts now come from
+  `nvidia/nemotron-3-ultra-550b-a55b:free` instead of `openrouter/free`. That
+  model caught 33/40 seeded bugs with 0/164 false failures across 7 apps,
+  where the router varied between 25% and 83% per run. It falls back to the
+  router when unavailable. `OPENROUTER_MODEL` still overrides it.
+- For apps started with their dev server, the first load waits up to 60 s and
+  checks wait 2.5× longer, because pages and API routes compile on first use.
+- The coding agent is told not to install browsers or run its own end-to-end
+  tests; Contexer runs the checks.
 
 ### Fixed
 

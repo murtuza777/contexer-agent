@@ -46,6 +46,43 @@ contracts are good.
 
 ## LLM-compiled contracts (measures the compiler)
 
+### Pinned free model, 2026-10-26
+
+`OPENROUTER_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free contexer bench --live --repeats 1`.
+The model drafts each app's contract from its one-line goal, grounded in the
+running app's UI. Checks that fail on the correct app are dropped, and the
+rest are scored against the seeded bugs.
+
+| App | Drafted checks | Dropped (failed on the correct app) | Bugs caught | Missed | False-failing checks |
+| --- | --- | --- | --- | --- | --- |
+| todo | 8 | 0 | 4/6 | delete-wrong-task, input-not-cleared | 0/32 |
+| shop | 10 | 0 | **6/6** | | 0/30 |
+| signup | 7 | 1 | **6/6** | | 0/18 |
+| notes | 10 | 1 | 5/6 | pin-not-reordered | 0/27 |
+| members (signed in) | 6 | 1 | 4/5 | count-not-pluralised | 0/15 |
+| budget-react ⁶ | 10 | 0 | 4/6 | amount-not-cleared, delete-removes-last | 0/30 |
+| guestbook-next ⁶ | 6 | 2 | 4/5 | message-not-required | 0/12 |
+| **total** | 57 | 5 | **33/40 (82%)** | 7 | **0/164** |
+
+Every draft came from the model, with no rule-based fallback, in 42–142 s
+per app. The misses are cases the goal didn't spell out and the model didn't
+think of. For example, its delete check removed the *last* item, so a bug that
+always deletes the last item went unnoticed. Next.js dropped two checks for a
+real reason: the app answers an empty message with HTTP 400, which the
+browser logs as a console error, and the model also expected no console
+errors.
+
+⁶ In the original run, both dev-server apps came out invalid. An
+`npm install`, two OpenCode turns and a cold Vite start were running on the
+same machine at the time, and the dev servers' first compiles outlasted
+Contexer's waits.
+Replaying the *same model-written contracts* on an idle machine, with no new
+model calls, kept 10/10 and 4/6 checks, and those are the scores shown. The
+waits for dev-server apps were then lengthened (first load 60 s,
+expectations 2.5×), because users' machines are busy too.
+
+### Random free model (`openrouter/free`), 2026-10-15 and 16
+
 `contexer bench --live --repeats 2` with `OPENROUTER_MODEL=openrouter/free`, a
 router that sends each request to a different free model. That makes this one
 noisy sample per app, not a stable measurement. Compiled checks that fail on
