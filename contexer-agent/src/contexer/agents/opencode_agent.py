@@ -70,6 +70,8 @@ class OpenCodeAgent(CodingAgentAdapter):
             if session_id is None:
                 session = await adapter.create_session(title="Contexer run", directory=str(Path(workdir).resolve()))
                 session_id = session.id
+            else:
+                await tools.poll(adapter, session_id, None, count=False)  # earlier turns' calls are not this turn's
             if on_progress:
                 on_progress(f"OpenCode session {session_id} working")
             # The message endpoint answers only when the turn ends; report tool calls as they happen.
@@ -154,7 +156,9 @@ class _ToolWatch:
             except Exception:  # progress is best effort; the turn's own result is what counts
                 continue
 
-    async def poll(self, adapter: OpenCodeAdapter, session_id: str, on_progress: Optional[ProgressFn]) -> None:
+    async def poll(
+        self, adapter: OpenCodeAdapter, session_id: str, on_progress: Optional[ProgressFn], count: bool = True
+    ) -> None:
         for message in await adapter.get_messages(session_id):
             for part in message.parts:
                 status = (part.state or {}).get("status")
@@ -164,6 +168,8 @@ class _ToolWatch:
                 if key in self._seen:
                     continue
                 self._seen.add(key)
+                if not count:
+                    continue
                 self.count += 1
                 if on_progress:
                     on_progress(self._describe(part.tool or "tool", (part.state or {}).get("input") or {}))

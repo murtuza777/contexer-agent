@@ -108,3 +108,17 @@ async def test_a_timed_out_turn_is_aborted_so_it_stops_editing(tmp_path: Path) -
     turn = await agent.run_turn(tmp_path, "Add delete buttons", timeout=1)
     assert turn.status == "timeout"
     assert fake.aborted == ["ses_1"]
+
+
+async def test_a_repair_turn_reports_only_its_own_tool_calls(tmp_path: Path) -> None:
+    # A resumed session still holds the previous turn's messages (seen live: attempt 2 re-listed attempt 1).
+    agent = OpenCodeAgent(model="openrouter/some/model:free", start_server=False)
+    fake = _FakeAdapter(tmp_path)
+    fake.parts = [_tool("old1", "read", "completed", filePath=str(tmp_path / "app.js")),
+                  _tool("old2", "edit", "completed", filePath=str(tmp_path / "app.js"))]
+    agent._ensure_server = lambda workdir: fake  # type: ignore[method-assign]
+    progress: list[str] = []
+    turn = await agent.run_turn(tmp_path, "Fix the failing checks", session_id="ses_1", on_progress=progress.append)
+    assert "read app.js" in progress[1:]  # the new turn's own read (p2) is still reported
+    assert progress.count("edit app.js") == 1  # p3 only, not the earlier turn's old2
+    assert turn.tool_calls == 4  # glob, read, edit, bash from this turn
