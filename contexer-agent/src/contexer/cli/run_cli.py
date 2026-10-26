@@ -30,6 +30,8 @@ from contexer.controller import RunController, RunOutcome, RunSettings
 from contexer.evidence import RunDir
 from contexer.gate import RunResult
 from contexer.gate.session import VerificationSession
+from contexer.github.api import GitHubClient, GitHubError, github_token
+from contexer.github.handoff import Handoff, HandoffError, HandoffPlan, hand_off, plan_handoff
 from contexer.llm import discovery
 from contexer.workflow.criteria import GoalAnalyzer
 
@@ -57,12 +59,22 @@ def run(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve the checklist without asking."),
     no_replay: bool = typer.Option(False, "--no-replay", help="Skip re-checking other approved contracts."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
+    pr: bool = typer.Option(False, "--pr", help="Commit the result to a new branch and open a pull request with the evidence."),
+    issue: Optional[int] = typer.Option(None, "--issue", min=1, help="Take the goal from this GitHub issue; the pull request closes it."),
 ) -> None:
     """Turn a goal into approved checks, have a coding agent build it, prove it, and repair until it passes."""
-    if bool(goal) == bool(contract_id):
-        raise typer.BadParameter("give either a GOAL or --contract ID")
+    if sum((bool(goal), bool(contract_id), issue is not None)) != 1:
+        raise typer.BadParameter("give a GOAL, --contract ID or --issue N")
     console = Console()
     project = project_dir.resolve()
+    pr = pr or issue is not None  # work on an issue ends in a pull request that closes it
+    handoff_plan: Optional[HandoffPlan] = None
+    if pr:
+        try:
+            handoff_plan = plan_handoff(project)  # before anything is spent
+        except HandoffError as exc:
+            console.print(f"[red]Cannot open a pull request:[/] {escape(str(exc))}")
+            raise typer.Exit(code=3) from exc
     load_project_env(project)  # model keys for the drafting model and the coding agent
     try:
         config = load_project_config(project)
@@ -73,13 +85,16 @@ def run(
         agent = create_agent(*choose_agent(config.agent, agent_name, model))
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    draft_id: Optional[str] = None
+    if issue is not None:
+        goal, draft_id = issue_goal(console, handoff_plan, issue, store)
     drafting = compiler_llm(project) if goal else None
     check_free_quota(console, drafting, agent, yes)
 
     preview: Optional[RunResult] = None
     analyzer: Optional[GoalAnalyzer] = None
     if goal:
-        contract, preview, analyzer = _draft(console, project, store, goal, url, drafting)
+        contract, preview, analyzer = _draft(console, project, store, goal, url, drafting, draft_id)
     else:
         try:
             contract = store.load(contract_id or "")
@@ -125,21 +140,57 @@ def run(
         outcome = controller.last_outcome
     finally:
         agent.close()
-    _render(console, outcome)
+    handoff: Optional[Handoff] = None
+    handoff_error: Optional[str] = None
+    if handoff_plan is not None and outcome.terminal not in ("tampered", "cancelled"):
+        with console.status("[dim]Committing the work to a branch and opening a pull request...[/dim]"):
+            try:
+                handoff = hand_off(handoff_plan, outcome, contract, issue=issue)
+            except HandoffError as exc:
+                handoff_error = str(exc)
+    _render(console, outcome, handoff, handoff_error, pr)
     if open_report:
         webbrowser.open(Path(outcome.run_dir, "report.html").resolve().as_uri())
     raise typer.Exit(code=outcome.exit_code)
 
 
+def issue_goal(console: Console, plan: Optional[HandoffPlan], number: int, store: ContractStore) -> tuple[str, str]:
+    """The goal an issue describes (its title and text), and a contract id that names the issue."""
+    token = github_token()
+    if plan is None or plan.repo is None or token is None:
+        missing = "a GitHub token (GITHUB_TOKEN, or `gh auth login`)" if token is None else "a GitHub remote"
+        console.print(f"[red]Cannot read issue #{number}:[/] the project needs {missing}.")
+        raise typer.Exit(code=3)
+    try:
+        with GitHubClient(plan.repo, token) as client:
+            found = client.issue(number)
+    except GitHubError as exc:
+        console.print(f"[red]Cannot read issue #{number}:[/] {escape(str(exc))}")
+        raise typer.Exit(code=3) from exc
+    if found.get("state") == "closed":
+        console.print(f"[yellow]Issue #{number} is closed;[/] working on it anyway.")
+    title = str(found.get("title") or "").strip()
+    body = str(found.get("body") or "").strip()
+    goal = f"{title}\n\n{body[:4000]}".strip()
+    console.print(f"[dim]Issue #{number} · {escape(title)} · {escape(str(found.get('html_url', '')))}[/]")
+    return goal, store.unique_id(f"issue {number} {title}")
+
+
 def _draft(
-    console: Console, project: Path, store: ContractStore, goal: str, url: Optional[str], drafting: Any = None
+    console: Console,
+    project: Path,
+    store: ContractStore,
+    goal: str,
+    url: Optional[str],
+    drafting: Any = None,
+    contract_id: Optional[str] = None,
 ) -> tuple[Contract, Optional[RunResult], GoalAnalyzer]:
     analyzer = GoalAnalyzer(llm_provider=drafting)
 
     async def compile_contract() -> tuple[Contract, Optional[RunResult]]:
         run_dir = RunDir.create(project)
         session = VerificationSession(project, run_dir)
-        cid = store.unique_id(goal)
+        cid = contract_id or store.unique_id(goal)
         try:
             with open_app(project, url) as app:
                 await session.observe(app)
@@ -262,7 +313,13 @@ def agent_hint(outcome: RunOutcome) -> Optional[str]:
     return "the agent's account cannot run it: log in to it, add credit, or choose another with --agent."
 
 
-def _render(console: Console, outcome: RunOutcome) -> None:
+def _render(
+    console: Console,
+    outcome: RunOutcome,
+    handoff: Optional[Handoff] = None,
+    handoff_error: Optional[str] = None,
+    pr: bool = False,
+) -> None:
     table = Table(show_header=True, header_style="dim", box=None, pad_edge=False)
     for col in ("#", "turn", "agent", "files", "verdict", "note"):
         table.add_column(col)
@@ -284,6 +341,19 @@ def _render(console: Console, outcome: RunOutcome) -> None:
     hint = agent_hint(outcome)
     if hint:
         lines.append(f"[yellow]Next:[/] {escape(hint)}")
+    if handoff is not None:
+        if handoff.is_pull_request:
+            kind = "Draft pull request" if handoff.draft else "Pull request"
+            lines.append(f"[bold]{kind}:[/] {escape(handoff.url or '')}")
+        elif handoff.url:
+            lines.append(f"[bold]Open the pull request:[/] {escape(handoff.url)}")
+        lines.append(f"[dim]Branch:[/] {escape(handoff.branch)} ({handoff.commit[:8]}) — you are on it now")
+        if handoff.note:
+            lines.append(f"[yellow]{escape(handoff.note.strip())}[/]")
+    elif handoff_error:
+        lines.append(f"[red]No pull request:[/] {escape(handoff_error)}")
+    elif pr and outcome.terminal not in ("tampered", "cancelled"):
+        lines.append("[dim]No pull request: the run left no changes.[/]")
     lines.append(f"[dim]Report:[/] {escape(str(Path(outcome.run_dir, 'report.html')))}")
     lines.append(f"[dim]{outcome.duration_seconds:.0f}s[/]")
     console.print()

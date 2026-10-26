@@ -102,6 +102,7 @@ class RunOutcome(BaseModel):
     duration_seconds: float = 0.0
     started_at: str = ""
     diff: str = ""
+    changed_files: list[str] = Field(default_factory=list)  # project-relative, baseline → what was left
     run_dir: str = ""
     contexer_version: str = __version__
 
@@ -354,6 +355,7 @@ class RunController:
         outcome.final = results.get(best) if best is not None else (results[final_n] if final_n in results else None)
         end_snapshot = snapshots.get(best, snapshots[0]) if best is not None else shadow.snapshot()
         outcome.diff = shadow.diff(baseline, end_snapshot)
+        outcome.changed_files = shadow.changed_paths(baseline, end_snapshot)
         outcome.duration_seconds = time.monotonic() - started
         self._write_evidence(outcome, run, contract)
         self.last_outcome = outcome
@@ -383,6 +385,7 @@ class RunController:
         outcome.best_attempt = best
         outcome.final = results.get(best) if best is not None else None
         outcome.diff = shadow.diff(snapshots[0], snapshots[target])
+        outcome.changed_files = shadow.changed_paths(snapshots[0], snapshots[target])
         outcome.duration_seconds = time.monotonic() - started
         self._write_evidence(outcome, run, contract)
         self.last_outcome = outcome
