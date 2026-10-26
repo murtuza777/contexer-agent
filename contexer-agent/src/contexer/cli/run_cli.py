@@ -16,7 +16,7 @@ from rich.table import Table
 from contexer.agents import create_agent
 from contexer.appserver import AppStartError, open_app
 from contexer.cli.gate_cli import compiler_llm, preview_draft, print_draft_preview, warn_if_weak_draft
-from contexer.config.project import ProjectConfigError, load_project_config
+from contexer.config.project import ProjectConfigError, load_project_config, load_project_env
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.controller import RunController, RunOutcome, RunSettings
 from contexer.evidence import RunDir
@@ -54,6 +54,7 @@ def run(
         raise typer.BadParameter("give either a GOAL or --contract ID")
     console = Console()
     project = project_dir.resolve()
+    load_project_env(project)  # model keys for the drafting model and the coding agent
     try:
         config = load_project_config(project)
     except ProjectConfigError as exc:

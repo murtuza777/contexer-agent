@@ -274,12 +274,13 @@ def warn_if_weak_draft(console: Console, contract: Contract) -> None:
 
 def compiler_llm(project_dir: Optional[Path] = None) -> Optional[LLMProvider]:
     """The model that compiles goals into checks: [compiler] in contexer.toml, then env, then any key."""
-    from contexer.config.project import ProjectConfigError, load_project_config
+    from contexer.config.project import ProjectConfigError, load_project_config, load_project_env
     from contexer.config.settings import load_config
     from contexer.llm.factory import compiler_provider
 
     settings = None
     if project_dir is not None:
+        load_project_env(project_dir)  # a model key kept in the project's .env
         try:
             settings = load_project_config(project_dir).compiler
         except ProjectConfigError:

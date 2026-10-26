@@ -10,7 +10,13 @@ from typing import Any, Awaitable, Callable, Optional, Union
 from contexer import __version__
 from contexer.appserver import RunningApp
 from contexer.appserver.reset import reset_command, run_reset
-from contexer.config.project import AuthSettings, ProjectConfig, ProjectConfigError, load_project_config
+from contexer.config.project import (
+    AuthSettings,
+    ProjectConfig,
+    ProjectConfigError,
+    load_project_config,
+    load_project_env,
+)
 from contexer.contract.models import Contract, utc_now
 from contexer.evidence.rundir import RunDir
 from contexer.gate.decision import decide
@@ -58,7 +64,7 @@ class VerificationSession:
         # [app] reset: run before every check so checks don't see each other's server-side data.
         self.reset: Optional[str] = config.app.reset if config else None
         self._app_env: dict[str, str] = dict(config.app.env) if config else {}
-        _load_project_env(self.project_dir)
+        load_project_env(self.project_dir)  # [auth] secrets can live in the project's .env
         self._started = time.monotonic()
         self._started_at = utc_now()
         self.load: Optional[BrowserObservation] = None
@@ -186,12 +192,3 @@ def _project_config(project_dir: Path) -> Optional[ProjectConfig]:
         return load_project_config(project_dir)
     except ProjectConfigError:
         return None  # the app runner reports an invalid contexer.toml
-
-
-def _load_project_env(project_dir: Path) -> None:
-    """Make the project's .env (test credentials) visible to ${NAME} placeholders."""
-    env_file = project_dir / ".env"
-    if env_file.is_file():
-        from dotenv import load_dotenv
-
-        load_dotenv(env_file, override=False)

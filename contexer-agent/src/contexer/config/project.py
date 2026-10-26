@@ -113,6 +113,19 @@ class ProjectConfigError(Exception):
     """``contexer.toml`` exists but cannot be used."""
 
 
+def load_project_env(project_dir: str | Path) -> None:
+    """Load ``<project>/.env`` into the environment, never overriding what is already set.
+
+    Model and agent keys and ``[auth]`` test credentials can live there, and
+    the coding agent Contexer starts inherits them.
+    """
+    env_file = Path(project_dir) / ".env"
+    if env_file.is_file():
+        from dotenv import load_dotenv
+
+        load_dotenv(env_file, override=False)
+
+
 def load_project_config(project_dir: str | Path) -> ProjectConfig:
     path = Path(project_dir) / CONFIG_FILE
     if not path.is_file():
