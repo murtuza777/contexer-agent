@@ -123,6 +123,26 @@ Or do it all in one step:
 Contexer shows the checklist and asks you to approve it before any code
 changes.
 
+### Free, with only an OpenRouter key
+
+With `OPENROUTER_API_KEY` in your environment or `.env`, and
+[OpenCode](https://opencode.ai) installed, the whole loop runs on free models:
+
+```bash
+npm i -g opencode-ai
+contexer run "Members can delete a project; the project count updates" --agent opencode
+```
+
+Contexer drafts the checks with OpenRouter, OpenCode builds the change with
+`nvidia/nemotron-3-ultra-550b-a55b:free`, and Contexer proves the result in
+Chromium. In the first live run (2026-10-26), on the signed-in members app,
+this built "delete a project" in 101 s. The result passed all 5 new checks and
+the 6 that already existed, with no repair round.
+
+Free models are rate-limited: about 50 requests a day without credits, and
+each agent step is one request. Expect a few runs a day, and pick another
+model with `--model openrouter/<id>` if this one disappears.
+
 ### Apps behind a login
 
 Tell Contexer how to sign in, with a test account, in `contexer.toml`:

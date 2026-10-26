@@ -14,12 +14,23 @@
   names for created items.
 - **Benchmark:** `guestbook-next`, a Next.js 16 app whose entries live on the
   server, started through `npm ci` and `next dev`.
+- **Free end-to-end runs.** With only `OPENROUTER_API_KEY`,
+  `contexer run "GOAL" --agent opencode` uses
+  `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`. The first live run
+  (2026-10-26) built a feature in a signed-in app that passed all 5 new
+  checks and the 6 existing ones. Tested with OpenCode 1.4.3 and 1.19.4.
+- **OpenCode progress.** Each tool call (`read app.js`, `edit app.js`,
+  `bash npm test`) is shown while the turn runs, instead of only "working".
 
 ### Fixed
 
 - On Windows, a configured command with a quoted path (for example
   `"C:\Program Files\nodejs\node.exe" app.js`) failed with "is not
   recognized", because `cmd.exe` cannot read `\"`-escaped quotes.
+- `--agent opencode` without `--model` used OpenCode's own free model,
+  which refuses headless use.
+- The project's `.env` is loaded before drafting and before the coding agent
+  starts, so a model key kept there reaches both, also with `--dir`.
 
 ## 0.2.0 — 2026-10-25
 
