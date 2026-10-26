@@ -321,7 +321,7 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 
 ## Status
 
-What works today, with tests (506 passing) and CI on Linux:
+What works today, with tests (507 passing) and CI on Linux:
 
 - **Live end-to-end runs** with a real coding agent (OpenCode on a free
   OpenRouter model, 2026-10-26):
