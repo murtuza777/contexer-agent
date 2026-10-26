@@ -8,6 +8,7 @@ If no server answers at the configured URL, the adapter starts
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import time
 from pathlib import Path
@@ -58,6 +59,7 @@ class OpenCodeAgent(CodingAgentAdapter):
         on_progress: Optional[ProgressFn] = None,
     ) -> AgentTurn:
         started = time.monotonic()
+        tools = _ToolWatch(Path(workdir))
         try:
             adapter = self._ensure_server(Path(workdir))
             if session_id is None:
@@ -65,13 +67,20 @@ class OpenCodeAgent(CodingAgentAdapter):
                 session_id = session.id
             if on_progress:
                 on_progress(f"OpenCode session {session_id} working")
-            result = await adapter.send_prompt(session_id=session_id, prompt=prompt, wait=True, timeout=timeout)
+            # The message endpoint answers only when the turn ends; report tool calls as they happen.
+            watcher = asyncio.create_task(tools.follow(adapter, session_id, on_progress))
+            try:
+                result = await adapter.send_prompt(session_id=session_id, prompt=prompt, wait=True, timeout=timeout)
+            finally:
+                watcher.cancel()
+            await tools.poll(adapter, session_id, on_progress)  # the calls made since the last poll
         except Exception as exc:
             return AgentTurn(
                 status="failed",
                 session_id=session_id,
                 error=f"OpenCode unavailable: {exc}",
                 duration_seconds=time.monotonic() - started,
+                tool_calls=tools.count,
             )
         status = {
             ExecutionStatus.COMPLETED: "completed",
@@ -84,6 +93,7 @@ class OpenCodeAgent(CodingAgentAdapter):
             summary=result.response_text[:4000],
             error=result.error,
             duration_seconds=time.monotonic() - started,
+            tool_calls=tools.count,
             files_touched=[d.file for d in result.diff],
         )
 
@@ -110,6 +120,49 @@ class OpenCodeAgent(CodingAgentAdapter):
                 time.sleep(0.5)
         self._adapter = OpenCodeAdapter(base_url=self.base_url, model_provider=self.provider, model_id=self.model_id)
         return self._adapter
+
+
+_TARGET_KEYS = ("filePath", "path", "command", "pattern", "url")
+
+
+class _ToolWatch:
+    """Turns the session's tool parts into progress lines ("edit app.js", "bash npm test")."""
+
+    def __init__(self, workdir: Path, interval: float = 2.0) -> None:
+        self.workdir = workdir.resolve()
+        self.interval = interval
+        self.count = 0
+        self._seen: set[str] = set()
+
+    async def follow(self, adapter: OpenCodeAdapter, session_id: str, on_progress: Optional[ProgressFn]) -> None:
+        while True:
+            await asyncio.sleep(self.interval)
+            try:
+                await self.poll(adapter, session_id, on_progress)
+            except Exception:  # progress is best effort; the turn's own result is what counts
+                continue
+
+    async def poll(self, adapter: OpenCodeAdapter, session_id: str, on_progress: Optional[ProgressFn]) -> None:
+        for message in await adapter.get_messages(session_id):
+            for part in message.parts:
+                status = (part.state or {}).get("status")
+                key = part.id or part.callID
+                if part.type != "tool" or status not in ("running", "completed", "error") or not key:
+                    continue
+                if key in self._seen:
+                    continue
+                self._seen.add(key)
+                self.count += 1
+                if on_progress:
+                    on_progress(self._describe(part.tool or "tool", (part.state or {}).get("input") or {}))
+
+    def _describe(self, tool: str, params: dict) -> str:
+        target = next((str(params[k]) for k in _TARGET_KEYS if params.get(k)), "")
+        try:
+            target = Path(target).resolve().relative_to(self.workdir).as_posix() if target else target
+        except (ValueError, OSError):
+            pass
+        return f"{tool} {target[:100]}".strip()
 
 
 def _healthy(base_url: str) -> bool:
