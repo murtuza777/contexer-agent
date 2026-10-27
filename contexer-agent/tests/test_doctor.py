@@ -64,20 +64,25 @@ expect = [{ kind = "url", contains = "/home" }]
 """
 
 
+def _flat(output: str) -> str:
+    """Doctor aligns its findings in columns and wraps long ones; compare the words."""
+    return " ".join(output.split())
+
+
 def test_doctor_names_missing_sign_in_secrets_and_reads_the_env_file(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text("<h1>hi</h1>", encoding="utf-8")
     (tmp_path / "contexer.toml").write_text(SIGN_IN, encoding="utf-8")
     missing = CliRunner().invoke(app, ["doctor", "--dir", str(tmp_path)])
     assert missing.exit_code == 1
-    assert "DOCTOR_EMAIL, DOCTOR_PASSWORD" in missing.output and "not set" in missing.output
+    assert "DOCTOR_EMAIL, DOCTOR_PASSWORD" in _flat(missing.output) and "not set" in _flat(missing.output)
 
     (tmp_path / ".env").write_text("DOCTOR_EMAIL=a\nDOCTOR_PASSWORD=b\n", encoding="utf-8")
     ready = CliRunner().invoke(app, ["doctor", "--dir", str(tmp_path)])
-    assert "signs in at /login with DOCTOR_EMAIL, DOCTOR_PASSWORD" in ready.output
+    assert "signs in at /login with DOCTOR_EMAIL, DOCTOR_PASSWORD" in _flat(ready.output)
 
 
 def test_doctor_warns_about_credentials_written_into_contexer_toml(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text("<h1>hi</h1>", encoding="utf-8")
     (tmp_path / "contexer.toml").write_text(SIGN_IN.replace("${DOCTOR_EMAIL}", "a@b.co").replace("${DOCTOR_PASSWORD}", "pw"), encoding="utf-8")
     result = CliRunner().invoke(app, ["doctor", "--dir", str(tmp_path)])
-    assert "credentials written in contexer.toml" in result.output
+    assert "credentials written in contexer.toml" in _flat(result.output)

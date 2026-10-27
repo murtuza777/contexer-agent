@@ -15,14 +15,19 @@ import typer
 from rich.console import Console
 from rich.markup import escape
 
+from rich.padding import Padding
+from rich.table import Table
+
 from contexer import __version__
+from contexer.cli import term
+from contexer.github.api import github_token
 from contexer.llm import discovery
 
 if TYPE_CHECKING:
     from contexer.config.project import AuthSettings
 
 Status = Literal["ok", "warn", "fail"]
-_MARK = {"ok": "[green]✓[/]", "warn": "[yellow]![/]", "fail": "[red]✗[/]"}
+_MARK = {"ok": "pass", "warn": "warn", "fail": "fail"}
 
 
 @dataclass
@@ -38,21 +43,27 @@ def doctor(
 ) -> None:
     """Check Python, Chromium, git, Node, a drafting model, coding agents and the project setup."""
     console = Console()
-    console.print(f"[bold bright_cyan]Contexer doctor[/] [dim]· contexer {__version__}[/]\n")
-    findings = environment_findings() + project_findings(project_dir.resolve())
+    term.header(console, "doctor", f"version {__version__}")
+    with console.status("[dim]Checking the browser, tools, models and the project...[/]"):
+        findings = environment_findings() + project_findings(project_dir.resolve())
+    table = Table.grid(padding=(0, 2))
+    table.add_column(no_wrap=True)
+    table.add_column(no_wrap=True)
+    table.add_column(overflow="fold")
     for f in findings:
-        console.print(f"{_MARK[f.status]} [bold]{escape(f.area)}[/] {escape(f.detail)}")
+        table.add_row(term.mark(_MARK[f.status]), escape(f.area), escape(f.detail))
         if f.fix and f.status != "ok":
-            console.print(f"    [dim]fix:[/] {escape(f.fix)}")
+            table.add_row("", "", f"[dim]→ {escape(f.fix)}[/]")
+    console.print(Padding(table, (0, 0, 0, 2), expand=False))
     failures = [f for f in findings if f.status == "fail"]
     warnings = [f for f in findings if f.status == "warn"]
     console.print()
     if failures:
-        console.print(f"[red]{len(failures)} problem(s) will stop Contexer from working.[/]")
+        term.note(console, "fail", f"[red]{len(failures)} problem(s) will stop Contexer from working.[/]")
     elif warnings:
-        console.print(f"[yellow]Ready, with {len(warnings)} warning(s).[/]")
+        term.note(console, "warn", f"Ready, with {len(warnings)} warning(s).")
     else:
-        console.print("[green]Everything Contexer needs is in place.[/]")
+        term.note(console, "pass", "Everything Contexer needs is in place.")
     raise typer.Exit(code=1 if failures else 0)
 
 
@@ -150,13 +161,13 @@ def environment_findings() -> list[Finding]:
             )
         )
 
-    token = config.github_token or os.environ.get("GITHUB_TOKEN")
+    token = config.github_token or github_token()
     findings.append(
         Finding(
             "GitHub",
             "ok" if token else "warn",
-            "token found" if token else "no token (only needed for `--github` outside Actions)",
-            "Set GITHUB_TOKEN to post commit statuses from your machine",
+            "token found (`--pr`, `--issue` and commit statuses can use it)" if token else "no token (only `--pr`, `--issue` and `--github` need one)",
+            "Run `gh auth login`, or set GITHUB_TOKEN",
         )
     )
     return findings

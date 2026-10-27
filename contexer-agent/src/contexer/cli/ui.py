@@ -37,19 +37,21 @@ def _can_encode(char: str) -> bool:
 # Theme
 # ---------------------------------------------------------------------------
 
+# Colour carries meaning only (see cli/term.py): green, yellow and red for outcomes;
+# everything else is the terminal's own text colour, bold or dim.
 _CONTEXER_THEME = Theme(
     {
-        "ctx.brand": "bold bright_cyan",
-        "ctx.accent": "bold bright_magenta",
-        "ctx.dim": "dim italic",
-        "ctx.success": "bold green",
-        "ctx.warning": "bold yellow",
-        "ctx.error": "bold red",
-        "ctx.info": "bold blue",
-        "ctx.prompt": "bold bright_cyan",
-        "ctx.border": "bright_cyan",
-        "ctx.subtitle": "dim cyan",
-        "ctx.command": "bold bright_white",
+        "ctx.brand": "bold",
+        "ctx.accent": "bold",
+        "ctx.dim": "dim",
+        "ctx.success": "green",
+        "ctx.warning": "yellow",
+        "ctx.error": "red",
+        "ctx.info": "dim",
+        "ctx.prompt": "bold",
+        "ctx.border": "dim",
+        "ctx.subtitle": "dim",
+        "ctx.command": "bold",
         "ctx.description": "dim",
     }
 )
@@ -86,31 +88,14 @@ class UIRenderer:
     # -- banner -----------------------------------------------------------
 
     def render_banner(self) -> None:
-        """Render the startup banner.
-
-        Uses a Rich panel for automatic width and border handling.
-        """
-        width = min(self.terminal_width - 4, 60)
-
-        title_text = Text("CONTEXER", style="bold bright_cyan")
-        subtitle = Text("Autonomous Engineering Agent", style="dim cyan")
-        version_text = Text(f"v{__version__}", style="dim")
-
-        content = Text()
-        content.append_text(title_text)
-        content.append("\n")
-        content.append_text(subtitle)
-        content.append("\n")
-        content.append_text(version_text)
-
-        panel = Panel(
-            content,
-            border_style="bright_cyan",
-            width=width,
-            padding=(1, 2),
-        )
+        """Render the startup line: name, version, and what this shell is."""
         self.console.print()
-        self.console.print(panel)
+        self.console.print(
+            Text.assemble(("contexer", "bold"), (f" {__version__}", "dim"), (" · interactive shell", "dim"))
+        )
+        self.console.print(
+            "[dim]For building against approved checks, `contexer run \"<goal>\"` is the main command.[/]"
+        )
 
     # -- prompt -----------------------------------------------------------
 

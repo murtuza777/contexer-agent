@@ -32,13 +32,13 @@ class TestUIRenderer:
         renderer, buf = self._make_renderer()
         renderer.render_banner()
         output = buf.getvalue()
-        assert "CONTEXER" in output
+        assert "contexer" in output
 
     def test_render_banner_contains_subtitle(self) -> None:
         renderer, buf = self._make_renderer()
         renderer.render_banner()
         output = buf.getvalue()
-        assert "Autonomous Engineering Agent" in output
+        assert "interactive shell" in output and "contexer run" in output
 
     def test_render_banner_contains_version(self) -> None:
         renderer, buf = self._make_renderer()

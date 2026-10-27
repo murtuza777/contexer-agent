@@ -12,15 +12,15 @@ from typing import Any, Callable, Optional
 import typer
 from rich.console import Console
 from rich.markup import escape
-from rich.panel import Panel
-from rich.table import Table
 
 from contexer.agents import CodingAgentAdapter, create_agent
 from contexer.appserver import AppStartError, open_app
 from contexer.checkpoint.shadow import unsafe_work_tree
+from contexer.cli import term
 from contexer.cli.gate_cli import (
     compiler_llm,
     preview_draft,
+    print_checklist,
     print_draft_preview,
     print_drafted_by,
     warn_if_weak_draft,
@@ -36,16 +36,7 @@ from contexer.github.handoff import Handoff, HandoffError, HandoffPlan, hand_off
 from contexer.llm import discovery
 from contexer.workflow.criteria import GoalAnalyzer
 
-_EVENT_STYLE = {
-    "phase": "bold yellow",
-    "agent": "dim",
-    "agent-done": "cyan",
-    "app": "dim",
-    "verdict": "bold",
-    "revert": "magenta",
-    "strategy": "magenta",
-}
-_TERMINAL_STYLE = {"succeeded": "green", "failed_checks": "red", "tampered": "red", "agent_error": "red", "app_error": "red"}
+_VERDICT = {"PASS": ("pass", "green"), "FAIL": ("fail", "red"), "NEEDS ACTION": ("open", "yellow"), "ERROR": ("fail", "red")}
 
 
 def run(
@@ -142,22 +133,50 @@ def execute_run(
 ) -> RunOutcome:
     """Drive the agent to the approved contract, printing progress; Ctrl+C ends in a "cancelled" outcome."""
     others = [c for c in store.list() if c.id != contract.id and c.status == "approved"] if settings.replay_others else []
-    budget_note = ""
+    limits = f"up to {settings.max_repair_rounds} repair round(s)"
     if settings.budget_usd:
         # Codex reports tokens, not cost: the round and time limits bound its runs instead.
-        budget_note = " · no spending limit (Codex reports no cost)" if agent.name == "codex" else f" · budget ${settings.budget_usd:.2f}"
-    console.print()
-    console.print(f"[bold bright_cyan]Contexer run[/] [dim]·[/] {escape(contract.goal)}")
-    console.print(
-        f"[dim]{escape(agent.describe())} · up to {settings.max_repair_rounds} repair round(s)"
-        f"{budget_note}"
-        f"{f' · replaying {len(others)} other contract(s)' if others else ''}[/]"
+        limits += " · no spending limit (Codex reports no cost)" if agent.name == "codex" else f" · budget ${settings.budget_usd:.2f}"
+    term.header(console, "run", contract.goal.splitlines()[0] if contract.goal else contract.id)
+    term.fields(
+        console,
+        [
+            ("Agent", escape(agent.describe())),
+            ("Limits", limits),
+            ("Replays", f"{len(others)} other approved contract(s)" if others else ""),
+        ],
     )
 
+    activity = term.Activity(console)
+    tool_calls = 0
+
     def on_event(kind: str, message: str) -> None:
-        style = _EVENT_STYLE.get(kind, "")
-        prefix = "  " if kind in ("agent", "app") else ""
-        console.print(f"{prefix}[{style}]{escape(message)}[/]" if style else f"{prefix}{escape(message)}")
+        nonlocal tool_calls
+        text = escape(message)
+        if kind == "phase" and "proving" in message:
+            console.print(f"  [dim]{text}[/]")
+            activity.start("Proving the checks in Chromium")
+        elif kind == "phase":
+            activity.stop()
+            console.print()
+            console.print(f"{term.mark('info')} [bold]{text}[/]")
+            tool_calls = 0
+            activity.start("Agent working")
+        elif kind == "agent":
+            tool_calls += 1
+            console.print(f"    [dim]{text}[/]")
+            activity.set_detail(f"{tool_calls} tool call(s)")
+        elif kind == "agent-done":
+            activity.stop()
+            console.print(f"  {text}")
+        elif kind == "verdict":
+            activity.stop()
+            mark, style = next((v for k, v in _VERDICT.items() if f": {k}:" in message), ("open", "yellow"))
+            console.print(f"  {term.mark(mark)} [{style}]{text}[/]")
+        elif kind in ("revert", "strategy"):
+            console.print(f"  {term.mark('warn')} {text}")
+        else:  # the app starting or restarting
+            console.print(f"  [dim]{text}[/]")
         if on_progress is not None:
             on_progress(kind, message)
 
@@ -165,11 +184,13 @@ def execute_run(
     try:
         outcome = asyncio.run(controller.run(contract, others))
     except KeyboardInterrupt:
+        activity.stop()
         if controller.last_outcome is None:  # stopped before the first snapshot
-            console.print("[yellow]Stopped.[/] Nothing was changed.")
+            term.note(console, "warn", "Stopped. Nothing was changed.")
             raise typer.Exit(code=130)
         outcome = controller.last_outcome
     finally:
+        activity.stop()
         agent.close()
     return outcome
 
@@ -234,25 +255,27 @@ def _approve(
     preview: Optional[RunResult] = None,
     analyzer: Optional[GoalAnalyzer] = None,
 ) -> Contract:
-    console.print()
-    console.print(Panel("\n".join(escape(line) for line in contract.describe_lines()), title=f"Definition of done · {contract.id}"))
+    print_checklist(console, contract)
     print_draft_preview(console, preview)
     if analyzer is not None:
         print_drafted_by(console, analyzer)
     warn_if_weak_draft(console, contract, analyzer.last_error if analyzer else None)
     if yes and contract.source == "rules":
         # Building against a rule-based fallback wastes the agent's budget on a contract nobody chose.
-        console.print(
-            f"[yellow]Not approved:[/] --yes never approves a weak draft. Review "
-            f"{escape(str(store.path_for(contract.id)))}, then `contexer contract approve {escape(contract.id)}`."
+        term.note(
+            console,
+            "warn",
+            f"Not approved: --yes never approves a weak draft. Review {escape(str(store.path_for(contract.id)))}, "
+            f"then `contexer contract approve {escape(contract.id)}`.",
         )
         raise typer.Exit(code=2)
+    console.print()
     if not yes and not typer.confirm("Approve these checks as the definition of done?", default=False):
         store.save(contract)
-        console.print(f"[yellow]Not approved.[/] Edit {escape(str(store.path_for(contract.id)))} and run again.")
+        term.note(console, "warn", f"Not approved. Edit {escape(str(store.path_for(contract.id)))} and run again.")
         raise typer.Exit(code=2)
     approved = store.approve(contract.id)
-    console.print(f"[green]✓[/] Approved [bold]{escape(approved.id)}[/]")
+    console.print(f"{term.mark('pass')} Approved [bold]{escape(approved.id)}[/]")
     return approved
 
 
@@ -275,16 +298,13 @@ def check_free_quota(console: Console, drafting: Any, agent: CodingAgentAdapter,
         "about 15 in our runs, a larger one can take 40 or more."
     )
     remedy = "Buying $10 of OpenRouter credit raises the limit to 1,000 a day, or `contexer setup` picks another provider."
+    console.print()
     if quota.remaining <= 0:
-        console.print(Panel(f"{detail}\n{remedy}", title="No free requests left today", border_style="red"))
+        term.note(console, "fail", "[bold red]No free requests left today[/]")
+        console.print(f"  {escape(detail)}\n  {escape(remedy)}")
         raise typer.Exit(code=3)
-    console.print(
-        Panel(
-            f"{detail}\nIf they run out, the run stops and keeps its best attempt. {remedy}",
-            title="Few free requests left",
-            border_style="yellow",
-        )
-    )
+    term.note(console, "warn", "[bold yellow]Few free requests left[/]")
+    console.print(f"  {escape(detail)}\n  If they run out, the run stops and keeps its best attempt. {escape(remedy)}")
     if not yes and not typer.confirm("Start anyway?", default=False):
         raise typer.Exit(code=2)
 
@@ -340,42 +360,35 @@ def _render(
     handoff_error: Optional[str] = None,
     pr: bool = False,
 ) -> None:
-    table = Table(show_header=True, header_style="dim", box=None, pad_edge=False)
-    for col in ("#", "turn", "agent", "files", "verdict", "note"):
-        table.add_column(col)
+    style = term.TERMINAL_STYLE.get(outcome.terminal, "yellow")
+    mark = "pass" if outcome.terminal == "succeeded" else "fail" if style == "red" else "warn"
+    title = outcome.terminal.replace("_", " ").capitalize()
+    console.print()
+    console.print(f"{term.mark(mark)} [bold {style}]{escape(title)}[/] [dim]·[/] {escape(outcome.reason)}")
+
+    rows: list[tuple[str, str]] = []
     for a in outcome.attempts:
-        kept = " ★" if a.n == outcome.best_attempt else ""
-        verdict = f"{a.outcome} ({a.verified}✓ {a.refuted}✗ {a.unverified}?)" if a.outcome != "error" else "error"
-        table.add_row(
-            f"{a.n}{kept}",
-            a.kind + (" (fresh)" if a.fresh_session and a.n > 1 else ""),
-            a.agent.status,
-            str(len(a.changed_files)),
-            verdict,
-            escape(a.note),
-        )
-    style = _TERMINAL_STYLE.get(outcome.terminal, "yellow")
-    lines = [f"[bold {style}]{escape(outcome.terminal.replace('_', ' ').upper())}[/] — {escape(outcome.reason)}"]
-    if outcome.cost_usd:
-        lines.append(f"[dim]Agent spend:[/] ${outcome.cost_usd:.2f}")
-    hint = agent_hint(outcome)
-    if hint:
-        lines.append(f"[yellow]Next:[/] {escape(hint)}")
+        counts = f"{a.verified} verified · {a.refuted} refuted · {a.unverified} unverified" if a.outcome != "error" else "the app did not run"
+        kept = " [dim](kept)[/]" if a.n == outcome.best_attempt and len(outcome.attempts) > 1 else ""
+        fresh = " [dim](fresh session)[/]" if a.fresh_session and a.n > 1 else ""
+        note = f" [dim]· {escape(a.note)}[/]" if a.note else ""
+        rows.append((f"Attempt {a.n}", f"{a.kind}{fresh} · {counts}{kept}{note}"))
     if handoff is not None:
         if handoff.is_pull_request:
-            kind = "Draft pull request" if handoff.draft else "Pull request"
-            lines.append(f"[bold]{kind}:[/] {escape(handoff.url or '')}")
+            rows.append(("Draft pull request" if handoff.draft else "Pull request", f"[bold]{escape(handoff.url or '')}[/]"))
         elif handoff.url:
-            lines.append(f"[bold]Open the pull request:[/] {escape(handoff.url)}")
-        lines.append(f"[dim]Branch:[/] {escape(handoff.branch)} ({handoff.commit[:8]}) — you are on it now")
+            rows.append(("Pull request", f"open it at {escape(handoff.url)}"))
+        rows.append(("Branch", f"{escape(handoff.branch)} [dim]({handoff.commit[:8]}, you are on it now)[/]"))
         if handoff.note:
-            lines.append(f"[yellow]{escape(handoff.note.strip())}[/]")
+            rows.append(("Note", f"[yellow]{escape(handoff.note.strip())}[/]"))
     elif handoff_error:
-        lines.append(f"[red]No pull request:[/] {escape(handoff_error)}")
+        rows.append(("Pull request", f"[red]not opened:[/] {escape(handoff_error)}"))
     elif pr and outcome.terminal not in ("tampered", "cancelled"):
-        lines.append("[dim]No pull request: the run left no changes.[/]")
-    lines.append(f"[dim]Report:[/] {escape(str(Path(outcome.run_dir, 'report.html')))}")
-    lines.append(f"[dim]{outcome.duration_seconds:.0f}s[/]")
-    console.print()
-    console.print(table)
-    console.print(Panel("\n".join(lines), border_style=style, title="Contexer"))
+        rows.append(("Pull request", "[dim]none: the run left no changes[/]"))
+    rows.append(("Report", escape(term.path(Path(outcome.run_dir, "report.html")))))
+    spend = f" · ${outcome.cost_usd:.2f} agent spend" if outcome.cost_usd else ""
+    rows.append(("Took", f"{term.duration(outcome.duration_seconds)}{spend}"))
+    hint = agent_hint(outcome)
+    if hint:
+        rows.append(("Next", f"[yellow]{escape(hint)}[/]"))
+    term.fields(console, rows)

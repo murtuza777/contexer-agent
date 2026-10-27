@@ -69,7 +69,7 @@ class TestContexerApp:
         app, buf = _make_app()
         app._show_startup()
         output = _ANSI_RE.sub("", buf.getvalue())
-        assert "CONTEXER" in output
+        assert "interactive shell" in output
         assert "/help" in output
 
     def test_handle_user_message_streams_response(self) -> None:
@@ -133,5 +133,5 @@ class TestContexerApp:
         with patch("builtins.input", side_effect=["/exit"]):
             app.run()
         output = buf.getvalue()
-        assert "CONTEXER" in output
+        assert "interactive shell" in output
         assert "Goodbye" in output

@@ -37,7 +37,7 @@ class TestHelp:
         assert result.exit_code == 0
         output = _plain(result.output)
         assert "Contexer" in output
-        assert "owns done" in output
+        assert "Proof that your coding agent is done" in output and "contexer setup" in output
         for command in ("run", "verify", "replay", "contract", "bench"):
             assert command in output
 

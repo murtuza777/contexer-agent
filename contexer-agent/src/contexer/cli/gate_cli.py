@@ -15,7 +15,6 @@ from typing import Optional
 import typer
 from rich.console import Console
 from rich.markup import escape
-from rich.panel import Panel
 
 from contexer.appserver import AppStartError, RunningApp, open_app
 from contexer.contract import Contract, ContractError, ContractStore
@@ -27,12 +26,12 @@ from contexer.llm.base import LLMProvider
 from contexer.verification.runner import CheckRunner
 from contexer.verification.verifier import Verifier
 from contexer.workflow.criteria import GoalAnalyzer
+from contexer.cli import term
 
 contract_app = typer.Typer(help="Create, review and approve acceptance contracts.", no_args_is_help=True)
 
-_ICONS = {"verified": "[green]✓[/]", "refuted": "[red]✗[/]", "unverified": "[yellow]?[/]"}
-_METHODS = {"assertion": "[green]proven[/]", "judgment": "[yellow]LLM-judged[/]", "heuristic": "[yellow]heuristic[/]"}
-_OUTCOME_STYLE = {"pass": "green", "fail": "red", "needs_action": "yellow", "error": "red"}
+_VERDICT_MARK = {"verified": "pass", "refuted": "fail", "unverified": "open"}
+_METHODS = {"assertion": "[dim]proven[/]", "judgment": "[yellow]LLM-judged[/]", "heuristic": "[yellow]heuristic[/]"}
 
 DirOption = typer.Option(Path("."), "--dir", "-d", help="Project directory.", file_okay=False)
 UrlOption = typer.Option(None, "--url", "-u", help="Use an app you already run instead of starting one.")
@@ -48,19 +47,21 @@ def register(app: typer.Typer) -> None:
     from contexer.cli.setup_cli import models, setup
     from contexer.cli.issue_cli import issue_app
 
-    app.command("setup")(setup)
-    app.command("models")(models)
-    app.command("run")(run)
-    app.command("verify")(verify)
-    app.command("replay")(replay)
-    app.add_typer(contract_app, name="contract")
-    app.add_typer(issue_app, name="issue")
-    app.command("bench")(bench)
-    app.command("runs")(runs)
-    app.command("restore")(restore)
-    app.command("demo")(demo)
-    app.command("init")(init)
-    app.command("doctor")(doctor)
+    # `contexer --help` lists commands by what a person is doing, in the order they meet them.
+    start, build, ci, more = "Get started", "Build and prove", "CI and GitHub", "More"
+    app.command("setup", rich_help_panel=start)(setup)
+    app.command("demo", rich_help_panel=start)(demo)
+    app.command("doctor", rich_help_panel=start)(doctor)
+    app.command("init", rich_help_panel=start)(init)
+    app.command("run", rich_help_panel=build)(run)
+    app.command("verify", rich_help_panel=build)(verify)
+    app.add_typer(contract_app, name="contract", rich_help_panel=build)
+    app.command("runs", rich_help_panel=build)(runs)
+    app.command("restore", rich_help_panel=build)(restore)
+    app.command("replay", rich_help_panel=ci)(replay)
+    app.add_typer(issue_app, name="issue", rich_help_panel=ci)
+    app.command("models", rich_help_panel=more)(models)
+    app.command("bench", rich_help_panel=more)(bench)
 
 
 # -- verify / replay -----------------------------------------------------------
@@ -137,9 +138,9 @@ def _report_to_github(result: RunResult, console: Console, project_dir: Path, *,
     try:
         target = detect_target(project_dir)
         post_status(target, result.decision)
-        console.print(f"[green]✓[/] Posted [bold]contexer/acceptance[/] on {escape(target.repo)}@{target.sha[:8]}")
+        console.print(f"{term.mark('pass')} Posted [bold]contexer/acceptance[/] on {escape(target.repo)}@{target.sha[:8]}")
     except GitHubReportError as exc:
-        console.print(f"[yellow]![/] GitHub status not posted: {escape(str(exc))}")
+        term.note(console, "warn", f"GitHub status not posted: {escape(str(exc))}")
 
 
 async def run_verification(
@@ -166,11 +167,11 @@ async def run_verification(
     _print_start(console, project, goal, contracts)
 
     def status(message: str) -> None:
-        console.print(f"[dim]›[/] {escape(message)}")
+        console.print(f"  [dim]{escape(message)}[/]")
 
     try:
         with open_app(project, url, log_path=run.server_log, on_status=status) as app:
-            console.print(f"[dim]App:[/] {escape(app.url)} [dim]({app.kind})[/]")
+            term.fields(console, [("App", f"{escape(app.url)} [dim]({app.kind})[/]")])
             with console.status("[dim]Loading the app...[/dim]"):
                 await session.observe(app)
             if goal:
@@ -178,7 +179,7 @@ async def run_verification(
                 with console.status("[dim]Compiling the goal into executable checks...[/dim]"):
                     drafted = await session.compile(goal, analyzer, store.unique_id(goal), app.repo_context)
                 path = store.save(drafted)
-                console.print(f"[dim]Draft contract:[/] {escape(str(path))}")
+                term.fields(console, [("Draft", escape(term.path(path)))])
                 print_drafted_by(console, analyzer)
                 warn_if_weak_draft(console, drafted, analyzer.last_error)
                 contracts = [drafted, *contracts]
@@ -235,31 +236,30 @@ def print_draft_preview(console: Console, result: Optional[RunResult]) -> None:
     passing = [r for r in executed if r.verdict == "verified"]
     failing = [r for r in executed if r.verdict == "refuted"]
     blocked = [r for r in executed if r.verdict == "unverified"]
-    console.print("[bold]Tried on the app as it is now[/] [dim](before any change)[/]")
+    term.section(console, "Tried on the app as it is now", "before any change")
     if passing:
         console.print(
-            f"  [green]✓ {len(passing)} already pass[/] [dim]and will guard that behaviour from now on: "
+            f"  {term.mark('pass')} {len(passing)} already pass [dim]· they will guard that behaviour from now on: "
             f"{escape(', '.join(r.criterion_id for r in passing))}[/]"
         )
     if failing:
-        console.print(f"  [red]✗ {len(failing)} fail[/] [dim]: the change must make these pass, or the check is wrong[/]")
+        console.print(f"  {term.mark('fail')} {len(failing)} fail [dim]· the change must make them pass, or the check is wrong[/]")
         for r in failing:
             detail = r.check_result.summary() if r.check_result else r.evidence
-            console.print(f"    [dim]{escape(r.criterion_id)}: {escape(detail[:160])}[/]")
+            console.print(f"      [dim]{escape(r.criterion_id)}: {escape(detail[:160])}[/]")
     if blocked:
         console.print(
-            f"  [yellow]? {len(blocked)} could not run[/] [dim]: the element is not there yet, "
+            f"  {term.mark('open')} {len(blocked)} could not run [dim]· the element is not there yet, "
             "or the check names it differently[/]"
         )
         for r in blocked:
             step = r.check_result.failed_step if r.check_result and r.check_result.failed_step else r.evidence
-            console.print(f"    [dim]{escape(r.criterion_id)}: {escape(step[:160])}[/]")
+            console.print(f"      [dim]{escape(r.criterion_id)}: {escape(step[:160])}[/]")
     if passing and not failing and not blocked:
         console.print(
-            "  [yellow]Every check already passes.[/] [dim]If the goal asks for new behaviour, "
+            f"  {term.mark('warn')} Every check already passes. [dim]If the goal asks for new behaviour, "
             "these checks do not test it yet.[/]"
         )
-    console.print()
 
 
 def print_drafted_by(console: Console, analyzer: GoalAnalyzer) -> None:
@@ -269,9 +269,11 @@ def print_drafted_by(console: Console, analyzer: GoalAnalyzer) -> None:
     if not served:
         return
     if asked and served != asked:
-        console.print(
-            f"[yellow]Drafted by {escape(served)}[/] [dim]({escape(asked)} was unavailable, so the provider "
-            "fell back; review these checks with extra care or retry later)[/]"
+        term.note(
+            console,
+            "warn",
+            f"Drafted by {escape(served)} [dim]({escape(asked)} was unavailable, so the provider fell back; "
+            "review these checks with extra care or retry later)[/]",
         )
     else:
         console.print(f"[dim]Drafted by {escape(served)}[/]")
@@ -288,16 +290,17 @@ def warn_if_weak_draft(console: Console, contract: Contract, reason: Optional[st
         hint = "OpenRouter's daily free-model limit is used up (it resets at 00:00 UTC; credits raise it). Retry later"
     elif reason and ("rate limit" in reason.lower() or "429" in reason):
         hint = "The model is rate-limited. Retry in a minute"
+    console.print()
+    term.note(console, "warn", "[bold yellow]Weak draft[/]")
     console.print(
-        Panel(
-            "The model did not return usable checks, so this draft was built from simple rules and only "
-            f"has {executable} executable check(s) — far too few to define done.\n"
-            f"{why}"
-            f"{hint}, use a stronger drafting model (ANTHROPIC_API_KEY or OPENAI_API_KEY, or [compiler] in "
-            "contexer.toml), or edit the contract file and add checks before approving it.",
-            title="Weak draft",
-            border_style="yellow",
-        )
+        "  The model did not return usable checks, so this draft was built from simple rules and only "
+        f"has {executable} executable check(s): far too few to define done."
+    )
+    if why:
+        console.print(f"  [dim]{escape(why.strip())}[/]")
+    console.print(
+        f"  {escape(hint)}, use a stronger drafting model (ANTHROPIC_API_KEY or OPENAI_API_KEY, or \\[compiler] in "
+        "contexer.toml), or edit the contract file and add checks before approving it."
     )
 
 
@@ -333,49 +336,67 @@ def _finish(result: RunResult, console: Console, json_output: bool, open_report:
 
 
 def _print_start(console: Console, project: Path, goal: Optional[str], contracts: list[Contract]) -> None:
-    console.print()
-    console.print(f"[bold bright_cyan]Contexer verify[/] [dim]·[/] {escape(project.name)}")
-    if goal:
-        console.print(f"[dim]Goal:[/] {escape(goal)}")
-    for c in contracts:
-        console.print(f"[dim]Contract:[/] {escape(c.id)} [dim]({c.status})[/]")
+    term.header(console, "verify", project.name)
+    rows = [("Goal", escape(goal))] if goal else []
+    rows += [("Contract", f"{escape(c.id)} [dim]· {c.status}[/]") for c in contracts]
+    term.fields(console, rows)
+
+
+_CONTRACT_STATUS = {"approved": "[dim]approved[/]", "draft": "[yellow]draft[/]", "modified": "[yellow]modified since approval[/]"}
 
 
 def render_result(console: Console, result: RunResult) -> None:
     for outcome in result.contracts:
         contract = outcome.contract
-        console.print()
-        status = {"approved": "[green]approved[/]", "draft": "[yellow]draft[/]", "modified": "[yellow]modified[/]"}
-        console.print(f"[bold]{escape(contract.goal)}[/] [dim]{escape(contract.id)} ·[/] {status[contract.status]}")
+        term.section(console, contract.goal)
+        console.print(f"[dim]{escape(contract.id)} ·[/] {_CONTRACT_STATUS[contract.status]}")
         verification = outcome.verification
         if verification is None:
             continue
         for r in verification.criteria_results:
             console.print(
-                f"  {_ICONS[r.verdict]} [bold]{escape(r.criterion_id)}[/] {escape(r.description)} "
-                f"[dim]·[/] {_METHODS.get(r.method, r.method)}"
+                f"  {term.mark(_VERDICT_MARK[r.verdict])} {escape(r.description)} "
+                f"[dim]· {escape(r.criterion_id)} ·[/] {_METHODS.get(r.method, r.method)}"
             )
             check = r.check_result
             if check is not None and not r.passed:
                 for line in check.failure_report().splitlines()[1:10]:
-                    console.print(f"      [red]{escape(line.rstrip())}[/]")
+                    style = "red" if line.strip().startswith(("actual", "uncaught", "console error")) else "dim"
+                    console.print(f"      [{style}]{escape(line.strip())}[/]")
             elif check is None and not r.passed and r.evidence:
                 console.print(f"      [dim]{escape(r.evidence)}[/]")
+    render_decision(console, result)
 
+
+def render_decision(console: Console, result: RunResult) -> None:
+    """The verdict line, its reasons, and where the evidence is."""
     d = result.decision
-    style = _OUTCOME_STYLE[d.outcome]
-    lines = [f"[bold {style}]{escape(d.headline())}[/]"]
-    lines.extend(f"• {escape(reason)}" for reason in d.reasons[:6])
+    console.print()
+    console.print(f"[bold {term.OUTCOME_STYLE[d.outcome]}]{escape(d.headline())}[/]")
+    term.bullets(console, [escape(reason) for reason in d.reasons[:6]])
     if len(d.reasons) > 6:
-        lines.append(f"[dim]… {len(d.reasons) - 6} more in the report[/]")
+        console.print(f"  [dim]… {len(d.reasons) - 6} more in the report[/]")
+    rows: list[tuple[str, str]] = []
     drafts = [o.contract.id for o in result.contracts if o.contract.status != "approved"]
     if drafts and not result.require_approval:
-        lines.append(f"[dim]Approve to lock it in:[/] contexer contract approve {escape(drafts[0])}")
+        rows.append(("Approve", f"contexer contract approve {escape(drafts[0])}"))
     if result.run_dir:
-        lines.append(f"[dim]Report:[/] {escape(str(Path(result.run_dir, 'report.html')))}")
-    lines.append(f"[dim]{result.duration_seconds:.1f}s[/]")
+        rows.append(("Report", escape(term.path(Path(result.run_dir, "report.html")))))
+    rows.append(("Took", term.duration(result.duration_seconds)))
     console.print()
-    console.print(Panel("\n".join(lines), border_style=style, title="Contexer"))
+    term.fields(console, rows, indent=0)
+
+
+def print_checklist(console: Console, contract: Contract, *, steps: bool = True) -> None:
+    """A contract as a numbered checklist, each check's steps beneath it."""
+    executable = sum(1 for c in contract.criteria if c.check)
+    term.section(console, "Definition of done", f"{contract.id} · {executable} of {len(contract.criteria)} checks run in a browser")
+    for n, criterion in enumerate(contract.criteria, 1):
+        how = "" if criterion.check else " [yellow](judged by a model)[/]"
+        console.print(f"  [dim]{n:>2}[/]  {escape(criterion.description)}{how}")
+        if steps and criterion.check:
+            for line in criterion.check.describe_lines():
+                console.print(f"      [dim]{escape(line)}[/]")
 
 
 # -- contract subcommands --------------------------------------------------------
@@ -389,12 +410,12 @@ def contract_list(project_dir: Path = DirOption) -> None:
     if not contracts:
         console.print("[dim]No contracts yet. Create one with:[/] contexer contract draft \"<goal>\"")
         return
-    colors = {"approved": "green", "draft": "yellow", "modified": "red"}
+    colors = {"approved": "dim", "draft": "yellow", "modified": "red"}
     for c in contracts:
         checks = sum(1 for crit in c.criteria if crit.check)
         console.print(
             f"[{colors[c.status]}]{c.status:<9}[/] [bold]{escape(c.id)}[/] "
-            f"[dim]{checks}/{len(c.criteria)} executable ·[/] {escape(c.goal)}"
+            f"[dim]{checks}/{len(c.criteria)} executable ·[/] {escape(c.goal.splitlines()[0] if c.goal else '')}"
         )
 
 
@@ -403,14 +424,14 @@ def contract_show(contract_id: str, project_dir: Path = DirOption) -> None:
     """Print a contract as a readable checklist."""
     console = Console()
     contract = _load_or_exit(ContractStore(project_dir), contract_id)
+    console.print()
     console.print(f"[bold]{escape(contract.goal)}[/]")
-    console.print(f"[dim]{escape(contract.id)} · {contract.status} · source {contract.source}[/]")
+    rows = [("Status", f"{contract.status} [dim]· drafted from {contract.source}[/]")]
     if contract.approval:
         a = contract.approval
-        console.print(f"[dim]approved by {escape(a.by)} at {escape(a.at)} · sha256 {a.sha256[:12]}[/]")
-    console.print()
-    for line in contract.describe_lines():
-        console.print(escape(line))
+        rows.append(("Approved", f"by {escape(a.by)} at {escape(a.at)} [dim]· sha256 {a.sha256[:12]}[/]"))
+    term.fields(console, rows, indent=0)
+    print_checklist(console, contract)
 
 
 @contract_app.command("approve")
@@ -426,7 +447,7 @@ def contract_approve(
     contract = store.approve(contract_id, by)
     assert contract.approval is not None
     console.print(
-        f"[green]✓[/] Approved [bold]{escape(contract.id)}[/] as {escape(contract.approval.by)} "
+        f"{term.mark('pass')} Approved [bold]{escape(contract.id)}[/] as {escape(contract.approval.by)} "
         f"[dim](sha256 {contract.approval.sha256[:12]})[/]"
     )
     console.print(f"[dim]Commit {escape(str(store.path_for(contract.id)))} so the gate replays it.[/]")
@@ -455,20 +476,22 @@ def contract_draft(
                 drafted = await session.compile(goal, analyzer, cid, app.repo_context)
                 return drafted, await preview_draft(session, app, drafted)
         except AppStartError as exc:
-            console.print(f"[yellow]![/] {escape(str(exc))} [dim]Drafting without the live UI.[/]")
+            term.note(console, "warn", f"{escape(str(exc))} [dim]Drafting without the live UI.[/]")
             return await session.compile(goal, analyzer, cid), None
 
     with console.status("[dim]Compiling the goal into checks, then trying them on the app as it is...[/dim]"):
         contract, preview = asyncio.run(_draft())
     path = store.save(contract)
-    for line in contract.describe_lines():
-        console.print(escape(line))
-    console.print()
+    print_checklist(console, contract)
     print_draft_preview(console, preview)
     print_drafted_by(console, analyzer)
     warn_if_weak_draft(console, contract, analyzer.last_error)
-    console.print(f"[dim]Saved draft:[/] {escape(str(path))}")
-    console.print(f"[dim]Review it, then:[/] contexer contract approve {escape(contract.id)}")
+    console.print()
+    term.fields(
+        console,
+        [("Saved", escape(term.path(path))), ("Next", f"review it, then contexer contract approve {escape(contract.id)}")],
+        indent=0,
+    )
 
 
 def _load_or_exit(store: ContractStore, ref: str) -> Contract:

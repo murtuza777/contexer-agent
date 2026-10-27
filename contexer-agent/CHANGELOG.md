@@ -27,6 +27,16 @@ From a goal or a GitHub issue to a pull request that carries its proof.
 - `contexer setup` checks that Chromium starts and offers to install it, so
   a first run does not fail at its first check.
 
+### Changed
+
+- **One terminal design for every command.** No boxes, so output reads the
+  same in a terminal, a CI log and an issue. Colour only means something:
+  green proven, red refuted, yellow needs a person. Summaries are aligned
+  key–value blocks with short paths. While the agent works, or the checks
+  run, a live line shows the elapsed time and the tool calls so far.
+  `contexer --help` groups commands by task and starts new users at
+  `contexer setup`.
+
 ### Fixed
 
 - **Ctrl+C** stops the coding agent at once. Before, Claude Code and Codex kept

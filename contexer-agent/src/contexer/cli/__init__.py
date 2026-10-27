@@ -40,7 +40,10 @@ def _configure_terminal_encoding() -> None:
 
 app = typer.Typer(
     name="contexer",
-    help="Contexer: the AI engineer that owns done. Run with no command for the interactive shell.",
+    help=(
+        "Proof that your coding agent is done: Contexer turns a goal into checks you approve, has your agent "
+        "build it, and proves every check in a real browser. New here? Run `contexer setup`, then `contexer demo`."
+    ),
     add_completion=False,
     no_args_is_help=False,
     invoke_without_command=True,
