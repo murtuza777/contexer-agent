@@ -95,7 +95,11 @@ class RepositoryInspector:
         # 2. Check Python projects
         pyproject = path / "pyproject.toml"
         reqs = path / "requirements.txt"
-        is_static_site = not (pkg_json.exists() or pyproject.exists() or reqs.exists() or (path / "manage.py").exists())
+        # Served as plain files only when there is a page to serve: a folder with just a
+        # main.py or a Go module is an app Contexer must be told how to start.
+        is_static_site = (path / "index.html").is_file() and not (
+            pkg_json.exists() or pyproject.exists() or reqs.exists() or (path / "manage.py").exists()
+        )
         if pyproject.exists() or reqs.exists():
             text = ""
             if pyproject.exists():

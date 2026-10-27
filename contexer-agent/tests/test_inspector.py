@@ -46,3 +46,13 @@ def test_source_excerpt_prioritises_entry_points_within_budget(tmp_path):
     assert "notes.md" not in ctx.source_excerpt
     assert len(ctx.source_excerpt) < SOURCE_EXCERPT_MAX_CHARS + 200
     assert ctx.is_static_site is True
+
+
+def test_a_folder_without_a_page_is_not_a_static_site(tmp_path) -> None:
+    """A bare main.py is an app Contexer must be told how to start, not files to serve."""
+    from contexer.workflow.inspector import RepositoryInspector
+
+    (tmp_path / "main.py").write_text("print('hi')\n", encoding="utf-8")
+    assert RepositoryInspector().inspect(tmp_path).is_static_site is False
+    (tmp_path / "index.html").write_text("<h1>hi</h1>", encoding="utf-8")
+    assert RepositoryInspector().inspect(tmp_path).is_static_site is True
