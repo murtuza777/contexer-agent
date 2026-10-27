@@ -4,12 +4,15 @@
   "description": "Contexer's Product Hunt launch video and gallery images, made with Remotion",
   "scripts": {
     "studio": "remotion studio",
-    "render": "remotion render Launch out/contexer-launch.mp4",
-    "gallery": "node render-gallery.mjs"
+    "music": "node music/compose.mjs",
+    "render": "remotion render Launch out/contexer-launch.mp4 --codec=h264 --crf=18",
+    "gallery": "node render-gallery.mjs",
+    "captions": "node captions-srt.mjs"
   },
   "dependencies": {
     "@remotion/cli": "4.0.539",
     "@remotion/google-fonts": "4.0.539",
+    "@remotion/media": "4.0.539",
     "@remotion/transitions": "4.0.539",
     "react": "19.2.0",
     "react-dom": "19.2.0",

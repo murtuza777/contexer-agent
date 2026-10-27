@@ -1,0 +1,172 @@
+{
+ "goal": "Users can add, complete and delete tasks, and the remaining count stays correct",
+ "approve": [
+  "",
+  "Definition of done · todo-basics · 7 of 7 checks run in a browser",
+  "   1  Adding a task shows it in the list",
+  "   2  The input is cleared after adding a task",
+  "   3  Submitting an empty task adds nothing",
+  "   4  The remaining count goes up with each task added",
+  "   5  Completing a task lowers the remaining count and raises no errors",
+  "   6  Deleting a task removes that task and keeps the others",
+  "   7  The app loads without uncaught exceptions or console errors",
+  "",
+  "Tried on the app as it is now · before any change",
+  "  ✓ 6 already pass · they will guard that behaviour from now on: add-shows-task, add-clears-input,",
+  "empty-not-added, count-tracks-adds, delete-removes-right-task, loads-clean",
+  "  ✗ 1 fail · the change must make them pass, or the check is wrong",
+  "      complete-decrements: expected text of [data-testid=\"remaining-count\"] equals \"1 left\", got \"2 left\""
+ ],
+ "run": [
+  {
+   "t": 0.0,
+   "text": "$ contexer run --contract todo-basics --agent opencode --pr"
+  },
+  {
+   "t": 2.51,
+   "text": ""
+  },
+  {
+   "t": 2.51,
+   "text": "contexer run · Users can add, complete and delete tasks, and the remaining count stays correct"
+  },
+  {
+   "t": 2.51,
+   "text": "  Agent       opencode (openrouter/nvidia/nemotron-3-ultra-550b-a55b:free)"
+  },
+  {
+   "t": 2.51,
+   "text": "  Limits      up to 2 repair round(s)"
+  },
+  {
+   "t": 3.0,
+   "text": ""
+  },
+  {
+   "t": 3.0,
+   "text": "› Attempt 1: implementing with opencode (openrouter/nvidia/nemotron-3-ultra-550b-a55b:free)"
+  },
+  {
+   "t": 26.69,
+   "text": "    glob **/*"
+  },
+  {
+   "t": 30.72,
+   "text": "    read index.html"
+  },
+  {
+   "t": 32.75,
+   "text": "    read app.js"
+  },
+  {
+   "t": 36.8,
+   "text": "    read style.css"
+  },
+  {
+   "t": 69.19,
+   "text": "    edit app.js"
+  },
+  {
+   "t": 84.18,
+   "text": "  Agent done — 1 file(s) changed (81s)"
+  },
+  {
+   "t": 84.19,
+   "text": "  Attempt 1: proving 7 checks in Chromium"
+  },
+  {
+   "t": 90.6,
+   "text": "  ✓ Attempt 1: PASS: 7 verified, 0 refuted, 0 unverified"
+  },
+  {
+   "t": 91.2,
+   "text": ""
+  },
+  {
+   "t": 91.2,
+   "text": "✓ Succeeded · Every check proven in the browser."
+  },
+  {
+   "t": 91.2,
+   "text": "  Attempt 1     implement · 7 verified · 0 refuted · 0 unverified"
+  },
+  {
+   "t": 91.2,
+   "text": "  Pull request  https://github.com/acme/todo/pull/8"
+  },
+  {
+   "t": 91.2,
+   "text": "  Branch        contexer/todo-basics (9ca696a3, you are on it now)"
+  },
+  {
+   "t": 91.2,
+   "text": "  Report        .contexer/runs/20261027-213026-3ad7/report.html"
+  },
+  {
+   "t": 91.2,
+   "text": "  Took          1m 31s"
+  }
+ ],
+ "prChecks": [
+  {
+   "text": "Adding a task shows it in the list",
+   "verdict": "verified"
+  },
+  {
+   "text": "The input is cleared after adding a task",
+   "verdict": "verified"
+  },
+  {
+   "text": "Submitting an empty task adds nothing",
+   "verdict": "verified"
+  },
+  {
+   "text": "The remaining count goes up with each task added",
+   "verdict": "verified"
+  },
+  {
+   "text": "Completing a task lowers the remaining count and raises no errors",
+   "verdict": "verified"
+  },
+  {
+   "text": "Deleting a task removes that task and keeps the others",
+   "verdict": "verified"
+  },
+  {
+   "text": "The app loads without uncaught exceptions or console errors",
+   "verdict": "verified"
+  }
+ ],
+ "prAgent": "opencode (openrouter/nvidia/nemotron-3-ultra-550b-a55b:free) · 1 attempt(s), 0 repair round(s) · 1m 31s",
+ "issueChecks": [
+  {
+   "text": "Adding a task shows it in the list",
+   "today": "verified"
+  },
+  {
+   "text": "The input is cleared after adding a task",
+   "today": "verified"
+  },
+  {
+   "text": "Submitting an empty task adds nothing",
+   "today": "verified"
+  },
+  {
+   "text": "The remaining count goes up with each task added",
+   "today": "verified"
+  },
+  {
+   "text": "Completing a task lowers the remaining count and raises no errors",
+   "today": "refuted"
+  },
+  {
+   "text": "Deleting a task removes that task and keeps the others",
+   "today": "verified"
+  },
+  {
+   "text": "The app loads without uncaught exceptions or console errors",
+   "today": "verified"
+  }
+ ],
+ "duration": 91
+}

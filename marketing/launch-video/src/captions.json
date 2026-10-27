@@ -1,0 +1,11 @@
+{
+	"Hook": "Your coding agent says it's done. A real browser says otherwise.",
+	"Title": "",
+	"Approve": "Describe the goal. Contexer turns it into checks, and you approve them.",
+	"Build": "Your coding agent builds it. Its own report never counts as a pass.",
+	"Prove": "Contexer runs every check in Chromium against your running app.",
+	"PullRequest": "You review a pull request with the proof inside.",
+	"Issues": "Or label a GitHub issue and approve its checks in one comment.",
+	"Numbers": "Measured on 7 apps with 40 seeded bugs.",
+	"Cta": "Free with an OpenRouter key. Open source under MIT."
+}

@@ -1,0 +1,11 @@
+[
+	{"name": "Hook", "bars": 3, "captionAt": 24},
+	{"name": "Title", "bars": 2, "captionAt": 0},
+	{"name": "Approve", "bars": 4, "captionAt": 20},
+	{"name": "Build", "bars": 3, "captionAt": 20},
+	{"name": "Prove", "bars": 5, "captionAt": 20},
+	{"name": "PullRequest", "bars": 3, "captionAt": 20},
+	{"name": "Issues", "bars": 3, "captionAt": 20},
+	{"name": "Numbers", "bars": 2, "captionAt": 20},
+	{"name": "Cta", "bars": 3, "captionAt": 30}
+]
