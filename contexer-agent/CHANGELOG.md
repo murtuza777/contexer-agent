@@ -49,6 +49,10 @@ From a goal or a GitHub issue to a pull request that carries its proof.
   command that continues.
 - `contexer run` in a home folder or a drive root is refused instead of
   snapshotting everything in it.
+- A folder without an `index.html` (a bare `main.py`, say) is no longer taken
+  for a static site; `contexer init` asks for its start command instead.
+- `contexer init` printed "set .start there", dropping `[app]`.
+- Long goals no longer cut a commit subject mid-word.
 
 ### Security
 
