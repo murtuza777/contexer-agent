@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
+from contexer.cli import term
 from contexer.config.user import (
     UserSettings,
     contexer_home,
@@ -309,7 +310,7 @@ def _model_table(console: Console, title: str, rows: list[ModelInfo], default: s
 def _show(console: Console) -> None:
     settings = load_user_settings()
     home = contexer_home()
-    console.print(f"[bold]Contexer settings[/] [dim]{escape(str(home))}[/]")
+    term.header(console, "setup", f"saved in {home}")
     if not settings.provider:
         console.print("  Not set up yet: run `contexer setup`.")
     else:

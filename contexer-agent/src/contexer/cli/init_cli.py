@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from contexer.appserver.detect import StartPlanError, plan_start
+from contexer.cli import term
 from contexer.config.project import CONFIG_FILE, AppSettings
 from contexer.contract.store import ensure_contexer_dir
 from contexer.workflow.inspector import RepositoryInspector
@@ -115,19 +116,20 @@ def init(
     project = project_dir.resolve()
     context = RepositoryInspector().inspect(project)
     ensure_contexer_dir(project)
-    console.print(f"[green]✓[/] Prepared {escape(str(project / '.contexer'))} (commit the contracts/ folder)")
+    term.header(console, "init", project.name)
+    console.print(f"{term.mark('pass')} Prepared {escape(term.path(project / '.contexer'))} [dim](commit its contracts/ folder)[/]")
 
+    startable = True
     if context.is_static_site:
-        console.print("[green]✓[/] Static site: Contexer will serve the files itself")
+        console.print(f"{term.mark('pass')} Static site: Contexer will serve the files itself")
     else:
         try:
             plan = plan_start(project, AppSettings())
-            console.print(
-                f"[green]✓[/] Detected {escape(plan.framework)}: Contexer will run [cyan]{escape(plan.display)}[/]"
-            )
+            console.print(f"{term.mark('pass')} Detected {escape(plan.framework)}: Contexer will run [bold]{escape(plan.display)}[/]")
         except StartPlanError as exc:
+            startable = False
+            term.note(console, "warn", escape(str(exc)))
             _write_config_template(project, console)
-            console.print(f"[yellow]![/] {escape(str(exc))}")
 
     root = repo_root.resolve()
     if ci or issues:
@@ -146,19 +148,21 @@ def init(
             )
 
     console.print()
-    console.print("[bold]Next:[/]")
-    console.print('  contexer contract draft "<what must be true>"   [dim]# checks grounded in your running app[/]')
-    console.print("  contexer contract approve <id>")
-    console.print("  contexer verify --all")
+    rows = [] if startable else [("First", f"set {escape('[app]')} start in contexer.toml to the command that starts your app")]
+    rows += [
+        ("Then", 'contexer run "<what must be true>" [dim]· draft checks, approve them, have your agent build it[/]'),
+        ("Later", "contexer verify --all [dim]· replay every approved check, with no model[/]"),
+    ]
+    term.fields(console, rows, indent=0)
 
 
 def _write_workflow(console: Console, path: Path, text: str) -> None:
     if path.exists():
-        console.print(f"[yellow]![/] {escape(str(path))} already exists; left unchanged")
+        term.note(console, "warn", f"{escape(term.path(path))} already exists; left unchanged")
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
-    console.print(f"[green]✓[/] Wrote {escape(str(path))}")
+    console.print(f"{term.mark('pass')} Wrote {escape(term.path(path))}")
 
 
 def _write_config_template(project: Path, console: Console) -> None:
@@ -173,4 +177,4 @@ def _write_config_template(project: Path, console: Console) -> None:
         "ready_timeout = 120\n",
         encoding="utf-8",
     )
-    console.print(f"[green]✓[/] Wrote {escape(str(path))}; set [app].start there")
+    console.print(f"{term.mark('pass')} Wrote {escape(term.path(path))}: set {escape('[app]')} start there")

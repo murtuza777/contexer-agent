@@ -13,6 +13,7 @@ from rich.table import Table
 
 from contexer.bench import AppScore, BenchReport, VariantRun, run_bench
 from contexer.bench.runner import CompileStats
+from contexer.cli import term
 
 
 def bench(
@@ -50,7 +51,7 @@ def bench(
         )
 
     mode = "LLM-compiled contracts" if live else "approved contracts"
-    console.print(f"[bold bright_cyan]Contexer bench[/] [dim]· {escape(str(root))} · {mode} · {repeats} repeat(s)[/]")
+    term.header(console, "bench", f"{term.path(root)} · {mode} · {repeats} repeat(s)")
     report = asyncio.run(
         run_bench(root, repeats=repeats, only=app or None, on_run=progress, live_llm=llm, on_compiled=compiled)
     )
