@@ -205,12 +205,19 @@ def pull_request_body(outcome: "RunOutcome", contract: Contract, *, issue: Optio
 
 def _title(outcome: "RunOutcome", contract: Contract) -> str:
     title = contract.goal.strip().splitlines()[0].strip() if contract.goal.strip() else contract.id
-    return title if len(title) <= 100 else title[:97] + "..."
+    return _shorten(title, 100)
+
+
+def _shorten(text: str, limit: int) -> str:
+    """Cut at a word boundary, so a subject never ends mid-word."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return f"{cut}…"
 
 
 def _commit_message(outcome: "RunOutcome", contract: Contract) -> str:
-    subject = _title(outcome, contract)
-    subject = subject if len(subject) <= 72 else subject[:69] + "..."
+    subject = _shorten(_title(outcome, contract), 72)
     decision = outcome.final.decision if outcome.final is not None else None
     if outcome.terminal == "succeeded" and decision is not None:
         proof = f"Contexer proved all {decision.verified} checks in Chromium"

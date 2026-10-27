@@ -187,3 +187,12 @@ def test_the_body_links_the_workflow_run_in_actions(monkeypatch) -> None:
     body = pull_request_body(outcome, Contract(id="c", goal="Users can | pipe"))
     assert "https://github.com/acme/todo/actions/runs/42" in body
     assert "> Users can | pipe" in body
+
+
+def test_long_goals_are_cut_at_a_word_boundary() -> None:
+    from contexer.github.handoff import _shorten
+
+    goal = "Users can add, complete and delete tasks, and the remaining count stays correct"
+    subject = _shorten(goal, 72)
+    assert len(subject) <= 72 and subject.endswith("count…")
+    assert _shorten("short goal", 72) == "short goal"
