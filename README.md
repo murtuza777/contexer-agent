@@ -412,7 +412,8 @@ Honest gaps:
 | Document | Covers |
 | --- | --- |
 | [Product plan](contexer-agent/docs/product-plan.md) | Who it's for, what it does, and the order of work |
-| [Technical plan](contexer-agent/docs/roadmap.md) | Architecture, formats and milestones |
+| [Architecture](contexer-agent/docs/architecture.md) | Every module, data format, algorithm, constant and security measure, in one reference |
+| [Technical plan](contexer-agent/docs/roadmap.md) | Milestones, formats and what was built when |
 | [Technical landscape](contexer-agent/docs/technical-landscape.md) | The repos and designs Contexer builds on, and its competitors |
 | [Try it yourself](contexer-agent/docs/try-it.md) | Install, set up and use it on your app, step by step; work on Contexer itself |
 | [Developer guide](contexer-agent/README.md) | Setup, commands, `contexer.toml` and tests |

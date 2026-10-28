@@ -190,6 +190,7 @@ correct app fails "shows 2 entries" because an earlier check added one.
 | `workflow/` | Goal-to-checks compiler (`criteria.py`) and the repository inspector |
 | `runtime/`, `cli/repl.py` | The interactive shell and its earlier loop |
 
+The full technical reference is [docs/architecture.md](docs/architecture.md).
 The build plan and design decisions are in
 [docs/roadmap.md](docs/roadmap.md). The research behind each library choice is
 in [docs/technical-landscape.md](docs/technical-landscape.md).
