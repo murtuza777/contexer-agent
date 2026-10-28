@@ -1,8 +1,8 @@
 # Product Hunt launch kit
 
 Everything here is drawn from what Contexer does today and from measured
-numbers (`contexer bench`, the live runs of 2026-10-26). Edit freely, but keep
-the numbers as they are; reviewers check.
+numbers (`contexer bench`, the live runs of 2026-10-26 and 27). Edit freely,
+but keep the numbers as they are; reviewers check.
 
 ## Before you schedule
 
@@ -14,16 +14,22 @@ the numbers as they are; reviewers check.
    another distribution name (for example `contexer-agent`, which is free).
    The video takes its name from one constant: `PRODUCT` in
    `launch-video/src/theme.ts`.
-2. **Upload the video** (`launch-video/out/contexer-launch.mp4`) to YouTube as
-   public or unlisted; Product Hunt embeds YouTube links only. Add music there
-   if you like; the video has none and carries burned-in captions, since most
-   people watch muted.
-3. **Gallery**: `launch-video/out/gallery-*.png` (1270 × 760), and
-   `launch-video/out/thumbnail.png` (240 × 240).
-4. **Try the install line on a clean machine** the day before (it worked on
-   2026-10-26):
+2. **Approve the video.** The second cut is 69 seconds, built from real
+   footage and a live run, with an original soundtrack and burned-in captions
+   (see `launch-video/README.md`; render with `npm run music && npm run
+   render`). Upload it to YouTube as public or unlisted, since Product Hunt
+   embeds YouTube links only, with `out/captions.en.srt` (`npm run captions`)
+   so YouTube can translate the captions. Check Remotion's licence first: it
+   is free for individuals and companies of up to 3 people, larger companies
+   need a company licence.
+3. **Gallery**: `npm run gallery` writes `launch-video/out/gallery-*.png`
+   (1270 × 760) and `out/thumbnail.png` (240 × 240).
+4. **Put the website up.** `website/` builds as static pages; deploy it and
+   set `SITE_URL` to its address (`website/README.md`).
+5. **Try the install line on a clean machine** the day before (it worked on
+   2026-10-26), following `contexer-agent/docs/try-it.md`:
    `pip install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"`.
-5. Launch at 12:01 a.m. Pacific. Never ask for upvotes; ask people to try it
+6. Launch at 12:01 a.m. Pacific. Never ask for upvotes; ask people to try it
    and say what it caught.
 
 ## Name and tagline

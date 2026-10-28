@@ -28,6 +28,16 @@ npm run captions               # out/captions.en.srt, for YouTube (it can transl
 npm run gallery                # out/gallery-*.png (1270 × 760), out/thumbnail.png, out/og.png
 ```
 
+## Licence
+
+Remotion is not MIT. Its free licence covers individuals, non-profits and
+for-profit companies with up to 3 employees; a larger company needs a
+Remotion company licence (`node_modules/remotion/LICENSE.md`,
+https://www.remotion.dev/license). The soundtrack and sound cues are
+original, made by `music/compose.mjs`, so they need no licence.
+
+## Editing
+
 The product name is one constant, `PRODUCT` in `src/theme.ts`. Scene lengths
 (in bars) and caption timings are in `src/timeline.json`, the captions in
 `src/captions.json`, and the scenes in `src/scenes.tsx`.
