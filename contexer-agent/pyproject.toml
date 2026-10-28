@@ -3,25 +3,26 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "contexer"
+name = "contexer-agent"
 version = "0.4.0"
-description = "Acceptance gate for AI coding agents: proves in a real browser that a change does what was asked"
-readme = "README.md"
+description = "Proof that your coding agent is done: approved checks, proven in a real browser, before the change reaches review"
+readme = "PYPI.md"
 license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.11"
 authors = [
     { name = "Contexer Contributors" },
 ]
-keywords = ["cli", "ai-agents", "acceptance-testing", "playwright", "ci", "code-review"]
+keywords = ["cli", "ai-agents", "coding-agents", "acceptance-testing", "playwright", "ci", "claude-code", "codex", "opencode"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development",
     "Typing :: Typed",
 ]
@@ -35,6 +36,12 @@ dependencies = [
     "playwright>=1.49.0",  # Locator.aria_snapshot
 ]
 
+
+[project.urls]
+Homepage = "https://github.com/murtuza777/contexer-agent"
+Documentation = "https://github.com/murtuza777/contexer-agent/blob/main/contexer-agent/docs/try-it.md"
+Changelog = "https://github.com/murtuza777/contexer-agent/blob/main/contexer-agent/CHANGELOG.md"
+Issues = "https://github.com/murtuza777/contexer-agent/issues"
 
 [project.optional-dependencies]
 dev = [

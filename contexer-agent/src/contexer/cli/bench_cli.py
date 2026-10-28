@@ -27,7 +27,10 @@ def bench(
     console = Console()
     root = fixtures or _default_fixtures()
     if not root.is_dir():
-        raise typer.BadParameter(f"no fixtures directory at {root}")
+        raise typer.BadParameter(
+            f"no fixtures directory at {root}. The benchmark's apps live in the repository: clone "
+            "https://github.com/murtuza777/contexer-agent and run it from contexer-agent/, or pass --fixtures"
+        )
 
     def progress(run: VariantRun) -> None:
         console.print(_run_line(run))
