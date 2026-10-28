@@ -4,7 +4,7 @@ import {loadFont as loadGeistMono} from '@remotion/google-fonts/GeistMono';
 // One place for the name: if the product is renamed, change it here and re-render.
 export const PRODUCT = 'Contexer';
 export const REPO = 'github.com/murtuza777/contexer-agent';
-export const INSTALL = 'pip install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"';
+export const INSTALL = 'pip install contexer-agent';
 
 export const sans = loadGeist('normal', {weights: ['400', '500', '600'], subsets: ['latin']}).fontFamily;
 export const mono = loadGeistMono('normal', {weights: ['400', '500'], subsets: ['latin']}).fontFamily;

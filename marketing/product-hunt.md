@@ -6,14 +6,12 @@ but keep the numbers as they are; reviewers check.
 
 ## Before you schedule
 
-1. **Decide the name.** `contexer` on PyPI belongs to an unrelated, active
-   project in the same space (contexer.ai, "MCP server that preserves
-   decisions and context across AI coding sessions", 95 releases). On
-   Product Hunt, in search and in `pip install`, people will confuse the two.
-   Either rename before launch, or keep the name and publish the package under
-   another distribution name (for example `contexer-agent`, which is free).
-   The video takes its name from one constant: `PRODUCT` in
-   `launch-video/src/theme.ts`.
+1. **The name.** The package is published as `contexer-agent`, because
+   `contexer` on PyPI belongs to an unrelated, active project in the same
+   space (contexer.ai, "MCP server that preserves decisions and context across
+   AI coding sessions"). People may still confuse the two on Product Hunt and
+   in search; a different product name would avoid that. The video takes its
+   name from one constant: `PRODUCT` in `launch-video/src/theme.ts`.
 2. **Approve the video.** The second cut is 69 seconds, built from real
    footage and a live run, with an original soundtrack and burned-in captions
    (see `launch-video/README.md`; render with `npm run music && npm run
@@ -27,8 +25,9 @@ but keep the numbers as they are; reviewers check.
 4. **Put the website up.** `website/` builds as static pages; deploy it and
    set `SITE_URL` to its address (`website/README.md`).
 5. **Try the install line on a clean machine** the day before (it worked on
-   2026-10-26), following `contexer-agent/docs/try-it.md`:
-   `pip install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"`.
+   2026-10-26 from GitHub), following `contexer-agent/docs/try-it.md`:
+   `uv tool install contexer-agent`. Publish to PyPI first (push the `v0.4.0`
+   tag after the one-time setup in `.github/workflows/release.yml`).
 6. Launch at 12:01 a.m. Pacific. Never ask for upvotes; ask people to try it
    and say what it caught.
 

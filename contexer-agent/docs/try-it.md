@@ -11,15 +11,35 @@ you can tell when something is wrong.
 Python 3.11 or newer, git, and Node.js if your app is JavaScript.
 
 ```bash
-pip install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"
+uv tool install contexer-agent
 contexer --help
 ```
 
 You should see the commands grouped under *Get started*, *Build and prove*,
 *CI and GitHub* and *More*.
 
-Install from GitHub, not `pip install contexer`: that name on PyPI belongs to
-another project.
+- `uv tool install` (or `pipx install contexer-agent`) puts Contexer in its
+  own environment and the `contexer` command on your PATH. No uv? On Windows:
+  `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`; on macOS and
+  Linux: `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+- `pip install contexer-agent` works too, but read the Windows notes below if
+  `contexer` is then "not recognized".
+- The package is `contexer-agent`. `pip install contexer` installs a different
+  project that owns that name on PyPI.
+- Until the first PyPI release is out, install from GitHub:
+  `uv tool install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"`.
+
+#### If the install fails on Windows
+
+- **`Fatal error in launcher: Unable to create process using "...\Python312\python.exe" ...pip.exe`**:
+  the `pip` on your PATH belongs to a Python that was uninstalled or moved.
+  Use `uv tool install contexer-agent`, or `py -m pip install contexer-agent`,
+  and remove the stale `...\Python312\Scripts` folder from your PATH.
+- **`contexer : The term 'contexer' is not recognized`**: either the install
+  failed (scroll up for the error), or pip put the command in a Scripts folder
+  that is not on PATH (pip prints a warning naming it). Use
+  `uv tool install` or `pipx`, which put it on PATH, or run it as
+  `py -m contexer`. Open a new terminal after changing PATH.
 
 ### 2. Set up a model and a coding agent (2 minutes)
 

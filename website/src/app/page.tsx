@@ -1,7 +1,7 @@
 import Image from "next/image";
 import { CopyCommand } from "@/components/CopyCommand";
 import { Terminal, type TerminalLine } from "@/components/Terminal";
-import { DOCS_URL, INSTALL, REPO_URL, RESULTS_URL } from "@/lib/site";
+import { DOCS_URL, INSTALL, INSTALL_TOOL, REPO_URL, RESULTS_URL } from "@/lib/site";
 
 // Real output of `contexer demo --fix` (2026-10-26).
 const DEMO: TerminalLine[] = [
@@ -167,7 +167,8 @@ export default function Home() {
             <div className="mt-8">
               <CopyCommand command={INSTALL} />
               <p className="mt-3 text-sm text-zinc-600">
-                Then run <code className="font-mono text-zinc-900">contexer setup</code>. Python 3.11+.{" "}
+                Then run <code className="font-mono text-zinc-900">contexer setup</code>. Python 3.11+; the
+                command is <code className="font-mono text-zinc-900">contexer</code>.{" "}
                 <a href={DOCS_URL} className="font-medium text-zinc-950 underline underline-offset-4">
                   Read the docs
                 </a>
@@ -319,8 +320,11 @@ export default function Home() {
         <Section id="start" title="Get started" lead="In about five minutes, on your own app.">
           <ol className="max-w-3xl space-y-6">
             <li>
-              <p className="mb-2 text-zinc-700">1. Install Contexer (Python 3.11 or newer).</p>
-              <CopyCommand command={INSTALL} />
+              <p className="mb-2 text-zinc-700">
+                1. Install Contexer (Python 3.11 or newer). uv or pipx put the <code className="font-mono">contexer</code>{" "}
+                command on your PATH in its own environment.
+              </p>
+              <CopyCommand command={INSTALL_TOOL} />
             </li>
             <li>
               <p className="mb-2 text-zinc-700">2. Choose a model and a coding agent. It tests both and offers to install Chromium.</p>

@@ -99,14 +99,20 @@ Each run also writes a self-contained `report.html`. It contains:
 
 ## Quickstart
 
-Install it from GitHub (Python 3.11+). `pip install contexer` would install a
-different project that owns that name on PyPI.
+Python 3.11 or newer. The package is `contexer-agent` (`contexer` on PyPI is a
+different project); the command it installs is `contexer`.
 
 ```bash
-pip install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"
+uv tool install contexer-agent   # or: pipx install contexer-agent, or: pip install contexer-agent
 contexer setup         # bring your own key, pick models (tested live), install Chromium
 contexer doctor        # checks Chromium, git, Node, model keys and agents, with the fix for each
 ```
+
+Until the first PyPI release is out, install from GitHub:
+`uv tool install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"`.
+`uv tool install` and `pipx` put `contexer` on your PATH in its own
+environment; if `contexer` is "not recognized" after a `pip` install, see
+[Windows notes](contexer-agent/docs/try-it.md#if-the-install-fails-on-windows).
 
 [Try it yourself](contexer-agent/docs/try-it.md) walks through every step and
 says what each one should show.
