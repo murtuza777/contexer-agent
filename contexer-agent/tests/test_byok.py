@@ -233,3 +233,29 @@ def test_setup_offers_chromium_only_when_it_is_missing(monkeypatch) -> None:
     assert not setup_cli.ensure_browser(console, ask=False)  # --yes never downloads 150 MB unasked
     assert "python -m playwright install chromium" in console.export_text()
     assert len(calls) == 1
+
+
+def test_a_project_env_beats_saved_settings_but_not_exported_variables(tmp_path, monkeypatch) -> None:
+    """`contexer run --dir other-project`: that project's .env wins over what `contexer setup` saved."""
+    import os
+
+    from contexer.config import user
+    from contexer.config.project import load_project_env
+
+    monkeypatch.setattr(user, "_APPLIED", {})
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("CONTEXER_AGENT", raising=False)
+    monkeypatch.setenv("CONTEXER_LLM_MODEL", "exported-model")
+    user.save_credential("OPENROUTER_API_KEY", "sk-saved")
+    user.save_user_settings(user.UserSettings(provider="openrouter", model="saved-model", agent="opencode"))
+    user.apply_user_settings()
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-saved"
+    assert os.environ["CONTEXER_LLM_MODEL"] == "exported-model"  # setup never overrides an export
+
+    project = tmp_path / "other-project"
+    project.mkdir()
+    (project / ".env").write_text("OPENROUTER_API_KEY=sk-project\nCONTEXER_LLM_MODEL=project-model\n", encoding="utf-8")
+    load_project_env(project)
+    assert os.environ["OPENROUTER_API_KEY"] == "sk-project"  # the project's own key wins over the saved one
+    assert os.environ["CONTEXER_LLM_MODEL"] == "exported-model"  # an exported variable still wins
+    assert os.environ["CONTEXER_AGENT"] == "opencode"  # untouched where the project says nothing

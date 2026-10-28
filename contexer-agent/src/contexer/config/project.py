@@ -24,6 +24,7 @@ Everything is optional; detection fills the gaps. Example::
 
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
 from typing import Literal, Optional
@@ -123,16 +124,21 @@ class ProjectConfigError(Exception):
 
 
 def load_project_env(project_dir: str | Path) -> None:
-    """Load ``<project>/.env`` into the environment, never overriding what is already set.
+    """Load ``<project>/.env`` into the environment.
 
     Model and agent keys and ``[auth]`` test credentials can live there, and
-    the coding agent Contexer starts inherits them.
+    the coding agent Contexer starts inherits them. An exported variable wins
+    over the file; the file wins over what ``contexer setup`` saved.
     """
     env_file = Path(project_dir) / ".env"
     if env_file.is_file():
-        from dotenv import load_dotenv
+        from dotenv import dotenv_values
 
-        load_dotenv(env_file, override=False)
+        from contexer.config.user import from_user_settings
+
+        for name, value in dotenv_values(env_file).items():
+            if value is not None and (name not in os.environ or from_user_settings(name)):
+                os.environ[name] = value
 
 
 def load_project_config(project_dir: str | Path) -> ProjectConfig:

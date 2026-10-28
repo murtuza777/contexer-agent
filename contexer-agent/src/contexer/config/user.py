@@ -88,20 +88,30 @@ def save_credential(env_name: str, value: str) -> Path:
     return path
 
 
+# What apply_user_settings put into the environment, so a project's .env loaded later
+# (`--dir` elsewhere) can still take precedence over it, as it does over nothing else.
+_APPLIED: dict[str, str] = {}
+
+
 def apply_user_settings() -> None:
     """Expose saved keys and choices as environment variables, never overriding existing ones."""
-    for name, value in load_credentials().items():
-        os.environ.setdefault(name, value)
     settings = load_user_settings()
-    for env_name, value in (
-        ("CONTEXER_LLM_PROVIDER", settings.provider),
-        ("CONTEXER_LLM_MODEL", settings.model),
-        ("CONTEXER_LLM_BASE_URL", settings.base_url),
-        ("CONTEXER_AGENT", settings.agent),
-        ("CONTEXER_AGENT_MODEL", settings.agent_model),
-    ):
-        if value:
-            os.environ.setdefault(env_name, value)
+    choices = {
+        "CONTEXER_LLM_PROVIDER": settings.provider,
+        "CONTEXER_LLM_MODEL": settings.model,
+        "CONTEXER_LLM_BASE_URL": settings.base_url,
+        "CONTEXER_AGENT": settings.agent,
+        "CONTEXER_AGENT_MODEL": settings.agent_model,
+    }
+    for name, value in [*load_credentials().items(), *choices.items()]:
+        if value and name not in os.environ:
+            os.environ[name] = value
+            _APPLIED[name] = value
+
+
+def from_user_settings(name: str) -> bool:
+    """True while ``name`` still holds the value apply_user_settings gave it."""
+    return name in _APPLIED and os.environ.get(name) == _APPLIED[name]
 
 
 def mask(secret: str) -> str:

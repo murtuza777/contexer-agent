@@ -1,17 +1,11 @@
-"""Contexer CLI — thin Typer entrypoint.
+"""The ``contexer`` command: a Typer app.
 
-This module is the sole entry point for the ``contexer`` command.
-It owns argument parsing and top-level routing only; all interactive
-behavior lives in ``contexer.cli.app`` and all rendering in
-``contexer.cli.ui``.
-
-Architecture principle: the CLI is a thin shell over the agent runtime.
-
-    CLI (this package)
-        ↓
-    ContexerAgent (runtime/agent.py)
-        ↓
-    Workflow Engine (workflow/, future)
+It loads the environment (exported variables, then the nearest ``.env``, then
+what ``contexer setup`` saved) and routes to the commands registered in
+``gate_cli.register``: setup, demo, doctor, init, run, verify, contract, runs,
+restore, replay, issue, models and bench. Those render through ``cli/term.py``.
+With no command it starts the interactive shell (``cli/repl.py``), which has
+its own renderer (``cli/ui.py``) and agent loop (``runtime/``).
 """
 
 from __future__ import annotations
