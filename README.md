@@ -53,23 +53,41 @@ Contexer is the independent half:
 
 ## What it looks like
 
-A todo app whose "complete" handler throws:
+A todo app whose "complete" handler throws (the output of `contexer demo`):
 
 ```text
 $ contexer verify --contract todo-basics
-  ✓ add-shows-task Adding a task shows it in the list · proven
-  ✓ add-clears-input The input is cleared after adding a task · proven
-  ✓ empty-not-added Submitting an empty task adds nothing · proven
-  ✓ count-tracks-adds The remaining count goes up with each task added · proven
-  ✗ complete-decrements Completing a task lowers the remaining count and raises no errors · proven
-        expected: text of [data-testid="remaining-count"] equals "1 left"
-        actual:   "2 left"
-        uncaught exception: refesh is not defined
-  ✓ delete-removes-right-task Deleting a task removes that task and keeps the others · proven
-  ✓ loads-clean The app loads without uncaught exceptions or console errors · proven
 
-FAIL: 6 verified, 1 refuted, 0 unverified                      (exit code 1)
+contexer verify · readme-demo
+  Contract    todo-basics · approved
+  App         http://127.0.0.1:57319/ (static)
+
+Users can add, complete and delete tasks, and the remaining count stays correct
+  ✓ Adding a task shows it in the list · add-shows-task · proven
+  ✓ The input is cleared after adding a task · add-clears-input · proven
+  ✓ Submitting an empty task adds nothing · empty-not-added · proven
+  ✓ The remaining count goes up with each task added · count-tracks-adds · proven
+  ✗ Completing a task lowers the remaining count and raises no errors · complete-decrements · proven
+      expected: text of [data-testid="remaining-count"] equals "1 left"
+      actual:   "2 left"
+      expected: no uncaught exceptions or console errors
+      actual:   refesh is not defined
+      uncaught exception: refesh is not defined
+  ✓ Deleting a task removes that task and keeps the others · delete-removes-right-task · proven
+  ✓ The app loads without uncaught exceptions or console errors · loads-clean · proven
+
+FAIL: 6 verified, 1 refuted, 0 unverified
+  • [todo-basics/complete-decrements] Completing a task lowers the remaining count and raises no errors: expected text
+    of [data-testid="remaining-count"] equals "1 left", got "2 left"; expected no uncaught exceptions or console
+    errors, got refesh is not defined
+
+Report      .contexer/runs/20261028-204055-914e/report.html
+Took        9.2s
 ```
+
+The exit code is 1. Colour only means something: green proven, red refuted,
+yellow needs a person. While a coding agent works, a live line shows the
+elapsed time and its tool calls so far.
 
 Each run also writes a self-contained `report.html`. It contains:
 
@@ -81,14 +99,17 @@ Each run also writes a self-contained `report.html`. It contains:
 
 ## Quickstart
 
-Contexer isn't on PyPI yet, so install it from GitHub (Python 3.11+):
+Install it from GitHub (Python 3.11+). `pip install contexer` would install a
+different project that owns that name on PyPI.
 
 ```bash
 pip install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"
-python -m playwright install chromium
-contexer setup         # bring your own key: pick a provider and models, tested live
+contexer setup         # bring your own key, pick models (tested live), install Chromium
 contexer doctor        # checks Chromium, git, Node, model keys and agents, with the fix for each
 ```
+
+[Try it yourself](contexer-agent/docs/try-it.md) walks through every step and
+says what each one should show.
 
 ### Bring your own key
 
@@ -321,10 +342,10 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 
 ## Status
 
-What works today, with tests (508 passing) and CI on Linux:
+What works today, with tests (509 passing) and CI on Linux:
 
 - **Live end-to-end runs** with a real coding agent (OpenCode on a free
-  OpenRouter model, 2026-10-26):
+  OpenRouter model, 2026-10-26 and 27):
   - "delete a project" in a signed-in app: built, and proven on the first
     attempt;
   - "edit an expense" in React + Vite: the agent hung until the turn limit,
@@ -332,7 +353,10 @@ What works today, with tests (508 passing) and CI on Linux:
     already existed);
   - from a clean `pip install` + `contexer setup`: the first attempt missed 2
     of 8 checks, Contexer sent the evidence back, and the repair passed 8/8
-    in 111 s.
+    in 111 s;
+  - the todo app's counting bug with `--pr`: the agent found and fixed it in
+    81 s, Contexer proved 7/7 checks, and committed only `app.js` to a new
+    branch and pushed it, in 91 s.
 - Bring your own key (`contexer setup`, `contexer models`) for 14 providers.
 - Contracts, approval and hashing; `verify`, `replay`, `contract`, `run`,
   `doctor` and `bench` (including `--live`).
@@ -352,6 +376,11 @@ What works today, with tests (508 passing) and CI on Linux:
   live status comment, and a pull request that closes the issue.
 - Ctrl+C stops the agent at once and puts the project back; any attempt can
   be restored (`contexer restore`).
+- One terminal design across commands: no boxes, colour only for outcomes,
+  aligned summaries, and a live line while the agent works.
+- OpenRouter's free-request count is checked before a run starts.
+- A landing page ([`website/`](website)) that shows real output, built as
+  static pages.
 
 Honest gaps:
 
@@ -359,9 +388,10 @@ Honest gaps:
   Codex are tested against their real stream protocols with fake binaries, and
   the real Codex CLI accepts Contexer's exact invocations up to authentication.
   A run on either awaits an account with credit.
-- The pull-request hand-off and the issue workflow are tested against real
-  git with a local remote and a simulated GitHub API, and their read calls
-  against the real API; they have not yet opened a real pull request.
+- The pull-request hand-off has committed and pushed in a live run, to a
+  local remote; it and the issue workflow have not yet opened a real pull
+  request on GitHub. Their GitHub calls are tested against a simulated API,
+  and the read calls against the real one.
 - No GitHub App (check runs, approve button) yet; not on PyPI yet.
 - No visual-design checks. Sign-in sessions kept only in `sessionStorage`
   are not carried into checks (cookie and local-storage sessions are).
@@ -380,6 +410,9 @@ Honest gaps:
 | [Technical landscape](contexer-agent/docs/technical-landscape.md) | The repos and designs Contexer builds on, and its competitors |
 | [Try it yourself](contexer-agent/docs/try-it.md) | Install, set up and use it on your app, step by step; work on Contexer itself |
 | [Developer guide](contexer-agent/README.md) | Setup, commands, `contexer.toml` and tests |
+| [Changelog](contexer-agent/CHANGELOG.md) | What changed in each release |
+| [Website](website/README.md) | The landing page: run, build, deploy |
+| [Launch kit](marketing/product-hunt.md) | Product Hunt copy, gallery and the launch video's sources |
 
 MIT licensed. Contexer adapts parts of
 [AgentForge](https://github.com/MohitGoyal09/AgentForge) (MIT); see
