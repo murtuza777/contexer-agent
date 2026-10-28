@@ -6,6 +6,21 @@ From a goal or a GitHub issue to a pull request that carries its proof, a
 terminal and a website that show only what is real, and the problems the
 first live runs exposed, fixed.
 
+### Packaging
+
+- **On PyPI as `contexer-agent`** (`uv tool install contexer-agent`, `pipx
+  install contexer-agent` or `pip install contexer-agent`); the command is
+  still `contexer`. `contexer` on PyPI is a different project. This is the
+  first release published there.
+- An MIT `LICENSE`, shipped in the wheel with the third-party notices, and a
+  PyPI page (`PYPI.md`).
+- `release.yml` builds and checks the package on every push and publishes it
+  on a version tag through PyPI trusted publishing.
+- `docs/architecture.md`: every module, data format, algorithm, constant and
+  security measure in one technical reference.
+- The guide covers Windows install failures: a `pip` launcher left by an
+  uninstalled Python, and `contexer` "not recognized".
+
 ### Live run (OpenCode + `nvidia/nemotron-3-ultra-550b-a55b:free`, 2026-10-27)
 
 - **The todo app's counting bug, with `--pr`:** the agent read four files and
@@ -68,6 +83,11 @@ first live runs exposed, fixed.
   for a static site; `contexer init` asks for its start command instead.
 - `contexer init` printed "set .start there", dropping `[app]`.
 - Long goals no longer cut a commit subject mid-word.
+- With `--dir` pointing at another project, keys saved by `contexer setup`
+  beat that project's `.env`; the project's `.env` now wins, and an exported
+  variable still wins over both.
+- The website's `src/lib/site.ts` was hidden by the root `.gitignore`, so a
+  fresh clone of the website did not build.
 
 ### Security
 
