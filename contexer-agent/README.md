@@ -1,7 +1,8 @@
 # Contexer (Python package)
 
 This is the developer guide. The product overview is in the
-[repository README](../README.md).
+[repository README](../README.md); [Try it yourself](docs/try-it.md) is the
+step-by-step guide for users.
 
 ## Setup
 
@@ -10,14 +11,17 @@ cd contexer-agent
 python -m venv .venv
 # Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
-playwright install chromium
+contexer setup        # a provider, your key and models, tested live; offers to install Chromium
 ```
 
 Then run `contexer doctor`. It checks Python, Chromium, git, Node, the
-drafting model, coding agents and the project in `--dir`, and prints the fix
-for anything missing.
+drafting model, coding agents, OpenRouter's free requests left today and the
+project in `--dir`, and prints the fix for anything missing.
 
-**Optional, for compiling goals into checks:** set one of `ANTHROPIC_API_KEY`,
+**Models:** `contexer setup` saves a provider, key and models for every
+project in `~/.contexer/` (any of 14 providers: `contexer models --providers`).
+Exported variables, a project's `.env` and its `contexer.toml` take precedence.
+Without setup, set one of `ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY` or `OPENROUTER_API_KEY` in the environment or `.env` (see
 `.env.example`). With several keys set, the first in that order is used;
 `CONTEXER_LLM_PROVIDER` or `[compiler]` in `contexer.toml` picks one
@@ -42,23 +46,30 @@ Every command takes `--dir PATH` (default: the current directory) and
 `--url URL`. Use `--url` when you already run the app; otherwise Contexer
 serves static sites itself and starts the project's dev server.
 
+The same groups as `contexer --help`:
+
 | Command | What it does |
 | --- | --- |
-| `contexer doctor` | Check everything Contexer needs, with the fix for each problem |
+| **Get started** | |
+| `contexer setup [--show]` | Bring your own key: a provider, models and a coding agent, tested live and saved for every project |
 | `contexer demo [--fix]` | Create a todo app with a seeded bug and prove its contract; no key or agent needed |
+| `contexer doctor` | Check everything Contexer needs, with the fix for each problem |
 | `contexer init [--ci] [--issues]` | Detect how the app starts and prepare `.contexer/`; `--ci` writes the gate workflow, `--issues` the issue workflow |
-| `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
-| `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |
-| `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
-| `contexer contract draft "GOAL"` | Create a draft contract |
-| `contexer contract list` / `show ID` | Review contracts |
-| `contexer contract approve ID` | Lock a contract at its current content (sha256). Any later edit needs re-approval |
+| **Build and prove** | |
 | `contexer run "GOAL"` / `--contract ID` | Approve the checklist, drive the coding agent, prove, repair, and keep the best attempt |
 | `contexer run ... --pr` / `--issue N` | End in a pull request with the evidence; with `--issue` the goal comes from the issue and the PR closes it |
-| `contexer issue draft N` / `build N --by LOGIN` / `event` | Post an issue's checks for approval; build them once approved; in Actions, act on the triggering event |
-| `contexer restore RUN --attempt N` / `--stopped` / `--undo` | Put the files back to a snapshot a run took |
-| `contexer bench [--live]` | Seeded-bug benchmark: catch rate and false-failure rate |
+| `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
+| `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |
+| `contexer contract draft "GOAL"` / `list` / `show ID` | Create and review contracts |
+| `contexer contract approve ID` | Lock a contract at its current content (sha256). Any later edit needs re-approval |
 | `contexer runs` | Recent runs with outcome, check counts and report paths |
+| `contexer restore RUN --attempt N` / `--stopped` / `--undo` | Put the files back to a snapshot a run took |
+| **CI and GitHub** | |
+| `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
+| `contexer issue draft N` / `build N --by LOGIN` / `event` | Post an issue's checks for approval; build them once approved; in Actions, act on the triggering event |
+| **More** | |
+| `contexer models [--provider P] [--free] [--search S]` | A provider's models; `--providers` lists every provider and the keys you have |
+| `contexer bench [--live]` | Seeded-bug benchmark: catch rate and false-failure rate |
 | `contexer` | The interactive shell (`/loop`, `/verify`, `/project`, ...) |
 
 Useful options:
@@ -67,10 +78,14 @@ Useful options:
 - `--json` prints `result.json`.
 - `--open` opens the HTML report.
 - `run` also takes `--agent`, `--model`, `--rounds`, `--budget` and `--yes`.
+  `--agent scripted --model turns.json` replays file edits from a JSON list,
+  to try a setup end to end without a model.
 
 **Exit codes:** `0` pass · `1` fail (a check was refuted) · `2` needs action
 (unverified check, draft or modified contract, budget or time exhausted) ·
-`3` error (app or agent could not run).
+`3` error (app or agent could not run) · `130` stopped with Ctrl+C (the agent
+is stopped and the project put back; `contexer restore RUN --stopped` brings
+the unfinished work back).
 
 ## Project files
 
@@ -106,7 +121,7 @@ steps = [
 expect = [{ kind = "url", contains = "/dashboard" }]
 
 [compiler]
-provider = "anthropic"                   # or "openai", "openrouter"; default: the first key set
+provider = "anthropic"                   # any id from `contexer models --providers`; default: `contexer setup`, then the first key set
 model = "claude-opus-5-5"
 
 [gate]
@@ -159,6 +174,9 @@ correct app fails "shows 2 entries" because an earlier check added one.
 
 | Package | Responsibility |
 | --- | --- |
+| `cli/` | The commands. `term.py` is the terminal design they all share: no boxes, colour only for outcomes, aligned summaries, a live line while work runs |
+| `config/` | `contexer.toml`, and the user's settings and keys in `~/.contexer/` |
+| `llm/` | The 14-provider catalog, model discovery, key checks and OpenRouter's free-request count, and the drafting model clients |
 | `contract/` | Contract model, canonical sha256, approval, file store |
 | `verification/` | The closed check DSL, the Playwright runner (screenshots, traces), and the verifier. Verdicts are `verified`, `refuted` or `unverified`, each labelled `proven`, `LLM-judged` or `heuristic` |
 | `gate/` | Fail-safe gate decision and the `VerificationSession` |
@@ -169,7 +187,8 @@ correct app fails "shows 2 entries" because an earlier check added one.
 | `evidence/` | Run directories and the self-contained HTML report |
 | `github/` | Commit status and job summary; the pull-request hand-off; the issue flow (draft comment, approval, live status) |
 | `bench/` | Seeded-bug benchmark, including `--live` scoring of LLM-compiled contracts |
-| `workflow/`, `runtime/`, `cli/repl.py` | The interactive shell and its earlier loop |
+| `workflow/` | Goal-to-checks compiler (`criteria.py`) and the repository inspector |
+| `runtime/`, `cli/repl.py` | The interactive shell and its earlier loop |
 
 The build plan and design decisions are in
 [docs/roadmap.md](docs/roadmap.md). The research behind each library choice is
@@ -182,7 +201,7 @@ python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integrati
 contexer bench --repeats 2
 ```
 
-The suite runs real Chromium against fixture apps, real Node process trees
+The suite (about 510 tests, 8 minutes) runs real Chromium against fixture apps, real Node process trees
 for the dev-server tests, and real git for snapshots. It needs no network and
 no model. The benchmark's React + Vite fixture runs `npm ci` once, so the
 benchmark needs network the first time. Live-service tests skip themselves when their prerequisites are
