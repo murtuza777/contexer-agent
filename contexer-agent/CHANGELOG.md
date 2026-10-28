@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-10-28
 
-From a goal or a GitHub issue to a pull request that carries its proof.
+From a goal or a GitHub issue to a pull request that carries its proof, a
+terminal and a website that show only what is real, and the problems the
+first live runs exposed, fixed.
+
+### Live run (OpenCode + `nvidia/nemotron-3-ultra-550b-a55b:free`, 2026-10-27)
+
+- **The todo app's counting bug, with `--pr`:** the agent read four files and
+  fixed the count in `app.js` in 81 s; Contexer proved 7/7 checks, committed
+  only `app.js` to `contexer/todo-basics` and pushed it, in 91 s. The remote
+  was local, so no pull request was opened on GitHub yet.
 
 ### Added
 
@@ -26,6 +35,12 @@ From a goal or a GitHub issue to a pull request that carries its proof.
   end to end without a model.
 - `contexer setup` checks that Chromium starts and offers to install it, so
   a first run does not fail at its first check.
+- **Docs:** `docs/try-it.md` walks a user through install, setup, the demo and
+  a first run on their own app, saying what each step should show, and a
+  developer through the tests, the benchmark and the scripted agent.
+- **Website:** `website/`, rewritten to show real output only (the old page
+  promised installers that do not exist and called working agents
+  "upcoming").
 
 ### Changed
 
