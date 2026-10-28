@@ -103,14 +103,14 @@ steps = [ ... ]            # check DSL steps
 expect = [ ... ]           # what proves you are signed in
 
 [compiler]
-provider = "anthropic"     # anthropic | openai | openrouter
+provider = "anthropic"     # any of the 14 providers in llm/catalog.py
 model = "claude-opus-5-5"
 
 [gate]
 judged = "advisory"        # or "block"
 
 [agent]
-name = "claude-code"       # claude-code | opencode | scripted
+name = "claude-code"       # claude-code | codex | opencode | scripted
 max_repair_rounds = 2
 budget_usd = 3.0
 ```
@@ -141,6 +141,7 @@ Judged criteria are advisory by default, because noisy judges get removed
 | `1` | fail |
 | `2` | needs action |
 | `3` | Contexer or environment error, e.g. the app didn't start |
+| `130` | Stopped with Ctrl+C: the agent is killed and the best attempt (or the project as found) is put back |
 
 ## 4. Milestones, in build order
 
@@ -369,9 +370,11 @@ the work tree set to the project:
 
 ### C6. Run store — next (run.json per run today)
 
-- `.contexer/contexer.db` (sqlite3, WAL), with tables `runs`, `attempts` and
-  `evidence`.
-- `contexer runs` lists runs; `contexer runs show ID` shows one.
+- Today `contexer runs` lists runs from each run's `run.json`, and
+  `contexer restore RUN --attempt N | --stopped | --undo` brings back any
+  snapshot a run took.
+- Next: `.contexer/contexer.db` (sqlite3, WAL), with tables `runs`,
+  `attempts` and `evidence`, and `contexer runs show ID`.
 - DBOS waits until there is more than one worker.
 
 ### C7. GitHub reporting — done (commit status, job summary, action)
@@ -390,6 +393,35 @@ runs `contexer replay --report github,html` and uploads `report.html`.
 **Done when** a PR on a test repository shows a failing `contexer/acceptance`
 status that links to the report.
 
+### C9. Hand-off and issues — done in code (2026-10-26)
+
+Product-plan M7, "ticket to proven PR":
+
+- `contexer run --pr` ends in a branch `contexer/<contract>`, one commit with
+  only the files the run changed plus the approved contract, and a pull
+  request whose description carries the evidence; a draft when something
+  still fails. The checkout is checked before anything is spent
+  (`github/handoff.py`).
+- `contexer run --issue N` takes the goal from an issue; the PR closes it.
+- The issue workflow (`contexer init --issues`, `issue/action.yml`,
+  `github/issues.py`): a `contexer` label drafts the checks and posts them on
+  the issue; `/contexer approve` from someone with write access builds,
+  proves and opens the PR, with one live status comment. The coding agent
+  gets no GitHub token; only the bot's own draft comment counts.
+- Ctrl+C kills the agent and puts the project back (exit 130).
+
+**Live so far:** a run on 2026-10-27 committed and pushed its branch to a
+local remote. **Still to do:** open a real pull request on GitHub, and run the
+issue workflow on Actions (needs a test repository).
+
+### C10. Interfaces — done (2026-10-27)
+
+- `cli/term.py`: one terminal design for every command (no boxes, colour only
+  for outcomes, aligned summaries, a live line with elapsed time while the
+  agent works); `--help` grouped by task.
+- `website/`: the landing page, rewritten to show real output only, following
+  the `baseline-ui` skill.
+
 ### C8. Compiler quality — building (from the live benchmark)
 
 Five `bench --live` runs on `openrouter/free` ranged from 25% to 83% of seeded
@@ -397,8 +429,9 @@ bugs caught, with zero false failures from checks that survived validation.
 The model limits how good a draft can be; the runner does not. In priority
 order:
 
-1. **Pinned drafting model.** *Done in code:* `[compiler]` in `contexer.toml`
-   picks Anthropic, OpenAI or OpenRouter and a model. *Next:* benchmark two
+1. **Pinned drafting model.** *Done:* `[compiler]` in `contexer.toml` or
+   `contexer setup` picks any of 14 providers and a model, and with only an
+   OpenRouter key drafts default to `nemotron-3-ultra:free` (33/40). *Next:* benchmark two
    or three capable models with `bench --live --repeats 3` and recommend one
    (needs a paid key).
 2. **Draft validation.** *Done:* `contract draft` and `run "GOAL"` run the
@@ -417,7 +450,7 @@ order:
 
 - The GitHub App, with check runs that are never `neutral`, an "approve checks"
   button, expected-source pinning and merge-queue replay.
-- Ticket-to-PR triggers.
+- Linear and Slack triggers (GitHub issues are C9).
 - A `contexer-mcp` server and a Spec Kit hook.
 - Visual checks; deterministic re-location of moved targets.
 - The founder readiness report.
