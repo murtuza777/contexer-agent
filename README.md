@@ -413,6 +413,7 @@ Honest gaps:
 | --- | --- |
 | [Product plan](contexer-agent/docs/product-plan.md) | Who it's for, what it does, and the order of work |
 | [Architecture](contexer-agent/docs/architecture.md) | Every module, data format, algorithm, constant and security measure, in one reference |
+| [LangGraph plan](contexer-agent/docs/langgraph-plan.md) | How the run loop would look on LangGraph, compared with the current loop, and why it stays as it is |
 | [Technical plan](contexer-agent/docs/roadmap.md) | Milestones, formats and what was built when |
 | [Technical landscape](contexer-agent/docs/technical-landscape.md) | The repos and designs Contexer builds on, and its competitors |
 | [Try it yourself](contexer-agent/docs/try-it.md) | Install, set up and use it on your app, step by step; work on Contexer itself |
