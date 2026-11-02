@@ -329,3 +329,6 @@ fan-out (`Send`) becomes worth a second look too.
 CrewAI and similar role-based frameworks fit worse still: they model agents
 that talk to each other and decide together, while Contexer's agents are
 external programs and its decisions are fixed rules.
+
+The multi-agent version (Scout, Planner, Critic, parallel builders and more)
+is designed in [multi-agent/design.md](multi-agent/design.md).
