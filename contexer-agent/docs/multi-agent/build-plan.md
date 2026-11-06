@@ -107,7 +107,7 @@ unchanged with agents off; one live run on BurryAI with the Scout.
 | Task | Detail |
 | --- | --- |
 | Dependencies | `langgraph` and `langgraph-checkpoint-sqlite`, pinned; optional extra `contexer-agent[graph]` until it is the default |
-| State and context | `graph/state.py`, `graph/context.py` as in design §15 and [langgraph-plan.md](../langgraph-plan.md) §3 |
+| State and context | `graph/state.py`, `graph/context.py` as in design §15 and [langgraph-port.md](langgraph-port.md) §3 |
 | Slice subgraph | Today's loop as nodes: budget gate → agent turn → guard and snapshot → ensure app → prove → score → diagnose → plan repair |
 | Routing | `graph/routing.py`; table-driven tests for every edge and terminal state |
 | Engine flag | `CONTEXER_ENGINE=classic|graph`; `tests/test_controller.py` parametrised over both |

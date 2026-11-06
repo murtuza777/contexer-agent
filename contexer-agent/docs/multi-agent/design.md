@@ -8,7 +8,7 @@ agentic architecture fits it.
 
 Companion documents: [PRD](prd.md), [BRD](brd.md),
 [build plan](build-plan.md), and the single-loop study in
-[langgraph-plan.md](../langgraph-plan.md).
+[langgraph-port.md](langgraph-port.md).
 
 ## 0. The rule everything else follows
 
@@ -467,7 +467,7 @@ class GraphState(TypedDict, total=False):
 ```
 
 Live objects (agent adapters, dev servers, Chromium, the shadow repo) stay in
-the runtime context, as in [langgraph-plan.md](../langgraph-plan.md) §3.
+the runtime context, as in [langgraph-port.md](langgraph-port.md) §3.
 
 ## 16. Failure modes and what happens
 

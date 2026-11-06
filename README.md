@@ -31,7 +31,7 @@ Coding agents write code faster than anyone can check it.
 Every agent vendor's own verification is run and graded by the agent that
 wrote the code, and some vendor reviewers are designed never to block a
 merge. The research behind this is in
-[reports/AI coding workflows and pain points.md](reports/AI%20coding%20workflows%20and%20pain%20points.md).
+[the market research](contexer-agent/docs/product/market-research.md).
 
 Contexer is the independent half:
 
@@ -348,7 +348,7 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 
 ## Status
 
-What works today, with tests (509 passing) and CI on Linux:
+What works today, with tests (307 passing) and CI on Linux:
 
 - **Live end-to-end runs** with a real coding agent (OpenCode on a free
   OpenRouter model, 2026-10-26 and 27):
@@ -411,13 +411,13 @@ Honest gaps:
 
 | Document | Covers |
 | --- | --- |
-| [Product plan](contexer-agent/docs/product-plan.md) | Who it's for, what it does, and the order of work |
+| [Product plan](contexer-agent/docs/product/product-plan.md) | Who it's for, what it does, and the order of work |
 | [Architecture](contexer-agent/docs/architecture.md) | Every module, data format, algorithm, constant and security measure, in one reference |
-| [LangGraph plan](contexer-agent/docs/langgraph-plan.md) | How the run loop would look on LangGraph, compared with the current loop, and why it stays as it is |
+| [LangGraph port](contexer-agent/docs/multi-agent/langgraph-port.md) | How the run loop would look on LangGraph, compared with the current loop, and why it stays as it is |
 | [Multi-agent design](contexer-agent/docs/multi-agent/design.md) | Every agent in a multi-agent Contexer, how a goal flows through them, and which agentic architecture fits |
 | [Multi-agent PRD](contexer-agent/docs/multi-agent/prd.md), [BRD](contexer-agent/docs/multi-agent/brd.md), [build plan](contexer-agent/docs/multi-agent/build-plan.md) | Requirements, business case and phased build plan for 0.5 to 0.7 |
 | [Technical plan](contexer-agent/docs/roadmap.md) | Milestones, formats and what was built when |
-| [Technical landscape](contexer-agent/docs/technical-landscape.md) | The repos and designs Contexer builds on, and its competitors |
+| [Technical landscape](contexer-agent/docs/product/technical-landscape.md) | The repos and designs Contexer builds on, and its competitors |
 | [Try it yourself](contexer-agent/docs/try-it.md) | Install, set up and use it on your app, step by step; work on Contexer itself |
 | [Developer guide](contexer-agent/README.md) | Setup, commands, `contexer.toml` and tests |
 | [Changelog](contexer-agent/CHANGELOG.md) | What changed in each release |

@@ -70,7 +70,6 @@ The same groups as `contexer --help`:
 | **More** | |
 | `contexer models [--provider P] [--free] [--search S]` | A provider's models; `--providers` lists every provider and the keys you have |
 | `contexer bench [--live]` | Seeded-bug benchmark: catch rate and false-failure rate |
-| `contexer` | The interactive shell (`/loop`, `/verify`, `/project`, ...) |
 
 Useful options:
 
@@ -188,12 +187,11 @@ correct app fails "shows 2 entries" because an earlier check added one.
 | `github/` | Commit status and job summary; the pull-request hand-off; the issue flow (draft comment, approval, live status) |
 | `bench/` | Seeded-bug benchmark, including `--live` scoring of LLM-compiled contracts |
 | `workflow/` | Goal-to-checks compiler (`criteria.py`) and the repository inspector |
-| `runtime/`, `cli/repl.py` | The interactive shell and its earlier loop |
 
 The full technical reference is [docs/architecture.md](docs/architecture.md).
 The build plan and design decisions are in
 [docs/roadmap.md](docs/roadmap.md). The research behind each library choice is
-in [docs/technical-landscape.md](docs/technical-landscape.md).
+in [docs/technical-landscape.md](docs/product/technical-landscape.md).
 
 ## Tests
 
@@ -202,7 +200,7 @@ python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integrati
 contexer bench --repeats 2
 ```
 
-The suite (about 510 tests, 8 minutes) runs real Chromium against fixture apps, real Node process trees
+The suite (about 300 tests, 8 minutes) runs real Chromium against fixture apps, real Node process trees
 for the dev-server tests, and real git for snapshots. It needs no network and
 no model. The benchmark's React + Vite fixture runs `npm ci` once, so the
 benchmark needs network the first time. Live-service tests skip themselves when their prerequisites are

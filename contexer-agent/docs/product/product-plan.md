@@ -4,13 +4,13 @@ Status: proposal v2, 2026-10-14. This replaces v1, which targeted non-coders
 and was built outward from the existing code. v2 is built from two research
 reports:
 
-- [Market research](../../reports/AI%20coding%20workflows%20and%20pain%20points.md):
+- [Market research](market-research.md):
   how professional engineers and vibe coders ship with AI, what breaks for
   them, and what they pay for.
 - [Technical landscape](technical-landscape.md): which repos, protocols and
   designs to build on, borrow from or avoid, and who the competitors are.
 
-Engineering detail per milestone stays in [roadmap.md](roadmap.md), which must
+Engineering detail per milestone stays in [roadmap.md](../roadmap.md), which must
 be updated to match this plan once it is approved.
 
 ---

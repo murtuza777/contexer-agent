@@ -5,7 +5,7 @@ Product requirements: [prd.md](prd.md). Design: [design.md](design.md).
 
 Figures marked *assumption* are hypotheses to test, not data. The market
 reasoning behind Contexer as a whole is in
-[product-plan.md](../product-plan.md) §2.
+[product-plan.md](../product/product-plan.md) §2.
 
 ## 1. Summary
 

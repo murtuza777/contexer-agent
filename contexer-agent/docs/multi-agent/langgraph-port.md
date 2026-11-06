@@ -331,4 +331,4 @@ that talk to each other and decide together, while Contexer's agents are
 external programs and its decisions are fixed rules.
 
 The multi-agent version (Scout, Planner, Critic, parallel builders and more)
-is designed in [multi-agent/design.md](multi-agent/design.md).
+is designed in [design.md](design.md).

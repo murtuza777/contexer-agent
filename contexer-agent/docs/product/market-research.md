@@ -337,7 +337,7 @@ Today, Contexer is a Python CLI with five capabilities:
 - It drives repair from failed checks.
 - It runs as `/verify` against static apps or a running URL.
 
-The team's own plan lists what is missing (`contexer-agent/docs/product-plan.md`):
+The team's own plan lists what is missing ([product-plan.md](product-plan.md)):
 
 - a Claude Code adapter
 - dev-server support for Vite and Next.js

@@ -1,8 +1,8 @@
 # Contexer technical plan
 
-This is the build plan for [product-plan.md](product-plan.md) v2. It covers
+This is the build plan for [product-plan.md](product/product-plan.md) v2. It covers
 module layout, data formats, the CLI, the order of work, and how each piece is
-tested. [technical-landscape.md](technical-landscape.md) holds the research
+tested. [technical-landscape.md](product/technical-landscape.md) holds the research
 behind each library choice.
 
 Status legend: **done**, **building**, **next**, **later**.
