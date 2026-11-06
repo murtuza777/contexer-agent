@@ -1,14 +1,13 @@
 """Tests for OpenRouterProvider with mocked API calls and OpenAI SDK client."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import openai
 import pytest
 
 from contexer.llm.base import (
     LLMAuthenticationError,
-    LLMChunk,
     LLMError,
     LLMModelUnavailableError,
     LLMNetworkError,
@@ -170,44 +169,6 @@ class TestOpenRouterGenerationMocked:
         assert response.text == "Here is the code solution"
         assert response.model == "google/gemma-4-31b-it:free"  # the model that answered, not the one asked for
         assert response.usage["total_tokens"] == 50
-
-    def test_stream_success(self) -> None:
-        provider = OpenRouterProvider(api_key="sk-or-v1-test_key")
-
-        class MockDelta:
-            def __init__(self, content: str | None = None) -> None:
-                self.content = content
-                self.tool_calls = None
-
-        class MockChunkChoice:
-            def __init__(self, content: str | None, finish_reason: str | None = None) -> None:
-                self.delta = MockDelta(content)
-                self.finish_reason = finish_reason
-
-        class MockChunk:
-            def __init__(self, content: str | None, finish_reason: str | None = None) -> None:
-                self.choices = [MockChunkChoice(content, finish_reason)]
-
-        async def mock_stream_gen(*args, **kwargs):
-            yield MockChunk("Hello")
-            yield MockChunk(" OpenRouter")
-            yield MockChunk(None, finish_reason="stop")
-
-        mock_client = MagicMock()
-        mock_client.chat.completions.create = AsyncMock(return_value=mock_stream_gen())
-        provider._client = mock_client
-
-        async def collect_stream():
-            chunks = []
-            async for chunk in provider.stream("Say hello"):
-                chunks.append(chunk)
-            return chunks
-
-        chunks = asyncio.run(collect_stream())
-        assert len(chunks) == 3
-        assert chunks[0].text == "Hello"
-        assert chunks[1].text == " OpenRouter"
-        assert chunks[2].finish_reason == "stop"
 
     def test_generate_missing_key_raises_auth_error(self) -> None:
         provider = OpenRouterProvider(api_key=None)

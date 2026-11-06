@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import re
-from typing import Any, AsyncIterator, Optional
+from typing import Any, Optional
 
 def _mask_api_key_match(match: re.Match[str]) -> str:
     val = match.group(0)
@@ -87,29 +87,10 @@ class LLMModelUnavailableError(LLMError):
 
 
 @dataclass
-class ToolCallRequest:
-    """A tool execution request issued by the model."""
-
-    name: str
-    arguments: dict[str, Any] = field(default_factory=dict)
-    call_id: Optional[str] = None
-
-
-@dataclass
-class LLMChunk:
-    """A streamed chunk of generated content."""
-
-    text: str = ""
-    tool_calls: list[ToolCallRequest] = field(default_factory=list)
-    finish_reason: Optional[str] = None
-
-
-@dataclass
 class LLMResponse:
     """Complete response returned from an LLM call."""
 
     text: str = ""
-    tool_calls: list[ToolCallRequest] = field(default_factory=list)
     model: str = ""
     usage: dict[str, int] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -143,21 +124,9 @@ class LLMProvider(ABC):
         self,
         prompt: str | list[Any],
         system_instruction: Optional[str] = None,
-        tools: Optional[list[Any]] = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Generate a complete response for a prompt."""
-
-    @abstractmethod
-    def stream(
-        self,
-        prompt: str | list[Any],
-        system_instruction: Optional[str] = None,
-        tools: Optional[list[Any]] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[LLMChunk]:
-        """Stream response chunks asynchronously for a prompt."""
-
 
     @abstractmethod
     def validate_configuration(self) -> tuple[bool, Optional[str]]:

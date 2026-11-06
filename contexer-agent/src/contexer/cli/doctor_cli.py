@@ -69,7 +69,7 @@ def doctor(
 
 def environment_findings() -> list[Finding]:
     from contexer.cli.gate_cli import compiler_llm
-    from contexer.config.settings import OPENROUTER_FREE_ROUTER, load_config
+    from contexer.config.settings import OPENROUTER_FREE_ROUTER
     from contexer.observer.browser import chromium_status
 
     findings: list[Finding] = []
@@ -110,7 +110,6 @@ def environment_findings() -> list[Finding]:
         )
     )
 
-    config = load_config()
     llm = compiler_llm(None)
     if llm is not None:
         detail = f"{llm.name} · {llm.model}"
@@ -161,7 +160,7 @@ def environment_findings() -> list[Finding]:
             )
         )
 
-    token = config.github_token or github_token()
+    token = github_token()
     findings.append(
         Finding(
             "GitHub",

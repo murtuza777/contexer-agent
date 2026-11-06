@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- **The interactive shell.** `contexer` with no command now prints the help.
+  The shell was an earlier, separate chat agent (adapted from AgentForge)
+  that no command used; Contexer drives Claude Code, Codex and OpenCode
+  instead. Removed with it: `runtime/`, `tools/`, `safety/`, `state/`,
+  `context/`, `mcp/`, `project/`, the shell's settings
+  (`CONTEXER_APPROVAL_POLICY`, `CONTEXER_REDACT_TOOL_OUTPUT`,
+  `CONTEXER_PROTECT_TOOL_OBSERVATIONS`, `CONTEXER_MAX_TOOL_OUTPUT_CHARS`,
+  `GITHUB_PERSONAL_ACCESS_TOKEN`, `GITHUB_TOOLSETS`, `GITHUB_READ_ONLY`,
+  `LOG_LEVEL`, `VERBOSE`, `OPENCODE_TIMEOUT`), and the streaming and
+  tool-calling code in the model providers, which only the shell used.
+
+### Changed
+
+- Docs: product research is in `docs/product/`, and the LangGraph study sits
+  with the multi-agent plans as `docs/multi-agent/langgraph-port.md`. The raw
+  research notes are gone; the market research report keeps their findings.
+
 ## 0.4.0 — 2026-10-28
 
 From a goal or a GitHub issue to a pull request that carries its proof, a

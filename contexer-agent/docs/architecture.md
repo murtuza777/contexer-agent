@@ -3,7 +3,7 @@
 This is the technical reference for how Contexer works, module by module: what
 each part does, the data it reads and writes, the decisions it makes, and the
 constants that govern them. It describes version 0.4.0 as it is in the code.
-Product reasoning is in [product-plan.md](product-plan.md), the build history
+Product reasoning is in [product-plan.md](product/product-plan.md), the build history
 in [roadmap.md](roadmap.md), and day-to-day use in [try-it.md](try-it.md).
 
 Paths are relative to `contexer-agent/src/contexer/` unless they start with
@@ -30,7 +30,7 @@ Paths are relative to `contexer-agent/src/contexer/` unless they start with
 17. [Security model](#17-security-model)
 18. [Benchmark](#18-benchmark)
 19. [CI, the actions and releases](#19-ci-the-actions-and-releases)
-20. [The interactive shell and other modules](#20-the-interactive-shell-and-other-modules)
+20. [The OpenCode client](#20-the-opencode-client)
 21. [Tests](#21-tests)
 22. [Extending Contexer](#22-extending-contexer)
 23. [Known limits](#23-known-limits)
@@ -106,7 +106,7 @@ A `contexer run "GOAL" --pr`, end to end:
 
 | Package | Responsibility |
 | --- | --- |
-| `cli/` | The commands. `term.py` is the shared terminal design; `run_cli`, `gate_cli` (verify, replay, contract), `issue_cli`, `setup_cli` (setup, models), `doctor_cli`, `demo_cli`, `init_cli`, `runs_cli` (runs, restore), `bench_cli`. `repl.py`, `commands.py`, `ui.py` are the interactive shell |
+| `cli/` | The commands. `term.py` is the shared terminal design; `run_cli`, `gate_cli` (verify, replay, contract), `issue_cli`, `setup_cli` (setup, models), `doctor_cli`, `demo_cli`, `init_cli`, `runs_cli` (runs, restore), `bench_cli` |
 | `contract/` | `Contract` model, canonical hash, approval, file store |
 | `verification/` | The check language (`checks.py`), the Playwright runner (`runner.py`), the verifier (`verifier.py`), result models |
 | `observer/` | Page observation: ARIA snapshot, password masking, Chromium status |
@@ -124,7 +124,6 @@ A `contexer run "GOAL" --pr`, end to end:
 | `bench/` | The seeded-bug benchmark runner |
 | `demo/` | The `contexer demo` todo app and its contract |
 | `procutil.py` | Process trees that are always stopped together |
-| `runtime/`, `tools/`, `safety/`, `state/`, `context/`, `mcp/`, `project/` | The interactive shell's agent loop ([§20](#20-the-interactive-shell-and-other-modules)) |
 
 Runtime dependencies: `typer`, `rich` (<14), `openai` (the OpenAI-compatible
 client), `pydantic` 2, `python-dotenv`, `httpx`, `playwright` (≥1.49, for
@@ -761,8 +760,8 @@ sequenceDiagram
 
 Entry point `contexer = "contexer.cli:app"`; `python -m contexer` works too.
 The root callback loads the environment (exported variables, the nearest
-`.env` with `override=False`, then saved settings); with no command it starts
-the interactive shell.
+`.env` with `override=False`, then saved settings); with no command it prints
+the help.
 
 | Group (`contexer --help`) | Commands |
 | --- | --- |
@@ -825,12 +824,11 @@ and prints the fix under each problem.
 | `OPENROUTER_MODEL`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, `ANTHROPIC_MODEL` | Per-provider model overrides |
 | `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | OpenRouter attribution headers |
 | `CONTEXER_AGENT`, `CONTEXER_AGENT_MODEL` | Coding agent and its model (from setup) |
-| `OPENCODE_SERVER_URL`, `OPENCODE_MODEL_PROVIDER`, `OPENCODE_MODEL_ID`, `OPENCODE_TIMEOUT` | OpenCode server and model |
+| `OPENCODE_SERVER_URL`, `OPENCODE_MODEL_PROVIDER`, `OPENCODE_MODEL_ID` | OpenCode server and model |
 | `CONTEXER_HOME` | Where user settings live (default `~/.contexer`) |
 | `CONTEXER_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` | Pull requests, issues, commit statuses |
 | `GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_RUN_ID`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_ACTIONS` | Read in GitHub Actions |
 | `${NAME}` (any) | Secrets referenced by checks and `[auth]` |
-| `CONTEXER_APPROVAL_POLICY`, `CONTEXER_REDACT_TOOL_OUTPUT`, `CONTEXER_PROTECT_TOOL_OBSERVATIONS`, `CONTEXER_MAX_TOOL_OUTPUT_CHARS`, `GITHUB_PERSONAL_ACCESS_TOKEN`, `GITHUB_TOOLSETS`, `GITHUB_READ_ONLY` | The interactive shell only |
 
 ## 17. Security model
 
@@ -900,26 +898,16 @@ different project); the command and import package are `contexer`. The wheel
 carries `LICENSE` and `THIRD_PARTY_NOTICES.md` as PEP 639 licence files and
 `PYPI.md` as its description.
 
-## 20. The interactive shell and other modules
+## 20. The OpenCode client
 
-`contexer` with no command runs `cli/repl.py: ContexerApp`, an earlier
-chat-style agent loop kept for exploration. None of the commands above import
-it.
-
-| Module | Role |
-| --- | --- |
-| `runtime/` | `ContexerAgent`: the LLM tool-calling loop, `StallGuard`, typed events |
-| `tools/` | Tool registry: workspace-sandboxed file tools, read-only git tools, a terminal tool |
-| `safety/` | Approval policy, dangerous-command detection, circuit breakers, redaction of tool output |
-| `state/`, `context/` | Session state, context window management, loop detection (`context/history.py: ConversationContext` is unused) |
-| `mcp/` | A stdio MCP client and the read-only GitHub MCP server integration (`/github`) |
-| `project/` | Workspace selection and protection |
-| `cli/commands.py`, `cli/ui.py` | Slash commands (`/loop` calls `contexer run`, `/verify` calls the verifier) and the shell's renderer |
-| `opencode/` | The OpenCode HTTP client, used by the shell's `/opencode` and by the OpenCode adapter |
+`opencode/` is the HTTP client for `opencode serve` (`client.py`), with an
+adapter (`adapter.py`) that creates a session, sends a prompt, waits for it to
+finish, and reads its messages and diff. `agents/opencode_agent.py` uses it to
+drive OpenCode.
 
 ## 21. Tests
 
-About 510 tests (`contexer-agent/tests/`), about 8 minutes, no network and no
+About 300 tests (`contexer-agent/tests/`), about 8 minutes, no network and no
 model. They use real Chromium against fixture apps, real Node process trees
 for the dev-server tests, real git for snapshots and hand-offs (with a local
 bare remote), fake `claude` and `codex` binaries that speak the real stream

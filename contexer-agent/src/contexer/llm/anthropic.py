@@ -1,19 +1,17 @@
 """Anthropic Messages API provider (plain httpx; no extra dependency).
 
 Used for compiling goals into checks, where model quality decides how many
-bugs a contract catches. Tool calling is not needed there and is not
-implemented; ``stream`` yields the complete reply as one chunk.
+bugs a contract catches.
 """
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Optional
+from typing import Any, Optional
 
 import httpx
 
 from contexer.llm.base import (
     LLMAuthenticationError,
-    LLMChunk,
     LLMError,
     LLMModelUnavailableError,
     LLMNetworkError,
@@ -68,15 +66,12 @@ class AnthropicProvider(LLMProvider):
         self,
         prompt: str | list[Any],
         system_instruction: Optional[str] = None,
-        tools: Optional[list[Any]] = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """One Messages API call. OpenAI-only options (e.g. ``response_format``) are ignored."""
         valid, error = self.validate_configuration()
         if not valid:
             raise LLMAuthenticationError(error or "Missing API key")
-        if tools:
-            raise LLMError("The Anthropic provider here does not implement tool calling.")
 
         body: dict[str, Any] = {
             "model": self._model,
@@ -113,16 +108,6 @@ class AnthropicProvider(LLMProvider):
             },
             metadata={"stop_reason": data.get("stop_reason")},
         )
-
-    async def stream(
-        self,
-        prompt: str | list[Any],
-        system_instruction: Optional[str] = None,
-        tools: Optional[list[Any]] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[LLMChunk]:
-        response = await self.generate(prompt, system_instruction, tools, **kwargs)
-        yield LLMChunk(text=response.text, finish_reason="stop")
 
     def _error_for(self, response: httpx.Response) -> LLMError:
         try:

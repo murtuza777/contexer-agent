@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Callable, Optional
+from typing import Any, Callable, Optional
 
 import pytest
 
-from contexer.llm.base import LLMChunk, LLMProvider, LLMResponse
+from contexer.llm.base import LLMProvider, LLMResponse
 
 
 class FakeLLM(LLMProvider):
@@ -29,7 +29,6 @@ class FakeLLM(LLMProvider):
         self,
         prompt: str | list[Any],
         system_instruction: Optional[str] = None,
-        tools: Optional[list[Any]] = None,
         **kwargs: Any,
     ) -> LLMResponse:
         self.prompts.append(str(prompt))
@@ -40,15 +39,6 @@ class FakeLLM(LLMProvider):
         if isinstance(reply, Exception):
             raise reply
         return LLMResponse(text=reply)
-
-    def stream(
-        self,
-        prompt: str | list[Any],
-        system_instruction: Optional[str] = None,
-        tools: Optional[list[Any]] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[LLMChunk]:
-        raise NotImplementedError
 
     def validate_configuration(self) -> tuple[bool, Optional[str]]:
         return True, None

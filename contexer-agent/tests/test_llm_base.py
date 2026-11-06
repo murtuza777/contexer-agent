@@ -5,7 +5,6 @@ import pytest
 from contexer.config.settings import ContexerConfig
 from contexer.llm.base import (
     LLMAuthenticationError,
-    LLMChunk,
     LLMError,
     LLMModelUnavailableError,
     LLMNetworkError,
@@ -58,12 +57,7 @@ class TestLLMErrors:
 
 
 class TestDataModels:
-    """LLMResponse and LLMChunk models."""
-
-    def test_chunk_defaults(self) -> None:
-        chunk = LLMChunk(text="hello")
-        assert chunk.text == "hello"
-        assert chunk.finish_reason is None
+    """LLMResponse model."""
 
     def test_response_defaults(self) -> None:
         resp = LLMResponse(text="output", model="google/gemma-4-31b-it:free", usage={"total": 10})

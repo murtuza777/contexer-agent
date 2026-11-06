@@ -4,8 +4,6 @@ It loads the environment (exported variables, then the nearest ``.env``, then
 what ``contexer setup`` saved) and routes to the commands registered in
 ``gate_cli.register``: setup, demo, doctor, init, run, verify, contract, runs,
 restore, replay, issue, models and bench. Those render through ``cli/term.py``.
-With no command it starts the interactive shell (``cli/repl.py``), which has
-its own renderer (``cli/ui.py``) and agent loop (``runtime/``).
 """
 
 from __future__ import annotations
@@ -39,8 +37,7 @@ app = typer.Typer(
         "build it, and proves every check in a real browser. New here? Run `contexer setup`, then `contexer demo`."
     ),
     add_completion=False,
-    no_args_is_help=False,
-    invoke_without_command=True,
+    no_args_is_help=True,
     rich_markup_mode="rich",
 )
 
@@ -54,7 +51,6 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
-    ctx: typer.Context,
     version: bool = typer.Option(
         False,
         "--version",
@@ -66,9 +62,8 @@ def main(
 ) -> None:
     """Contexer — the AI engineer that owns "done".
 
-    With no command, launch the interactive shell. Commands such as
-    ``verify``, ``replay`` and ``contract`` run once and exit with a gate
-    code: 0 pass, 1 fail, 2 needs action, 3 error.
+    Commands such as ``verify``, ``replay`` and ``contract`` exit with a
+    gate code: 0 pass, 1 fail, 2 needs action, 3 error.
     """
     _configure_terminal_encoding()
     from dotenv import find_dotenv, load_dotenv
@@ -80,12 +75,6 @@ def main(
     if dotenv_path:
         load_dotenv(dotenv_path, override=False)
     apply_user_settings()
-    if ctx.invoked_subcommand is not None:
-        return
-    from contexer.cli.repl import ContexerApp
-
-    contexer_app = ContexerApp()
-    contexer_app.run()
 
 
 def _register_commands() -> None:
