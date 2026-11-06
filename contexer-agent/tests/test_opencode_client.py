@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import httpx
 import pytest
@@ -12,7 +11,6 @@ from contexer.opencode.client import OpenCodeClient
 from contexer.opencode.exceptions import (
     OpenCodeAPIError,
     OpenCodeConnectionError,
-    OpenCodeError,
     OpenCodeTimeoutError,
 )
 from contexer.opencode.models import ExecutionStatus

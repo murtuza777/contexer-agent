@@ -94,7 +94,7 @@ async def test_anthropic_request_shape_and_reply() -> None:
 )
 async def test_anthropic_errors_map_and_never_echo_the_key(status: int, error: type) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status, json={"error": {"message": f"bad key sk-ant-test-0123456789abcdefghij"}})
+        return httpx.Response(status, json={"error": {"message": "bad key sk-ant-test-0123456789abcdefghij"}})
 
     with pytest.raises(error) as info:
         await _anthropic(handler).generate("x")

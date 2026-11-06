@@ -1,9 +1,7 @@
 """Bring your own key: the provider catalogue, saved settings, discovery, and `contexer setup`."""
 
-import json
 import os
 import sys
-from pathlib import Path
 from typing import Any
 
 import httpx

@@ -10,10 +10,6 @@ from typing import Optional
 
 from contexer.opencode.client import OpenCodeClient
 from contexer.opencode.exceptions import (
-    OpenCodeAbortError,
-    OpenCodeConnectionError,
-    OpenCodeError,
-    OpenCodeExecutionError,
     OpenCodeTimeoutError,
 )
 from contexer.opencode.models import (
