@@ -413,9 +413,8 @@ Honest gaps:
 | --- | --- |
 | [Product plan](contexer-agent/docs/product/product-plan.md) | Who it's for, what it does, and the order of work |
 | [Architecture](contexer-agent/docs/architecture.md) | Every module, data format, algorithm, constant and security measure, in one reference |
-| [LangGraph port](contexer-agent/docs/multi-agent/langgraph-port.md) | How the run loop would look on LangGraph, compared with the current loop, and why it stays as it is |
-| [Multi-agent design](contexer-agent/docs/multi-agent/design.md) | Every agent in a multi-agent Contexer, how a goal flows through them, and which agentic architecture fits |
-| [Multi-agent PRD](contexer-agent/docs/multi-agent/prd.md), [BRD](contexer-agent/docs/multi-agent/brd.md), [build plan](contexer-agent/docs/multi-agent/build-plan.md) | Requirements, business case and phased build plan for 0.5 to 0.7 |
+| [Agentic harness](contexer-agent/docs/agentic/architecture.md) | The current plan: agents that test, review and write fix prompts, with code keeping the verdict. Tickets per phase: [0](contexer-agent/docs/agentic/phase-0.md), [1](contexer-agent/docs/agentic/phase-1.md), [2](contexer-agent/docs/agentic/phase-2.md), [3](contexer-agent/docs/agentic/phase-3.md), [4](contexer-agent/docs/agentic/phase-4.md), [5](contexer-agent/docs/agentic/phase-5.md) |
+| [Earlier multi-agent plans](contexer-agent/docs/multi-agent/design.md) | Superseded by the agentic harness plan: [design](contexer-agent/docs/multi-agent/design.md), [PRD](contexer-agent/docs/multi-agent/prd.md), [BRD](contexer-agent/docs/multi-agent/brd.md), [build plan](contexer-agent/docs/multi-agent/build-plan.md), [LangGraph port](contexer-agent/docs/multi-agent/langgraph-port.md) |
 | [Technical plan](contexer-agent/docs/roadmap.md) | Milestones, formats and what was built when |
 | [Technical landscape](contexer-agent/docs/product/technical-landscape.md) | The repos and designs Contexer builds on, and its competitors |
 | [Try it yourself](contexer-agent/docs/try-it.md) | Install, set up and use it on your app, step by step; work on Contexer itself |
