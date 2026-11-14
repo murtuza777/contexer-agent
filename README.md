@@ -1,5 +1,10 @@
 # Contexer
 
+[![CI](https://github.com/murtuza777/contexer-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/murtuza777/contexer-agent/actions/workflows/ci.yml)
+[![Acceptance gate](https://github.com/murtuza777/contexer-agent/actions/workflows/acceptance-gate.yml/badge.svg)](https://github.com/murtuza777/contexer-agent/actions/workflows/acceptance-gate.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)
+
 **The AI engineer that owns "done".**
 
 Contexer sits on top of the coding agents you already use: Claude Code, Codex
@@ -407,21 +412,51 @@ Honest gaps:
   day. A paid model has not been benchmarked yet, for lack of a paid key on
   the development machine. Replays never call a model.
 
+## What's next
+
+Today Contexer proves a change and repairs it from fixed templates. The next
+versions add agents that do the rest of the human's work in the loop, while
+code keeps the verdict:
+
+| Agent | Takes over |
+| --- | --- |
+| Intent | Understanding what you meant, and remembering every correction |
+| Tester | Clicking through the running app like a user |
+| Reviewer | Reading the coding agent's diff |
+| Diagnoser | Working out the cause and writing the fix prompt |
+| Triage | Choosing the next move: repair, start over, roll back, or ask you |
+
+Every finding the Tester reports is turned into a recorded check and replayed
+by code. A bug or a pass counts only when the replay confirms it.
+
+| Phase | Result | Tickets |
+| --- | --- | --- |
+| 0 | Foundations: models with tools, the agent loop, the tester benchmark | [phase-0](contexer-agent/docs/agentic/phase-0.md) |
+| 1 | `contexer test`: explore an app, report confirmed findings | [phase-1](contexer-agent/docs/agentic/phase-1.md) |
+| 2 | Intent memory, project skills, a fix prompt to paste into any tool | [phase-2](contexer-agent/docs/agentic/phase-2.md) |
+| 3 | The closed loop: `contexer run` driven by the agents | [phase-3](contexer-agent/docs/agentic/phase-3.md) |
+| 4 | Diff review; pull requests and issues on the new engine | [phase-4](contexer-agent/docs/agentic/phase-4.md) |
+| 5 | Security pass, cost controls, live runs, release | [phase-5](contexer-agent/docs/agentic/phase-5.md) |
+
+The design is in
+[docs/agentic/architecture.md](contexer-agent/docs/agentic/architecture.md).
+Work is tracked in
+[GitHub issues](https://github.com/murtuza777/contexer-agent/issues), one
+milestone per phase.
+
 ## Docs
+
+The full index is in [contexer-agent/docs](contexer-agent/docs/README.md).
 
 | Document | Covers |
 | --- | --- |
-| [Product plan](contexer-agent/docs/product/product-plan.md) | Who it's for, what it does, and the order of work |
-| [Architecture](contexer-agent/docs/architecture.md) | Every module, data format, algorithm, constant and security measure, in one reference |
-| [Agentic harness](contexer-agent/docs/agentic/architecture.md) | The current plan: agents that test, review and write fix prompts, with code keeping the verdict. Tickets per phase: [0](contexer-agent/docs/agentic/phase-0.md), [1](contexer-agent/docs/agentic/phase-1.md), [2](contexer-agent/docs/agentic/phase-2.md), [3](contexer-agent/docs/agentic/phase-3.md), [4](contexer-agent/docs/agentic/phase-4.md), [5](contexer-agent/docs/agentic/phase-5.md) |
-| [Earlier multi-agent plans](contexer-agent/docs/multi-agent/design.md) | Superseded by the agentic harness plan: [design](contexer-agent/docs/multi-agent/design.md), [PRD](contexer-agent/docs/multi-agent/prd.md), [BRD](contexer-agent/docs/multi-agent/brd.md), [build plan](contexer-agent/docs/multi-agent/build-plan.md), [LangGraph port](contexer-agent/docs/multi-agent/langgraph-port.md) |
-| [Technical plan](contexer-agent/docs/roadmap.md) | Milestones, formats and what was built when |
-| [Technical landscape](contexer-agent/docs/product/technical-landscape.md) | The repos and designs Contexer builds on, and its competitors |
-| [Try it yourself](contexer-agent/docs/try-it.md) | Install, set up and use it on your app, step by step; work on Contexer itself |
+| [Try it yourself](contexer-agent/docs/try-it.md) | Install, set up and use it on your app, step by step |
 | [Developer guide](contexer-agent/README.md) | Setup, commands, `contexer.toml` and tests |
+| [Architecture](contexer-agent/docs/architecture.md) | What exists today: every module, data format, algorithm and security measure |
+| [Agentic harness](contexer-agent/docs/agentic/architecture.md) | What comes next, with tickets per phase |
 | [Changelog](contexer-agent/CHANGELOG.md) | What changed in each release |
-| [Website](website/README.md) | The landing page: run, build, deploy |
-| [Launch kit](marketing/product-hunt.md) | Product Hunt copy, gallery and the launch video's sources |
+| [Contributing](CONTRIBUTING.md) | How to set up, test, commit and open a pull request |
+| [Security](SECURITY.md) | How to report a vulnerability |
 
 MIT licensed. Contexer adapts parts of
 [AgentForge](https://github.com/MohitGoyal09/AgentForge) (MIT); see

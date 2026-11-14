@@ -187,11 +187,19 @@ correct app fails "shows 2 entries" because an earlier check added one.
 | `github/` | Commit status and job summary; the pull-request hand-off; the issue flow (draft comment, approval, live status) |
 | `bench/` | Seeded-bug benchmark, including `--live` scoring of LLM-compiled contracts |
 | `workflow/` | Goal-to-checks compiler (`criteria.py`) and the repository inspector |
+| `observer/` | One page load into a UI snapshot (ARIA tree, test ids) that drafts are grounded in |
+| `opencode/` | The OpenCode HTTP client the OpenCode adapter uses |
+| `demo/` | The todo app with a seeded bug behind `contexer demo` |
 
 The full technical reference is [docs/architecture.md](docs/architecture.md).
-The build plan and design decisions are in
-[docs/roadmap.md](docs/roadmap.md). The research behind each library choice is
-in [docs/technical-landscape.md](docs/product/technical-landscape.md).
+What comes next, with tickets, is in
+[docs/agentic/architecture.md](docs/agentic/architecture.md). All documents
+are listed in [docs/README.md](docs/README.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for the workflow, commit style and
+what a pull request needs.
 
 ## Tests
 
