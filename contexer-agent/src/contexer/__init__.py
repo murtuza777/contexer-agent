@@ -1,8 +1,9 @@
-"""Contexer — Autonomous Engineering Agent.
+"""Contexer: proof that a coding agent's work is done.
 
-This package provides the CLI and runtime for Contexer, an autonomous
-engineering layer that orchestrates coding agents like OpenCode through
-an intent → context → plan → execute → verify workflow.
+Contexer sits above coding agents (Claude Code, Codex, OpenCode). It turns a
+goal into checks a person approves, has the agent build, proves every check
+in a real browser, and repairs failures in a bounded loop. It never writes
+application code itself.
 """
 
 __version__ = "0.4.0"

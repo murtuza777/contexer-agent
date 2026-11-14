@@ -1,5 +1,7 @@
 # Contexer on LangGraph: a plan, and how it differs from today
 
+> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
+
 Contexer's run loop is a hand-written state machine in
 `src/contexer/controller/run.py` (about 500 lines). This document plans how
 the same product would be built on [LangGraph](https://github.com/langchain-ai/langgraph),
@@ -280,7 +282,7 @@ lost. This is the part of the product where LangGraph fits worst.
 | Loop limit | `range(max_repair_rounds + 2)` | `recursion_limit`, which must be kept in step with the round limit |
 | Tracing | `result.json`, `report.html`, server log | The same, plus optional LangSmith. It would have to stay off by default: traces would carry prompts, page snapshots and possibly secrets to a third party |
 | Dependencies | 7 | 9+, including `langchain-core` |
-| Tests | 509, no network | The same suite plus routing tests; the scripted agent still drives it |
+| Tests | About 300, no network | The same suite plus routing tests; the scripted agent still drives it |
 
 ## 6. Plan, if we did it
 

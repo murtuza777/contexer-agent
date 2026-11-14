@@ -1,5 +1,7 @@
 # Contexer product plan
 
+> **Research from October 2026.** Where this describes Contexer itself, it describes the prototype of that time. The current product is in [architecture.md](../architecture.md) and the current plan in [agentic/architecture.md](../agentic/architecture.md).
+
 Status: proposal v2, 2026-10-14. This replaces v1, which targeted non-coders
 and was built outward from the existing code. v2 is built from two research
 reports:

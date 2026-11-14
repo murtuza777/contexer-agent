@@ -1,5 +1,7 @@
 # Technical build plan: multi-agent Contexer
 
+> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
+
 Status: draft, 2026-11-03. Implements [prd.md](prd.md) following
 [design.md](design.md). Estimates are working days for one engineer who knows
 the codebase.
@@ -14,7 +16,7 @@ the codebase.
    today's `RunController` in 0.5, before the graph exists.
 3. **Code owns every decision.** Routing, scoring, verdicts and stopping stay
    in tested functions with no model calls.
-4. **With every agent off, behaviour equals 0.4.** The existing 509 tests and
+4. **With every agent off, behaviour equals 0.4.** The existing tests (about 300) and
    the benchmark run unchanged on every phase.
 
 ## 1. New and changed modules

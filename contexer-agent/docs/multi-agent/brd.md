@@ -1,5 +1,7 @@
 # BRD: multi-agent Contexer
 
+> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
+
 Status: draft, 2026-11-03. Owner: murtuza777.
 Product requirements: [prd.md](prd.md). Design: [design.md](design.md).
 
@@ -12,7 +14,7 @@ reasoning behind Contexer as a whole is in
 Contexer is an open-source acceptance gate for AI coding agents: it turns a
 goal into checks a person approves, lets Claude Code, Codex or OpenCode build,
 proves every check in a real browser, repairs, and hands over a pull request
-with the proof. 0.4.0 is the first PyPI release.
+with the proof. 0.4.0 is prepared as the first PyPI release; it is published when the `v0.4.0` tag is pushed.
 
 This initiative extends it from single changes on simple apps to
 feature-sized work on real multi-service codebases, by adding agents that

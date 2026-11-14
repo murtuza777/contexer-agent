@@ -29,10 +29,11 @@ first live runs exposed, fixed.
 
 ### Packaging
 
-- **On PyPI as `contexer-agent`** (`uv tool install contexer-agent`, `pipx
-  install contexer-agent` or `pip install contexer-agent`); the command is
-  still `contexer`. `contexer` on PyPI is a different project. This is the
-  first release published there.
+- **Packaged for PyPI as `contexer-agent`** (`uv tool install contexer-agent`,
+  `pipx install contexer-agent` or `pip install contexer-agent`); the command
+  is still `contexer`. `contexer` on PyPI is a different project. The package
+  is published when the `v0.4.0` tag is pushed; until then, install from
+  GitHub.
 - An MIT `LICENSE`, shipped in the wheel with the third-party notices, and a
   PyPI page (`PYPI.md`).
 - `release.yml` builds and checks the package on every push and publishes it

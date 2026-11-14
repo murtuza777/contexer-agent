@@ -1,5 +1,7 @@
 # PRD: multi-agent Contexer (0.5 → 0.7)
 
+> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
+
 Status: draft, 2026-11-03. Owner: murtuza777.
 Design: [design.md](design.md). Business case: [brd.md](brd.md).
 Build plan: [build-plan.md](build-plan.md).
