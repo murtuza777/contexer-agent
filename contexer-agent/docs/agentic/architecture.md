@@ -90,6 +90,22 @@ Corrections from the user ("no, deleting should ask first") are stored in
 `.contexer/intent/` and loaded on every later run. The user explains a
 behaviour once. The intent spec is plain Markdown the user can edit.
 
+**Project skills.** After a run, Contexer saves what it worked out about the
+app as short Markdown files in `.contexer/skills/`: how to sign in, how to
+seed data, which flows are slow or fragile. The Tester loads the relevant ones
+next time. A skill is advice for the agent; it is never proof.
+
+**Where things are stored.**
+
+| Data | Where | Why |
+| --- | --- | --- |
+| Intent, skills, contracts | Files in the project's `.contexer/` folder | Versioned with git, readable, shared with a team |
+| Run evidence and transcripts | `.contexer/runs/<id>/` | One folder per run |
+| Run history and resume state | SQLite in `.contexer/`, from Phase 3 | No server to run |
+| Keys and user settings | `~/.contexer/` | Never in the project |
+
+A hosted version would add Postgres. Nothing in Phases 0–5 needs a server.
+
 ## 7. What code owns
 
 - Verdicts and the gate (`gate/decision.py`).
@@ -102,8 +118,9 @@ behaviour once. The intent spec is plain Markdown the user can edit.
 
 | Need | Choice | Reason |
 | --- | --- | --- |
-| Graph, pause for the user, resume | LangGraph | `interrupt` fits "ask the user mid-run"; checkpoints give resume |
+| Agent loop (Phases 0–2) | Our own small loop, `run_agent` | One agent with tools needs no graph. OpenClaw and Hermes Agent are built the same way |
 | Model calls with tools, any provider | LangChain chat models built from our provider catalog | Our `llm/` layer has no tool calling |
+| Pause for the user, resume (Phase 3) | LangGraph, decided in ticket T3.1 | `interrupt` and checkpoints fit a loop that must wait for a person. Not added before it is needed |
 | Browser | Playwright in-process, our own tools | Reuses sign-in state and traces; actions can freeze into checks |
 | Tracing | JSONL transcript per agent in the run folder; Langfuse optional | Off by default, self-hostable |
 | Evals | The seeded-bug benchmark (7 apps, 40 bugs, benign variants) | Measures what the Tester must do |
@@ -129,7 +146,8 @@ src/contexer/
   crew/              base.py (run_agent), intent, tester, reviewer, diagnoser, triage, prompts/
   browser/           tools.py (browser tools), recorder.py (actions → Steps), freeze.py (finding → Check)
   intent/            store.py (.contexer/intent/)
-  graph/             state.py, nodes.py, routing.py, build.py
+  skills/            store.py (.contexer/skills/)
+  graph/             state.py, nodes.py, routing.py, build.py   (Phase 3)
 ```
 
 ## 10. Rejected
@@ -167,7 +185,7 @@ contract agreed before building) and claw-orchestrator's verdict vocabulary.
 | --- | --- | --- |
 | 0 Foundations | Chat models with tools, `run_agent`, transcripts, the tester benchmark | yes |
 | 1 Tester | `contexer test` explores an app and reports confirmed findings | yes |
-| 2 Intent and fix prompts | Clarifying questions, intent memory, a fix prompt to paste | yes |
+| 2 Intent and fix prompts | Clarifying questions, intent memory, project skills, a fix prompt to paste | yes |
 | 3 Closed loop | `contexer run` on the graph engine with Triage and resume | yes |
 | 4 Reviewer and pull requests | Diff review; PR and issue flow on the new engine | yes |
 | 5 Ready for users | Security pass, cost controls, live runs, release | yes |

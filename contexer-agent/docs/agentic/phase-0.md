@@ -36,8 +36,8 @@ and `contexer bench --suite tester` runs end to end with a stub agent.
 **Goal.** Any provider in our catalog can drive a tool-using agent.
 
 **Scope.**
-- Add `langgraph`, `langchain-core`, `langchain-openai`, `langchain-anthropic`
-  with pinned versions.
+- Add `langchain-core`, `langchain-openai`, `langchain-anthropic` with pinned
+  versions. LangGraph is not added here; see T3.1.
 - `src/contexer/llm/chat.py`: `chat_model(provider, model) -> BaseChatModel`,
   built from `llm/catalog.py` and the same key and precedence rules as
   `llm/factory.py`. OpenAI-compatible providers go through one class with a

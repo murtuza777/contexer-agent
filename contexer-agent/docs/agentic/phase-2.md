@@ -5,7 +5,7 @@ writes the fix prompt. This is the first version people can use day to day,
 with any coding tool, because the prompt is pasted by the user. See
 [architecture.md](architecture.md) §4 and §6.
 
-Phase is done when: the three tickets pass and one live session on the demo
+Phase is done when: the four tickets pass and one live session on the demo
 app goes goal → findings → fix prompt → fixed app → all checks green.
 
 ---
@@ -82,3 +82,29 @@ run it again.
 
 **Verify.** Live run on the demo app with OpenCode or Claude Code; the
 transcript shows 0 model calls for the failing `--again` case.
+
+---
+
+## T2.4 Project skills
+
+**Goal.** Contexer gets better at testing one app the more it tests it.
+
+**Scope.**
+- `src/contexer/skills/store.py`: `.contexer/skills/<name>.md` with a one-line
+  description each; load, save, list.
+- After a `contexer test` run, the Tester proposes at most 3 skills from what
+  it learned: how to sign in, how to reach a screen, how to seed or reset
+  data, which flows are slow.
+- Before a run, the skills whose description matches the intent are added to
+  the Tester's prompt.
+- A skill is advice. It never changes a verdict, and the user can edit or
+  delete the file.
+- Secrets are never written into a skill; `${ENV}` names are kept as names.
+
+**Acceptance.**
+- A second run on the same app that needs sign-in uses fewer Tester steps
+  than the first. Measured on the `members` fixture and recorded.
+- A skill containing a value that matches a configured secret is rejected.
+- With the skills folder deleted, a run behaves exactly as a first run.
+
+**Verify.** `pytest tests/test_skills.py`; the two-run measurement.

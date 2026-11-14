@@ -12,9 +12,14 @@ anything.
 
 ## T3.1 The graph
 
-**Goal.** The loop as a LangGraph graph with typed state.
+**Goal.** The loop as a graph with typed state, able to pause and resume.
 
 **Scope.** `src/contexer/graph/`:
+- Decision first: a one-day spike of the loop on LangGraph (`interrupt`,
+  SQLite checkpointer). Adopt it if pause, resume and Ctrl+C all work on
+  Windows and Linux; otherwise keep our own loop with a small state file.
+  The result is recorded in `docs/agentic/architecture.md` §8. The rest of
+  this ticket assumes LangGraph, pinned.
 - `state.py`: run id, goal, intent, contract ids, attempts (snapshot ref,
   score, findings), best attempt, cost, terminal state and reason. Live
   objects (browser, dev server, coding agent, shadow repo) live in a run
