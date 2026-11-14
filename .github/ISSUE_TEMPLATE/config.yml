@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/murtuza777/contexer-agent/security/advisories/new
+    about: Report it privately, not as a public issue.
+  - name: Plan and tickets
+    url: https://github.com/murtuza777/contexer-agent/blob/main/contexer-agent/docs/agentic/architecture.md
+    about: What is being built next, phase by phase.

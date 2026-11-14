@@ -1,0 +1,35 @@
+name: Bug report
+description: Something Contexer does wrong
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, what you got. Paste the terminal output.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest app and command that show it. Remove any secrets.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Contexer version or commit
+      placeholder: "0.4.0, or a commit hash"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "Windows 11, Python 3.12, Node 22, Claude Code 2.x"
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of contexer doctor
+      render: text

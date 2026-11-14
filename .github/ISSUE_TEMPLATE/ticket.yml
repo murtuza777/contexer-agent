@@ -1,0 +1,32 @@
+name: Ticket
+description: A planned piece of work with acceptance checks (maintainers)
+labels: ["ticket"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One sentence. What is true when this is done?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Files and behaviour in scope. Say what is out of scope.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+      description: Checks that can be run. Each one passes or fails.
+    validations:
+      required: true
+  - type: textarea
+    id: verify
+    attributes:
+      label: Verify
+      description: The commands or live run that prove the acceptance checks.
+    validations:
+      required: true
