@@ -83,7 +83,7 @@ runs:
 
     - name: Upload evidence report
       if: always()
-      uses: actions/upload-artifact@v7.0.1
+      uses: actions/upload-artifact@v7.0.2
       with:
         name: contexer-report
         path: ${{ inputs.working-directory }}/.contexer/runs/
