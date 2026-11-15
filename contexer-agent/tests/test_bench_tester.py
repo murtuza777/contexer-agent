@@ -176,4 +176,32 @@ def test_the_command_refuses_an_agent_it_does_not_have_and_a_mix_of_suites(tmp_p
     wrong_suite = CliRunner().invoke(cli, ["bench", "--suite", "nope", "--fixtures", fixtures])
     assert wrong_suite.exit_code == 2
 
-    assert list(TESTER_AGENTS) == ["stub"]
+    assert list(TESTER_AGENTS) == ["stub", "tester"]
+
+
+async def test_the_tester_agent_is_measured_through_the_same_replays(tmp_path: Path) -> None:
+    """The real agent loop and browser tools, on a scripted model: its recorded bug is found, by replay."""
+    from contexer.bench.tester import LiveTester
+    from tests.fakes import ScriptedChatModel, calls, submit
+
+    def script() -> list:
+        return [
+            calls(
+                ("fill", {"target": {"placeholder": "What needs doing?"}, "value": "Buy milk"}),
+                ("click", {"target": {"role": "button", "name": "Add"}}),
+                ("check", {"target": {"role": "checkbox", "name": "Complete Buy milk"}}),
+                ("expect", {"kind": "text", "target": {"test_id": "remaining-count"}, "equals": "0 left"}),
+            ),
+            # On the correct app e1 passes, so recording it as a bug is refused and nothing is reported.
+            calls(("record_finding", {"kind": "bug", "title": "The count ignores completed tasks", "observation": "e1"})),
+            submit(summary="Done."),
+        ]
+
+    model = ScriptedChatModel(*script(), *script())  # the correct app, then the bug
+    report = await run_tester_bench(_mini_fixture(tmp_path), LiveTester(model=model))
+
+    [score] = report.apps
+    assert (score.bugs, score.found, score.false_alarms, score.unconfirmed) == (1, 1, 0, 0)
+    assert score.steps == 6
+    bug_run = next(r for r in report.runs if r.kind == "bug")
+    assert bug_run.real == ["The count ignores completed tasks"] and bug_run.error == ""

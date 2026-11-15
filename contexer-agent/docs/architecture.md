@@ -119,7 +119,8 @@ A `contexer run "GOAL" --pr`, end to end:
 | `evidence/` | Run directories, `report.html`, `result.json` |
 | `github/` | Commit status and job summary, the REST client, the pull-request hand-off, the issue flow |
 | `llm/` | Provider catalog, model discovery, provider clients, structured-output parsing, chat models with tools (`chat.py`) |
-| `crew/` | The agent loop (`base.py: run_agent`) that Contexer's own agents will run in. No agent ships yet |
+| `crew/` | Contexer's own agents: the loop (`base.py: run_agent`), transcripts, and the Tester (`tester.py`, `prompts/tester.md`) |
+| `browser/` | A browser an agent operates: the tools (`tools.py`), the recording of what it did (`recorder.py`), and freezing findings into checks and replaying them (`freeze.py`) |
 | `config/` | Environment settings, `contexer.toml`, per-user settings in `~/.contexer` |
 | `workflow/` | Goal-to-checks compiler (`criteria.py`), repository inspector, static file server |
 | `bench/` | The seeded-bug benchmark: the gate suite (`runner.py`) and the tester suite (`tester.py`) |
@@ -662,6 +663,65 @@ prompt nor the file.
 `tracing` extra installed, `tracing_callbacks()` attaches Langfuse's LangChain
 handler to every model call. With them unset, `langfuse` is not imported.
 
+### The Tester and `contexer test` (`browser/`, `crew/tester.py`, `cli/test_cli.py`)
+
+```mermaid
+flowchart LR
+    intent["Intent, in words"] --> tester["Tester agent<br/>crew/tester.py"]
+    tester -- "browser tools" --> page[("One page on the running app<br/>browser/tools.py")]
+    page -- "every action a Step,<br/>every expect an observation" --> rec["Recorder"]
+    tester -- "record_finding(e3)" --> findings["Findings<br/>(claims)"]
+    rec --> findings
+    findings --> freeze["freeze → Check<br/>browser/freeze.py"]
+    freeze --> replay["CheckRunner, fresh browser, twice"]
+    replay --> shown["Confirmed bugs and working behaviours"]
+    replay --> dropped["unconfirmed.json"]
+```
+
+- **Browser tools.** `BrowserSession` holds one Chromium page on the app,
+  with the project's signed-in state. The tools are `snapshot`, the step
+  verbs (`click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`,
+  `goto`), `expect`, `read_errors` (uncaught exceptions, console errors,
+  requests that failed or answered 400+), `screenshot` and `reset` (a fresh
+  context, the `[app] reset` command if there is one, optionally signed
+  out). Targets are validated by `Locator`; actions run through
+  `CheckRunner._perform` and expectations through `CheckRunner._evaluate`,
+  the code a replay uses. A tool never raises: a problem is text starting
+  with `Error:`, with the page's snapshot when a target matched nothing.
+  Only actions that happened are recorded.
+- **Recorder.** Steps since the page was last fresh, and an `Observation`
+  per `expect` (id `e1`, `e2`..., the steps so far, the expectation, pass or
+  fail, what the page showed, whether it was signed out).
+- **Tester.** `run_tester(intent, model, browser, ...)` runs in `run_agent`
+  with the browser tools and `record_finding(kind, title, observation, ...)`.
+  The model gets the intent, the current snapshot and the descriptions of
+  the approved checks. A finding is refused when the observation does not
+  exist, when a `bug` points at a pass or a `works` at a fail, or when the
+  observation was already reported. Default 40 steps, 900 s. Whatever ends
+  the run, the findings recorded so far are returned.
+- **Freeze and replay.** `freeze(finding)` is the recorded steps plus the one
+  expectation. `replay_findings` runs every check `DEFAULT_REPEATS` (2)
+  times with the project's sign-in and reset. Confirmed: a `bug` whose check
+  is refuted every time, a `works` whose check passes every time.
+  Unconfirmed, with the reason: the other answer, a step that could not act,
+  or replays that disagreed. `draft_contract` turns the confirmed checks into
+  an unapproved contract; the checks of confirmed bugs fail today and are
+  the acceptance checks for the fix.
+- **`contexer test`.** Builds the model (`--provider`/`--model`, else the
+  drafting model's choice; a model its provider lists without tools is
+  refused), starts the app, signs in, runs the Tester, replays, and writes
+  `result.json`, `report.html`, `agents/tester.jsonl`, `replay/` screenshots,
+  `draft-contract.json` and `unconfirmed.json` in the run folder. `--save`
+  also stores the draft among the project's contracts. Outcomes and exit
+  codes: `no_bugs` 0, `bugs` 1, `could_not_test` 2 (no model, or the model
+  failed before any bug was confirmed), `error` 3 (the app did not start,
+  sign-in failed, Chromium missing), 130 after Ctrl+C.
+- **Ctrl+C.** asyncio cancels Playwright's own tasks with ours, and a close
+  then waits for an answer that never comes. `BrowserSession.close` bounds
+  the wait (5 s, 1 s when interrupted) and leaves the close behind; the
+  driver exits with the event loop and takes Chromium with it. The app's
+  server is stopped by `open_app`.
+
 ### Choosing the drafting model (`llm/factory.py`)
 
 1. `[compiler] provider` / `model` in `contexer.toml`.
@@ -717,6 +777,10 @@ server.log             the dev server's output
 checks/<contract>/     per-check screenshots (and traces when kept)
 attempt-<n>/           contexer run: the same, per attempt
 agents/<name>.jsonl    one transcript per Contexer agent (crew/), secrets masked
+replay/                contexer test: a screenshot per replayed finding
+screens/               contexer test: screenshots the Tester took
+draft-contract.json    contexer test: the confirmed checks, not approved
+unconfirmed.json       contexer test: findings that did not reproduce, with the reason
 sign-in.jpg            when sign-in failed
 observation_*.png      the page as observed before drafting
 ```
@@ -831,7 +895,7 @@ the help.
 | Group (`contexer --help`) | Commands |
 | --- | --- |
 | Get started | `setup`, `demo`, `doctor`, `init` |
-| Build and prove | `run`, `verify`, `contract` (`draft`, `list`, `show`, `approve`), `runs`, `restore` |
+| Build and prove | `test`, `run`, `verify`, `contract` (`draft`, `list`, `show`, `approve`), `runs`, `restore` |
 | CI and GitHub | `replay`, `issue` (`draft`, `build`, `event`) |
 | More | `models`, `bench` |
 
@@ -946,7 +1010,8 @@ under test has reproduced; on a bug variant it is replayed once more on the
 correct app and counts as **found** only if it passes there. Refuted on
 correct or benign code is a **false alarm**; anything that did not reproduce
 is **unconfirmed**. Steps and reported cost are summed per app. The `stub`
-agent returns no findings, so the suite runs with no model. The command
+agent returns no findings, so the suite runs with no model; `tester` is the
+Tester agent on the configured model, reporting the bugs it recorded. The command
 exits 1 only when an app did not start, and writes
 `bench/tester-results/<agent>.md` after a run of every app.
 
@@ -987,7 +1052,7 @@ drive OpenCode.
 
 ## 21. Tests
 
-About 390 tests (`contexer-agent/tests/`), about 8 minutes, no network and no
+About 440 tests (`contexer-agent/tests/`), about 8 minutes, no network and no
 model. They use real Chromium against fixture apps, real Node process trees
 for the dev-server tests, real git for snapshots and hand-offs (with a local
 bare remote), fake `claude` and `codex` binaries that speak the real stream

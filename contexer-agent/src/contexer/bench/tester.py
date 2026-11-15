@@ -79,8 +79,58 @@ class StubTester:
         return Exploration()
 
 
-# Agents `--agent` can name. The real Tester registers here in Phase 1.
-TESTER_AGENTS: dict[str, Callable[[], TesterAgent]] = {"stub": StubTester}
+class LiveTester:
+    """The Tester agent (``crew/tester.py``) on the model the user configured.
+
+    It reports the bugs the agent recorded, frozen into checks. Whether they
+    are real is decided by this benchmark's replays, not by the agent, and not
+    by the replay ``contexer test`` would do: the benchmark also replays on
+    the correct app, which a user's project does not have.
+    """
+
+    name = "tester"
+
+    def __init__(self, model: Optional[object] = None, max_steps: Optional[int] = None) -> None:
+        self.model = model
+        self.max_steps = max_steps
+
+    async def explore(self, goal: str, app: RunningApp, project_dir: Path) -> Exploration:
+        from contexer.browser.freeze import freeze
+        from contexer.browser.tools import BrowserSession
+        from contexer.cli.test_cli import build_model
+        from contexer.crew.tester import DEFAULT_MAX_STEPS, run_tester
+        from contexer.gate.session import DEV_SERVER_TIMEOUT_SCALE
+        from contexer.verification.runner import _typed_values
+
+        model = self.model or build_model(project_dir)
+        run = RunDir.create(project_dir)
+        session = VerificationSession(project_dir, run, verifier=Verifier(llm_provider=None, runner=CheckRunner()))
+        state = await session.signed_in_state(app)
+        if session.sign_in_error is not None:
+            return Exploration(error=f"could not sign in: {session.sign_in_error}")
+        browser = BrowserSession(
+            app.url,
+            run_dir=run.path,
+            storage_state=state,
+            reset=session._reset_before_each(app) if session.reset else None,
+            timeout_scale=DEV_SERVER_TIMEOUT_SCALE if app.kind == "dev" else 1.0,
+        )
+        async with browser:
+            tested = await run_tester(
+                goal,
+                model,  # type: ignore[arg-type]
+                browser,
+                run_dir=run.path,
+                max_steps=self.max_steps or DEFAULT_MAX_STEPS,
+                secrets=_typed_values(session.auth.as_check()) if session.auth is not None else [],
+            )
+        bugs = [Finding(title=f.title, check=freeze(f), detail=f.description) for f in tested.findings if f.kind == "bug"]
+        error = "" if tested.status == "ok" else f"the tester ended with {tested.status}: {tested.error}"
+        return Exploration(findings=bugs, steps=tested.steps, cost_usd=tested.cost_usd, error=error)
+
+
+# Agents `--agent` can name.
+TESTER_AGENTS: dict[str, Callable[[], TesterAgent]] = {"stub": StubTester, "tester": LiveTester}
 
 
 class TesterRun(BaseModel):

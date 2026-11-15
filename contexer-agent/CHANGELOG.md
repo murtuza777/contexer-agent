@@ -7,6 +7,36 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Added
 
+- **`contexer test "what the app should do"`**: the Tester agent uses your
+  running app in a real browser against the intent you state, then every
+  finding is replayed by code in a fresh browser. Only findings that
+  reproduce are shown: confirmed bugs, confirmed working behaviours, and a
+  count of the ones that did not reproduce. No coding agent is involved and
+  nothing in the project is changed. Options: `--url`, `--steps`, `--model`,
+  `--provider`, `--save` (keep the confirmed checks as a draft contract),
+  `--json`, `--open`. Exit codes: 0 no confirmed bugs, 1 confirmed bugs,
+  2 could not test, 3 error, 130 stopped with Ctrl+C.
+- **Browser tools** (`browser/tools.py`, `browser/recorder.py`): `snapshot`,
+  `click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`, `goto`,
+  `read_errors`, `screenshot`, `expect` and `reset`, on one page that reuses
+  the project's sign-in. They are the verbs of the check language and act
+  through the code that replays checks, so every action is recorded as a
+  `Step` and every `expect` as a replayable observation. A target that
+  matches nothing comes back as an error with the page's snapshot; typed
+  passwords are masked in what the model reads and in the transcript.
+- **The Tester** (`crew/tester.py`, `crew/prompts/tester.md`): tests each
+  stated behaviour and then the edge cases (empty input, twice, undo, reload,
+  signed out). A finding points at one `expect` result; code copies the steps
+  and the expectation from the recording and refuses a finding the
+  observation does not support. Findings recorded before a step or time
+  limit are kept.
+- **Freeze and replay** (`browser/freeze.py`): a finding becomes a `Check`
+  and is replayed twice with `CheckRunner`. A bug is confirmed when its check
+  is refuted both times, a working behaviour when it passes both times;
+  anything else goes to `unconfirmed.json` with the reason. Confirmed checks
+  form a draft contract.
+- `contexer bench --suite tester --agent tester` measures the Tester on the
+  seeded bugs.
 - **Chat models that can call tools** (`llm/chat.py`). `chat_model(provider,
   model)` builds a LangChain chat model for every provider in the catalog,
   with the same keys and precedence rules as the drafting model: one class

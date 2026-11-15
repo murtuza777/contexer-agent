@@ -46,6 +46,7 @@ def register(app: typer.Typer) -> None:
     from contexer.cli.doctor_cli import doctor
     from contexer.cli.setup_cli import models, setup
     from contexer.cli.issue_cli import issue_app
+    from contexer.cli.test_cli import test
 
     # `contexer --help` lists commands by what a person is doing, in the order they meet them.
     start, build, ci, more = "Get started", "Build and prove", "CI and GitHub", "More"
@@ -53,6 +54,7 @@ def register(app: typer.Typer) -> None:
     app.command("demo", rich_help_panel=start)(demo)
     app.command("doctor", rich_help_panel=start)(doctor)
     app.command("init", rich_help_panel=start)(init)
+    app.command("test", rich_help_panel=build)(test)
     app.command("run", rich_help_panel=build)(run)
     app.command("verify", rich_help_panel=build)(verify)
     app.add_typer(contract_app, name="contract", rich_help_panel=build)

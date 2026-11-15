@@ -65,8 +65,9 @@ correct app and each benign variant run `--repeats` times (default 1), each
 bug once.
 
 `--agent stub` reports nothing, so the suite runs with no model and scores 0
-found and 0 false alarms: the floor, and proof that the harness works. The
-Tester agent registers here in Phase 1 (`bench/tester.py: TESTER_AGENTS`).
+found and 0 false alarms: the floor, and proof that the harness works.
+`--agent tester` is the Tester agent (`crew/tester.py`) on the model you
+configured; it costs model calls for every variant of every app.
 Each run of the whole suite writes `tester-results/<agent>.md`.
 
 ## What the numbers mean, and don't
