@@ -14,6 +14,12 @@ Phase 0 adds the foundations; no agent ships yet.
   dependencies: `langchain-core`, `langchain-openai`, `langchain-anthropic`
   (and through them `anthropic` and `tiktoken`); `openai` is now 2.45 or
   newer. LangChain is imported only when an agent runs.
+- **`run_agent`** (`crew/base.py`): the one loop every Contexer agent runs
+  in. Model call, tool calls, results, repeat, until the model hands in an
+  answer that fits the agent's schema or a limit set in code is reached
+  (steps, time, output tokens, two corrections of an invalid answer). A tool
+  that raises is an error result for the model, not the end of the run.
+  `tests/fakes.py` has the scripted chat model the agent tests use.
 - `contexer doctor` says whether the model in use can call tools, from the
   provider's own model list. A model that cannot gets an error that names it.
 - A link checker for the Markdown in this repository

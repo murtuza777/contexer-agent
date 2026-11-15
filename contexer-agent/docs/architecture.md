@@ -118,7 +118,8 @@ A `contexer run "GOAL" --pr`, end to end:
 | `controller/` | The run state machine and the agent prompts |
 | `evidence/` | Run directories, `report.html`, `result.json` |
 | `github/` | Commit status and job summary, the REST client, the pull-request hand-off, the issue flow |
-| `llm/` | Provider catalog, model discovery, provider clients, structured-output parsing |
+| `llm/` | Provider catalog, model discovery, provider clients, structured-output parsing, chat models with tools (`chat.py`) |
+| `crew/` | The agent loop (`base.py: run_agent`) that Contexer's own agents will run in. No agent ships yet |
 | `config/` | Environment settings, `contexer.toml`, per-user settings in `~/.contexer` |
 | `workflow/` | Goal-to-checks compiler (`criteria.py`), repository inspector, static file server |
 | `bench/` | The seeded-bug benchmark runner |
@@ -623,6 +624,28 @@ models built from the same catalog:
   `tool_calling_error` when the API refuses the request, and from
   `check_tool_calling` (one real tool call and its result, used by the live
   test) when the model answers without calling the tool.
+
+### The agent loop (`crew/base.py`)
+
+`run_agent(spec, model, tools, user_input, *, run_dir) -> AgentResult` runs
+one agent. `AgentSpec` holds its name, system prompt, output schema (a
+pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
+`max_output_tokens` (4,096).
+
+- The model gets the agent's tools plus `submit`, whose arguments are the
+  output schema. Calling `submit` with a valid answer ends the run. An answer
+  written as JSON text is accepted too.
+- An answer that does not fit the schema goes back to the model with what was
+  wrong, at most twice (`MAX_CORRECTIONS`).
+- Tool calls in one reply run in order. A tool that raises, an unknown tool
+  and bad arguments all become an error result the model can read; none ends
+  the run. Results longer than 20,000 characters are cut.
+- `AgentResult.status`: `ok`, `step_limit`, `timeout`, `invalid_output`,
+  `model_error`. It also carries the steps (model calls), tool calls, tokens
+  in and out, the duration, and the cost when the provider reports one
+  (OpenRouter's `usage.cost`); otherwise the cost is `None`, never a guess.
+- The output is the agent's opinion. Nothing in `crew/` can mark a result as
+  proven.
 
 ### Choosing the drafting model (`llm/factory.py`)
 
