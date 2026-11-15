@@ -55,6 +55,11 @@ dev = [
     "pyyaml>=6.0",
 ]
 
+# Langfuse tracing for the agents; used only when LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set.
+tracing = [
+    "langfuse>=5.2.0,<6.0",
+]
+
 [project.scripts]
 contexer = "contexer.cli:app"
 

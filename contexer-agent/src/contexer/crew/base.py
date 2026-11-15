@@ -10,6 +10,10 @@ output schema, because tool calling is the one structured channel every
 provider has. A model that writes the answer as JSON text instead is accepted
 too.
 
+Every model call and tool call is written to the agent's transcript in the
+run folder, and what a tool returns is masked before the model sees it (see
+``crew/transcript.py``).
+
 An agent's output is its opinion. Nothing here marks anything as proven: that
 is decided by replaying checks (see ``verification/``).
 """
@@ -26,10 +30,12 @@ from typing import Any, Callable, Literal, Optional, Sequence
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ValidationError
 
-from contexer.llm.chat import clean_error, tool_calling_error
+from contexer.crew.transcript import Masker, Transcript, tracing_callbacks
+from contexer.llm.chat import clean_error, describe_model, tool_calling_error
 from contexer.llm.structured import parse_json_object
 
 AgentStatus = Literal["ok", "step_limit", "timeout", "invalid_output", "model_error"]
@@ -68,6 +74,8 @@ class AgentResult:
     cost_usd: Optional[float] = None
     duration_seconds: float = 0.0
     error: str = ""
+    # agents/<name>.jsonl in the run folder; None when there is no run folder.
+    transcript: Optional[Path] = None
     messages: list[BaseMessage] = field(default_factory=list, repr=False)
 
 
@@ -81,6 +89,7 @@ async def run_agent(
     user_input: str,
     *,
     run_dir: Optional[Path],
+    secrets: Sequence[str] = (),
 ) -> AgentResult:
     """Run ``spec`` on ``model`` with ``tools`` until it submits a valid answer or hits a limit.
 
@@ -92,8 +101,12 @@ async def run_agent(
 
     A tool that raises does not end the run: the model receives the error as
     the tool's result and decides what to do next.
+
+    ``secrets`` are values that must not appear anywhere (a test account's
+    password, say). They, and every key in the environment, are masked in the
+    transcript and in tool results before the model reads them.
     """
-    run = _Run(spec, model, tools)
+    run = _Run(spec, model, tools, Transcript(run_dir, spec.name, Masker(secrets)))
     started = time.monotonic()
     try:
         async with asyncio.timeout(spec.timeout):
@@ -101,15 +114,32 @@ async def run_agent(
     except TimeoutError:
         run.result.status = "timeout"
         run.result.error = f"{spec.name} did not finish within {spec.timeout:g} seconds"
-    run.result.duration_seconds = time.monotonic() - started
-    run.result.messages = run.messages
-    return run.result
+    result = run.result
+    result.duration_seconds = time.monotonic() - started
+    result.messages = run.messages
+    result.transcript = run.transcript.path
+    run.transcript.write(
+        "end",
+        status=result.status,
+        steps=result.steps,
+        tool_calls=result.tool_calls,
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
+        cost_usd=result.cost_usd,
+        seconds=round(result.duration_seconds, 3),
+        error=result.error,
+        output=result.output.model_dump(mode="json") if result.output is not None else None,
+    )
+    return result
 
 
 class _Run:
-    def __init__(self, spec: AgentSpec, model: BaseChatModel, tools: Sequence[Tool]) -> None:
+    def __init__(self, spec: AgentSpec, model: BaseChatModel, tools: Sequence[Tool], transcript: Transcript) -> None:
         self.spec = spec
         self.model = model
+        self.transcript = transcript
+        callbacks = tracing_callbacks()  # Langfuse, only when the user configured it
+        self.config: Optional[RunnableConfig] = {"callbacks": callbacks} if callbacks else None
         self.tools: dict[str, BaseTool] = {}
         for item in tools:
             tool = _as_tool(item)
@@ -131,19 +161,45 @@ class _Run:
     async def loop(self, user_input: str) -> None:
         spec, result = self.spec, self.result
         self.messages = [SystemMessage(_system_prompt(spec)), HumanMessage(user_input)]
+        self.transcript.write(
+            "start",
+            model=describe_model(self.model),
+            input=user_input,
+            tools=[*self.tools, SUBMIT_TOOL],
+            max_steps=spec.max_steps,
+            timeout=spec.timeout,
+            max_output_tokens=spec.max_output_tokens,
+        )
         while result.steps < spec.max_steps:
             result.steps += 1
+            called = time.monotonic()
             try:
-                reply = await self.bound.ainvoke(self.messages, max_tokens=spec.max_output_tokens)
+                reply = await self.bound.ainvoke(
+                    self.messages, config=self.config, max_tokens=spec.max_output_tokens
+                )
             except Exception as exc:
                 refused = tool_calling_error(exc, self.model)
                 result.status = "model_error"
                 result.error = str(refused) if refused else clean_error(exc)
+                self.transcript.write(
+                    "model", step=result.steps, seconds=_elapsed(called), error=result.error
+                )
                 return
             if not isinstance(reply, AIMessage):
                 reply = AIMessage(content=str(getattr(reply, "content", reply)))
             self.messages.append(reply)
             self._count(reply)
+            usage = reply.usage_metadata or {}
+            self.transcript.write(
+                "model",
+                step=result.steps,
+                seconds=_elapsed(called),
+                tokens_in=int(usage.get("input_tokens") or 0),
+                tokens_out=int(usage.get("output_tokens") or 0),
+                cost_usd=reported_cost(reply),
+                text=str(reply.text),
+                tool_calls=[{"name": call["name"], "args": call["args"]} for call in reply.tool_calls],
+            )
             if await self._handle(reply):
                 return
         result.error = f"{spec.name} used all {spec.max_steps} steps without handing in an answer"
@@ -170,7 +226,19 @@ class _Run:
                     return True
                 continue
             self.result.tool_calls += 1
+            called = time.monotonic()
             content, status = await self._call_tool(call["name"], call["args"])
+            # A page may show a password or a key; the model has no use for it.
+            content = self.transcript.masker.text(content)
+            self.transcript.write(
+                "tool",
+                step=self.result.steps,
+                name=call["name"],
+                args=call["args"],
+                status=status,
+                result=content,
+                seconds=_elapsed(called),
+            )
             self.messages.append(ToolMessage(content, tool_call_id=call_id, name=call["name"], status=status))
         return done
 
@@ -232,6 +300,10 @@ def reported_cost(reply: AIMessage) -> Optional[float]:
         if isinstance(usage, dict) and isinstance(usage.get("cost"), (int, float)) and not isinstance(usage["cost"], bool):
             return float(usage["cost"])
     return None
+
+
+def _elapsed(since: float) -> float:
+    return round(time.monotonic() - since, 3)
 
 
 def _system_prompt(spec: AgentSpec) -> str:

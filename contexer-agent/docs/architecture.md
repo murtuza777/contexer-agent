@@ -647,6 +647,21 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 - The output is the agent's opinion. Nothing in `crew/` can mark a result as
   proven.
 
+**Transcript** (`crew/transcript.py`): each run appends to
+`runs/<run-id>/agents/<name>.jsonl`. A `start` line (model, input, tools,
+limits), then one `model` line per model call (step, seconds, tokens in and
+out, cost, text, tool calls, or the error) and one `tool` line per tool call
+(name, arguments, status, result, seconds), then an `end` line (status,
+totals, the output). `Masker` replaces the secrets the caller names, every
+provider key and token in the environment, and anything shaped like an API
+key, using `verification/checks.py: redact`. Tool results are masked before
+they go back to the model, so a password shown on a page reaches neither the
+prompt nor the file.
+
+**Tracing**: with `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` set and the
+`tracing` extra installed, `tracing_callbacks()` attaches Langfuse's LangChain
+handler to every model call. With them unset, `langfuse` is not imported.
+
 ### Choosing the drafting model (`llm/factory.py`)
 
 1. `[compiler] provider` / `model` in `contexer.toml`.
@@ -701,6 +716,7 @@ run.json               contexer run only: the whole RunOutcome (attempts, agent 
 server.log             the dev server's output
 checks/<contract>/     per-check screenshots (and traces when kept)
 attempt-<n>/           contexer run: the same, per attempt
+agents/<name>.jsonl    one transcript per Contexer agent (crew/), secrets masked
 sign-in.jpg            when sign-in failed
 observation_*.png      the page as observed before drafting
 ```
@@ -877,6 +893,7 @@ and prints the fix under each problem.
 | `CONTEXER_HOME` | Where user settings live (default `~/.contexer`) |
 | `CONTEXER_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` | Pull requests, issues, commit statuses |
 | `GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`, `GITHUB_RUN_ID`, `GITHUB_SERVER_URL`, `GITHUB_API_URL`, `GITHUB_STEP_SUMMARY`, `GITHUB_OUTPUT`, `GITHUB_ACTIONS` | Read in GitHub Actions |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Optional tracing of the agents to Langfuse (needs the `tracing` extra; Langfuse reads its other variables itself) |
 | `${NAME}` (any) | Secrets referenced by checks and `[auth]` |
 
 ## 17. Security model

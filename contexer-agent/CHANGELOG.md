@@ -20,6 +20,13 @@ Phase 0 adds the foundations; no agent ships yet.
   (steps, time, output tokens, two corrections of an invalid answer). A tool
   that raises is an error result for the model, not the end of the run.
   `tests/fakes.py` has the scripted chat model the agent tests use.
+- **Agent transcripts** (`crew/transcript.py`): `agents/<name>.jsonl` in the
+  run folder, one line per model call and tool call with timing and token
+  counts. Secrets are masked with the checks' redaction, in the transcript
+  and in tool results before the model reads them.
+- Optional Langfuse tracing: `pip install "contexer-agent[tracing]"` and set
+  `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Without them the package
+  is never imported and nothing leaves the machine.
 - `contexer doctor` says whether the model in use can call tools, from the
   provider's own model list. A model that cannot gets an error that names it.
 - A link checker for the Markdown in this repository
