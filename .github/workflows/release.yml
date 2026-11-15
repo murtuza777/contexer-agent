@@ -48,7 +48,7 @@ jobs:
           /tmp/fresh/bin/pip install --quiet dist/*.whl
           /tmp/fresh/bin/contexer --version
           /tmp/fresh/bin/contexer --help > /dev/null
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: dist
           path: contexer-agent/dist/
