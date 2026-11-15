@@ -27,6 +27,14 @@ Phase 0 adds the foundations; no agent ships yet.
 - Optional Langfuse tracing: `pip install "contexer-agent[tracing]"` and set
   `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Without them the package
   is never imported and nothing leaves the machine.
+- **The tester benchmark**: `contexer bench --suite tester --agent stub`. An
+  agent gets each fixture app's goal (not its contract) and the running app;
+  its findings are replayed by code. A bug counts as found only when the
+  finding fails on the buggy app and passes on the correct one; a finding
+  that fails on correct code is a false alarm; one that does not reproduce
+  is dropped and counted. The stub agent reports nothing, so the suite runs
+  with no model: 0 of 40 found, 0 false alarms. Results are written to
+  `bench/tester-results/`. `contexer bench` without `--suite` is unchanged.
 - `contexer doctor` says whether the model in use can call tools, from the
   provider's own model list. A model that cannot gets an error that names it.
 - A link checker for the Markdown in this repository

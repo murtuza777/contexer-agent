@@ -1,0 +1,179 @@
+"""The tester benchmark: findings count only as far as a replay by code confirms them."""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from contexer.appserver import RunningApp
+from contexer.bench.tester import (
+    TESTER_AGENTS,
+    Exploration,
+    Finding,
+    StubTester,
+    results_markdown,
+    run_tester_bench,
+)
+from contexer.cli import app as cli
+from contexer.contract import ContractStore
+from contexer.verification.checks import Check
+
+pytestmark = pytest.mark.anyio
+
+FIXTURE = Path(__file__).resolve().parents[1] / "bench" / "fixtures" / "todo"
+BUG = "count-ignores-done"
+
+
+def _mini_fixture(root: Path, benign: tuple[str, ...] = ()) -> Path:
+    app = root / "todo"
+    shutil.copytree(FIXTURE / "app", app / "app", ignore=shutil.ignore_patterns("runs"))
+    shutil.copytree(FIXTURE / "bugs" / BUG, app / "bugs" / BUG)
+    for name in benign:
+        shutil.copytree(FIXTURE / "benign" / name, app / "benign" / name)
+    return root
+
+
+def _contract_check(criterion_id: str) -> Check:
+    contract = ContractStore(FIXTURE / "app").load("todo-basics")
+    check = next(c.check for c in contract.criteria if c.id == criterion_id)
+    assert check is not None
+    return check
+
+
+class ScriptedTester:
+    """Reports the same findings on every app, and records what it was given."""
+
+    name = "scripted"
+
+    def __init__(self, *findings: Finding, steps: int = 4, cost_usd: float | None = None) -> None:
+        self.findings = list(findings)
+        self.steps = steps
+        self.cost_usd = cost_usd
+        self.goals: list[str] = []
+        self.saw_contract: list[bool] = []
+
+    async def explore(self, goal: str, app: RunningApp, project_dir: Path) -> Exploration:
+        self.goals.append(goal)
+        self.saw_contract.append((project_dir / ".contexer" / "contracts").exists())
+        assert app.url.startswith("http")
+        return Exploration(findings=self.findings, steps=self.steps, cost_usd=self.cost_usd)
+
+
+# Completing a task should lower the remaining count: true on the correct app, false with the seeded bug.
+REAL = Finding(title="Completing a task does not lower the count", check=_contract_check("complete-decrements"))
+# The agent expects something the app was never meant to do.
+WRONG = Finding(
+    title="The page should say 'All done!'",
+    check=Check.model_validate({"expect": [{"kind": "visible", "target": {"text": "All done!"}}]}),
+)
+# The agent claims a bug, but the behaviour it describes holds everywhere.
+HOLDS = Finding(title="Adding a task does not show it", check=_contract_check("add-shows-task"))
+
+
+async def test_the_stub_agent_completes_with_nothing_found_and_no_false_alarms(tmp_path: Path) -> None:
+    report = await run_tester_bench(_mini_fixture(tmp_path, benign=("restyle",)), StubTester())
+
+    [score] = report.apps
+    assert report.agent == "stub"
+    assert (score.bugs, score.found, score.missed_bugs) == (1, 0, [BUG])
+    assert (score.clean_runs, score.false_alarms, score.false_alarm_runs, score.unconfirmed) == (2, 0, 0, 0)
+    assert (score.errors, score.steps, score.cost_usd) == (0, 0, None)
+    assert [(r.kind, r.name) for r in report.runs] == [("good", "good"), ("benign", "restyle"), ("bug", BUG)]
+
+
+async def test_a_finding_that_fails_on_the_bug_and_passes_on_the_correct_app_is_a_found_bug(tmp_path: Path) -> None:
+    agent = ScriptedTester(REAL, steps=4, cost_usd=0.01)
+    report = await run_tester_bench(_mini_fixture(tmp_path), agent)
+
+    [score] = report.apps
+    assert (score.bugs, score.found, score.missed_bugs) == (1, 1, [])
+    # On the correct app the same claim did not reproduce: it is dropped, not a false alarm.
+    assert (score.clean_runs, score.false_alarms, score.unconfirmed) == (1, 0, 1)
+    assert score.steps == 8 and score.cost_usd == pytest.approx(0.02)
+    bug_run = next(r for r in report.runs if r.kind == "bug")
+    assert bug_run.found is True and bug_run.real == [REAL.title]
+
+
+async def test_the_agent_is_given_the_goal_and_never_the_contract(tmp_path: Path) -> None:
+    agent = ScriptedTester()
+    await run_tester_bench(_mini_fixture(tmp_path), agent)
+
+    assert set(agent.goals) == {"Users can add, complete and delete tasks, and the remaining count stays correct"}
+    assert agent.saw_contract == [False, False]
+
+
+async def test_a_wrong_expectation_is_a_false_alarm_everywhere_and_never_a_found_bug(tmp_path: Path) -> None:
+    report = await run_tester_bench(_mini_fixture(tmp_path), ScriptedTester(WRONG))
+
+    [score] = report.apps
+    # It "reproduces" on the buggy app too, but the correct app fails it as well: the agent is wrong.
+    assert (score.bugs, score.found) == (1, 0)
+    assert (score.false_alarms, score.false_alarm_runs, score.clean_runs) == (2, 1, 1)
+    bug_run = next(r for r in report.runs if r.kind == "bug")
+    assert bug_run.found is False and bug_run.false_alarms == [WRONG.title]
+
+
+async def test_a_claim_that_does_not_reproduce_is_unconfirmed(tmp_path: Path) -> None:
+    report = await run_tester_bench(_mini_fixture(tmp_path), ScriptedTester(HOLDS))
+
+    [score] = report.apps
+    assert (score.found, score.false_alarms, score.unconfirmed) == (0, 0, 2)
+
+
+async def test_an_app_that_does_not_start_is_reported_and_not_scored(tmp_path: Path) -> None:
+    root = _mini_fixture(tmp_path)
+    (root / "todo" / "bugs" / BUG / "index.html").unlink(missing_ok=True)
+    shutil.rmtree(root / "todo" / "app")
+    broken = root / "todo" / "app"
+    broken.mkdir()
+    (broken / "package.json").write_text('{"name": "x", "scripts": {}}', encoding="utf-8")
+
+    report = await run_tester_bench(root, StubTester())
+
+    [score] = report.apps
+    assert score.errors == len(report.runs) > 0
+    assert (score.bugs, score.clean_runs) == (0, 0)
+    assert all(r.error.startswith("the app did not start") for r in report.runs)
+
+
+async def test_the_results_page_states_the_numbers(tmp_path: Path) -> None:
+    report = await run_tester_bench(_mini_fixture(tmp_path), ScriptedTester(REAL, cost_usd=0.01))
+    page = results_markdown(report)
+
+    assert "# Tester benchmark: `scripted`" in page
+    assert "| todo | 1 | 1 | 0 | 0 / 1 | 1 | 8 | $0.02 |" in page
+    assert "| **total** | 1 | 1 | 0 | 0 / 1 | 1 | 8 | $0.02 |" in page
+
+
+def test_the_command_runs_the_suite_with_the_stub_agent_and_writes_the_results(tmp_path: Path) -> None:
+    bench = tmp_path / "bench"
+    _mini_fixture(bench / "fixtures")
+    (bench / "RESULTS.md").write_text("# Benchmark results\n", encoding="utf-8")
+    out = tmp_path / "report.json"
+
+    result = CliRunner().invoke(
+        cli, ["bench", "--suite", "tester", "--agent", "stub", "--fixtures", str(bench / "fixtures"), "--out", str(out)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "0 of 1 seeded bugs found" in result.output and "0 false alarms" in result.output
+    assert '"agent": "stub"' in out.read_text(encoding="utf-8")
+    page = (bench / "tester-results" / "stub.md").read_text(encoding="utf-8")
+    assert "| **total** | 1 | 0 | 0 | 0 / 1 | 0 | 0 | not reported |" in page
+
+
+def test_the_command_refuses_an_agent_it_does_not_have_and_a_mix_of_suites(tmp_path: Path) -> None:
+    fixtures = str(_mini_fixture(tmp_path))
+    unknown = CliRunner().invoke(cli, ["bench", "--suite", "tester", "--agent", "oracle", "--fixtures", fixtures])
+    assert unknown.exit_code == 2 and "stub" in unknown.output
+
+    mixed = CliRunner().invoke(cli, ["bench", "--suite", "tester", "--live", "--fixtures", fixtures])
+    assert mixed.exit_code == 2
+
+    wrong_suite = CliRunner().invoke(cli, ["bench", "--suite", "nope", "--fixtures", fixtures])
+    assert wrong_suite.exit_code == 2
+
+    assert list(TESTER_AGENTS) == ["stub"]

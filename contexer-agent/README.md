@@ -208,7 +208,7 @@ python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integrati
 contexer bench --repeats 2
 ```
 
-The suite (about 300 tests, 8 minutes) runs real Chromium against fixture apps, real Node process trees
+The suite (about 390 tests, 8 minutes) runs real Chromium against fixture apps, real Node process trees
 for the dev-server tests, and real git for snapshots. It needs no network and
 no model. The benchmark's React + Vite fixture runs `npm ci` once, so the
 benchmark needs network the first time. Live-service tests skip themselves when their prerequisites are

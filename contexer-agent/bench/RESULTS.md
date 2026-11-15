@@ -44,6 +44,14 @@ and local storage.
 shows the runner is reliable and classifies failures correctly, not that
 contracts are good.
 
+## Tester suite (measures an agent that explores)
+
+`contexer bench --suite tester --agent stub`, 2026-11-15: 0 of 40 bugs found,
+0 false alarms, every app started. The stub agent reports nothing; this is
+the floor the Tester agent starts from in Phase 1, and the 40/40 above is
+what it is measured against. Latest run per agent:
+[tester-results/stub.md](tester-results/stub.md).
+
 ## LLM-compiled contracts (measures the compiler)
 
 ### Pinned free model, 2026-10-26

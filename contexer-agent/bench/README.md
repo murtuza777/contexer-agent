@@ -7,6 +7,7 @@ code? This folder answers that with fixture apps and seeded bugs.
 contexer bench               # replay each app's approved, hand-written contract
 contexer bench --live        # compile each app's goal with the LLM instead, then score that
 contexer bench --app notes   # one app
+contexer bench --suite tester --agent stub   # the tester suite (below)
 ```
 
 ## How it works
@@ -43,6 +44,31 @@ are dropped and listed, as a reviewer would reject them, and the rest are
 scored. If the model returns nothing usable, the report says
 `rule-based fallback`.
 
+## The tester suite
+
+`contexer bench --suite tester --agent NAME` measures an agent that explores
+an app, on the same fixtures. Nobody hands it a contract: for every variant
+it gets the app's goal in words and the running app, and it reports findings.
+Each finding states the behaviour the agent expected as a check. Code decides
+what a finding is worth by replaying it in a fresh browser, with the
+project's sign-in and reset and no model:
+
+| Replay | Result | Meaning |
+| --- | --- | --- |
+| Fails on the seeded bug, passes on the correct app | **Found** | A real bug, reproduced |
+| Fails on correct or benign code (also when it was reported on a bug) | **False alarm** | The agent's expectation is wrong, not the app |
+| Passes, or cannot run, on the app the agent tested | **Unconfirmed** | Did not reproduce: dropped and counted |
+
+Also reported per app: the agent's steps and its cost when the provider
+reports one. An app that does not start is reported and not scored. The
+correct app and each benign variant run `--repeats` times (default 1), each
+bug once.
+
+`--agent stub` reports nothing, so the suite runs with no model and scores 0
+found and 0 false alarms: the floor, and proof that the harness works. The
+Tester agent registers here in Phase 1 (`bench/tester.py: TESTER_AGENTS`).
+Each run of the whole suite writes `tester-results/<agent>.md`.
+
 ## What the numbers mean, and don't
 
 - **Hand-written contracts** measure the runner:
@@ -62,7 +88,7 @@ scored. If the model returns nothing usable, the report says
 
 ## Results
 
-See [RESULTS.md](RESULTS.md).
+See [RESULTS.md](RESULTS.md), and [tester-results/](tester-results/) for the tester suite.
 
 ## Adding a fixture
 

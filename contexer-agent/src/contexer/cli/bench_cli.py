@@ -1,4 +1,9 @@
-"""``contexer bench``: measure catch rate and false-failure rate on seeded bugs."""
+"""``contexer bench``: measure catch rate and false-failure rate on seeded bugs.
+
+Two suites share the fixtures: ``gate`` replays each app's approved contract
+(the default), ``tester`` lets an agent explore each app from its goal and
+replays what it reports.
+"""
 
 from __future__ import annotations
 
@@ -18,19 +23,34 @@ from contexer.cli import term
 
 def bench(
     fixtures: Optional[Path] = typer.Option(None, "--fixtures", help="Fixtures directory (default: ./bench/fixtures)."),
-    repeats: int = typer.Option(3, "--repeats", "-n", min=1, help="Runs per good/benign variant."),
+    repeats: Optional[int] = typer.Option(
+        None, "--repeats", "-n", min=1, help="Runs per good/benign variant (default: 3; 1 for the tester suite)."
+    ),
     app: list[str] = typer.Option([], "--app", help="Only these fixture apps (repeatable)."),
     out: Optional[Path] = typer.Option(None, "--out", help="Write the full report as JSON."),
     live: bool = typer.Option(False, "--live", help="Score contracts the LLM compiles from each goal instead."),
+    suite: str = typer.Option(
+        "gate", "--suite", help="gate: replay each app's contract. tester: an agent explores each app from its goal."
+    ),
+    agent: str = typer.Option("stub", "--agent", help="The agent the tester suite measures (stub: reports nothing)."),
 ) -> None:
     """Run the seeded-bug benchmark against every fixture app."""
     console = Console()
+    if suite not in ("gate", "tester"):
+        raise typer.BadParameter(f"unknown suite '{suite}': choose gate or tester", param_hint="--suite")
     root = fixtures or _default_fixtures()
     if not root.is_dir():
         raise typer.BadParameter(
             f"no fixtures directory at {root}. The benchmark's apps live in the repository: clone "
             "https://github.com/murtuza777/contexer-agent and run it from contexer-agent/, or pass --fixtures"
         )
+
+    if suite == "tester":
+        if live:
+            raise typer.BadParameter("--live belongs to the gate suite; the tester suite takes --agent")
+        _bench_tester(console, root, repeats or 1, app, out, agent)
+        return
+    repeats = repeats or 3
 
     def progress(run: VariantRun) -> None:
         console.print(_run_line(run))
@@ -91,6 +111,75 @@ def render_bench(console: Console, report: BenchReport) -> None:
     if missed:
         console.print(f"[yellow]Missed:[/] {escape(', '.join(missed))}")
     console.print(f"[dim]{report.duration_seconds:.0f}s[/]")
+
+
+def _bench_tester(console: Console, root: Path, repeats: int, only: list[str], out: Optional[Path], agent: str) -> None:
+    from contexer.bench.tester import TESTER_AGENTS, TesterRun, results_markdown, run_tester_bench
+
+    if agent not in TESTER_AGENTS:
+        raise typer.BadParameter(
+            f"no tester agent named '{agent}'. Available: {', '.join(TESTER_AGENTS)}", param_hint="--agent"
+        )
+
+    def progress(run: TesterRun) -> None:
+        console.print(_tester_line(run))
+
+    term.header(console, "bench", f"{term.path(root)} · tester suite · agent {agent} · {repeats} repeat(s)")
+    report = asyncio.run(run_tester_bench(root, TESTER_AGENTS[agent](), repeats=repeats, only=only or None, on_run=progress))
+
+    table = Table(title="Tester benchmark", show_lines=False)
+    for column in ("App", "Bugs", "Found", "False alarms", "Unconfirmed", "Steps", "Cost"):
+        table.add_column(column, justify="right" if column != "App" else "left")
+    totals = report.totals()
+    for score in [*report.apps, totals]:
+        table.add_row(
+            "[bold]total[/]" if score is totals else escape(score.app),
+            str(score.bugs),
+            str(score.found),
+            str(score.false_alarms),
+            str(score.unconfirmed),
+            str(score.steps),
+            f"${score.cost_usd:.2f}" if score.cost_usd is not None else "—",
+        )
+    console.print()
+    console.print(table)
+    console.print(
+        f"{totals.found} of {totals.bugs} seeded bugs found · {totals.false_alarms} false alarms · "
+        f"{totals.unconfirmed} unconfirmed · [dim]{report.duration_seconds:.0f}s[/]"
+    )
+    if totals.errors:
+        console.print(f"[red]{totals.errors} run(s) not scored: the app did not start.[/]")
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        console.print(f"[dim]Report written to {escape(str(out))}[/]")
+    # Next to bench/RESULTS.md, when the fixtures are the repository's own.
+    if (root.parent / "RESULTS.md").is_file() and not only:
+        page = root.parent / "tester-results" / f"{agent}.md"
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text(results_markdown(report), encoding="utf-8", newline="\n")
+        console.print(f"[dim]Results written to {escape(term.path(page))}[/]")
+    # A measurement, not a gate: it fails only when it could not measure.
+    raise typer.Exit(code=1 if totals.errors else 0)
+
+
+def _tester_line(run: object) -> str:
+    from contexer.bench.tester import TesterRun
+
+    assert isinstance(run, TesterRun)
+    label = f"{run.app}/{run.kind}/{run.name}" + (f" #{run.repeat + 1}" if run.kind != "bug" else "")
+    if run.error.startswith("the app did not start"):
+        return f"  [red]error[/] {escape(label)} [dim]{escape(run.error.splitlines()[0])}[/]"
+    if run.kind == "bug":
+        mark = "[green]found[/]" if run.found else "[yellow]not found[/]"
+    else:
+        mark = "[red]false alarm[/]" if run.false_alarms else "[green]clean[/]"
+    detail = f"{run.findings} finding(s)"
+    if run.false_alarms and run.kind == "bug":
+        detail += f", {len(run.false_alarms)} false alarm(s)"
+    if run.unconfirmed:
+        detail += f", {len(run.unconfirmed)} unconfirmed"
+    return f"  {mark} {escape(label)} [dim]{detail} · {run.steps} steps · {run.duration_seconds:.1f}s[/]"
 
 
 def _run_line(run: VariantRun) -> str:

@@ -122,7 +122,7 @@ A `contexer run "GOAL" --pr`, end to end:
 | `crew/` | The agent loop (`base.py: run_agent`) that Contexer's own agents will run in. No agent ships yet |
 | `config/` | Environment settings, `contexer.toml`, per-user settings in `~/.contexer` |
 | `workflow/` | Goal-to-checks compiler (`criteria.py`), repository inspector, static file server |
-| `bench/` | The seeded-bug benchmark runner |
+| `bench/` | The seeded-bug benchmark: the gate suite (`runner.py`) and the tester suite (`tester.py`) |
 | `demo/` | The `contexer demo` todo app and its contract |
 | `procutil.py` | Process trees that are always stopped together |
 
@@ -915,7 +915,7 @@ and prints the fix under each problem.
 ## 18. Benchmark
 
 `bench/runner.py`, `contexer bench [--repeats N] [--live] [--app NAME] [--fixtures DIR] [--out
-FILE]` (run from `contexer-agent/`; the fixtures are not in the PyPI package).
+FILE] [--suite gate|tester] [--agent NAME]` (run from `contexer-agent/`; the fixtures are not in the PyPI package).
 
 - Fixtures in `bench/fixtures/<app>/`: `app/` (the correct app with approved
   contracts in `app/.contexer/contracts/`), `bugs/<id>/` (file overlays with
@@ -935,6 +935,20 @@ FILE]` (run from `contexer-agent/`; the fixtures are not in the PyPI package).
 - `--live` compiles each app's goal with the drafting model, keeps only the
   executable checks that pass on the good app, and scores those.
 - A workspace per app keeps `node_modules` between variants.
+
+**Tester suite** (`bench/tester.py`, `contexer bench --suite tester --agent
+NAME`): measures an agent that explores instead of a contract. A
+`TesterAgent` gets `explore(goal, app, project_dir)` with the goal in words
+and a working copy that holds no contract, and returns `Finding`s, each with
+a `Check` stating the behaviour it expected. `_replay` runs those checks
+through `VerificationSession` like any contract. A finding refuted on the app
+under test has reproduced; on a bug variant it is replayed once more on the
+correct app and counts as **found** only if it passes there. Refuted on
+correct or benign code is a **false alarm**; anything that did not reproduce
+is **unconfirmed**. Steps and reported cost are summed per app. The `stub`
+agent returns no findings, so the suite runs with no model. The command
+exits 1 only when an app did not start, and writes
+`bench/tester-results/<agent>.md` after a run of every app.
 
 Results and method: [bench/RESULTS.md](../bench/RESULTS.md).
 
@@ -973,7 +987,7 @@ drive OpenCode.
 
 ## 21. Tests
 
-About 300 tests (`contexer-agent/tests/`), about 8 minutes, no network and no
+About 390 tests (`contexer-agent/tests/`), about 8 minutes, no network and no
 model. They use real Chromium against fixture apps, real Node process trees
 for the dev-server tests, real git for snapshots and hand-offs (with a local
 bare remote), fake `claude` and `codex` binaries that speak the real stream
