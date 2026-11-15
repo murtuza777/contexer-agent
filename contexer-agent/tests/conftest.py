@@ -57,6 +57,8 @@ def _isolated_user_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatc
     monkeypatch.setenv("CONTEXER_HOME", str(tmp_path_factory.mktemp("contexer-home")))
     # A developer's own .env may hold an OpenRouter key; asking OpenRouter about it is not hermetic.
     monkeypatch.setattr("contexer.llm.discovery.openrouter_free_quota", lambda *_a, **_k: None)
+    # The same for `contexer doctor` asking a provider whether its model can call tools.
+    monkeypatch.setattr("contexer.cli.doctor_cli.supports_tools", lambda *_a, **_k: None)
     saved = dict(os.environ)
     yield
     os.environ.clear()

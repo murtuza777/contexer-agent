@@ -125,10 +125,13 @@ A `contexer run "GOAL" --pr`, end to end:
 | `demo/` | The `contexer demo` todo app and its contract |
 | `procutil.py` | Process trees that are always stopped together |
 
-Runtime dependencies: `typer`, `rich` (<14), `openai` (the OpenAI-compatible
+Runtime dependencies: `typer`, `rich`, `openai` (the OpenAI-compatible
 client), `pydantic` 2, `python-dotenv`, `httpx`, `playwright` (≥1.49, for
-`Locator.aria_snapshot`). Python 3.11 or newer. The Anthropic client is plain
-`httpx`, so there is no `anthropic` dependency.
+`Locator.aria_snapshot`), and for the agents being built on top of 0.4 (see
+[agentic/architecture.md](agentic/architecture.md)) `langchain-core`,
+`langchain-openai` and `langchain-anthropic`. Python 3.11 or newer. The
+drafting client for Anthropic is plain `httpx`; the `anthropic` package is
+there only because `langchain-anthropic` needs it.
 
 ## 4. Data model
 
@@ -598,6 +601,29 @@ Providers without a native agent build through OpenCode as
 - `llm/anthropic.py`: plain `httpx` to `/v1/messages` (`anthropic-version:
   2023-06-01`, 16,000 max tokens, 300 s), no tool calling.
 
+### Chat models with tools (`llm/chat.py`)
+
+The drafting clients above cannot call tools. The agents use LangChain chat
+models built from the same catalog:
+
+- `resolve_model(provider, model, config)` gives the model, key and endpoint
+  with the factory's rules (below), and refuses a provider with no key or no
+  model instead of guessing.
+- `chat_model(provider, model)`: `ChatAnthropic` for the Anthropic protocol;
+  for every other provider one class, `ChatOpenAI`, on Chat Completions with
+  the provider's base URL. Providers other than OpenAI get `max_tokens`
+  (OpenAI renamed it `max_completion_tokens`). OpenRouter keeps its
+  attribution headers and, for the default model, its free fallback list.
+  Building a model makes no network call, and LangChain is imported only then.
+- `supports_tools(provider, model)`: True, False or None (the provider does
+  not say), read from the provider's model list; never a model request.
+  `contexer doctor` shows it as "Tool calling".
+- A model that cannot call tools gives a `ToolCallingError` that names it:
+  from `require_tools` when the provider's list says so, from
+  `tool_calling_error` when the API refuses the request, and from
+  `check_tool_calling` (one real tool call and its result, used by the live
+  test) when the model answers without calling the tool.
+
 ### Choosing the drafting model (`llm/factory.py`)
 
 1. `[compiler] provider` / `model` in `contexer.toml`.
@@ -912,9 +938,12 @@ model. They use real Chromium against fixture apps, real Node process trees
 for the dev-server tests, real git for snapshots and hand-offs (with a local
 bare remote), fake `claude` and `codex` binaries that speak the real stream
 protocols, the scripted agent through the real controller, and
-`httpx.MockTransport` for GitHub and model APIs. `conftest.py` isolates
+`httpx.MockTransport` for GitHub and model APIs (the chat models replay
+recorded replies through the real LangChain client). `conftest.py` isolates
 `CONTEXER_HOME` and the environment per test and stubs OpenRouter's quota
-lookup. The live OpenCode test runs only when its prerequisites exist.
+lookup. The live OpenCode test runs only when its prerequisites exist. The live
+tool-calling check runs only with `CONTEXER_LIVE_TESTS=1` and a provider key:
+`CONTEXER_LIVE_TESTS=1 pytest tests/test_llm_chat.py -k live`.
 
 ## 22. Extending Contexer
 

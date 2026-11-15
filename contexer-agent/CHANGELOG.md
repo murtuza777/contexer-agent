@@ -7,6 +7,15 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Added
 
+- **Chat models that can call tools** (`llm/chat.py`). `chat_model(provider,
+  model)` builds a LangChain chat model for every provider in the catalog,
+  with the same keys and precedence rules as the drafting model: one class
+  for all OpenAI-compatible providers, Anthropic's own for Anthropic. New
+  dependencies: `langchain-core`, `langchain-openai`, `langchain-anthropic`
+  (and through them `anthropic` and `tiktoken`); `openai` is now 2.45 or
+  newer. LangChain is imported only when an agent runs.
+- `contexer doctor` says whether the model in use can call tools, from the
+  provider's own model list. A model that cannot gets an error that names it.
 - A link checker for the Markdown in this repository
   (`pytest tests/test_docs_links.py`): relative links and heading anchors,
   no network.

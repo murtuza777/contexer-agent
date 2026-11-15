@@ -22,6 +22,7 @@ from contexer import __version__
 from contexer.cli import term
 from contexer.github.api import github_token
 from contexer.llm import discovery
+from contexer.llm.chat import supports_tools
 
 if TYPE_CHECKING:
     from contexer.config.project import AuthSettings
@@ -122,6 +123,7 @@ def environment_findings() -> list[Finding]:
                 "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or pin OPENROUTER_MODEL to a strong model",
             )
         )
+        findings.append(_tool_calling_finding(llm.name, llm.model))
     else:
         findings.append(
             Finding(
@@ -250,6 +252,24 @@ def _sign_in_finding(project: Path, auth: AuthSettings) -> Finding:
         )
     using = f" with {', '.join(secrets)}" if secrets else ""
     return Finding("Sign-in", "ok", f"[auth] signs in at {auth.url}{using}")
+
+
+def _tool_calling_finding(provider: str, model: str) -> Finding:
+    """Whether the model can drive Contexer's agents, from the provider's own model list (no model request)."""
+    try:
+        able = supports_tools(provider, model)
+    except ValueError:  # a provider outside the catalog
+        able = None
+    if able is None:
+        return Finding(
+            "Tool calling", "ok", f"{provider} does not say whether {model} can call tools; the first agent run will"
+        )
+    return Finding(
+        "Tool calling",
+        "ok" if able else "warn",
+        f"{model} can call tools" if able else f"{model} cannot call tools, which Contexer's agents need",
+        "Choose a model that supports tool calling: `contexer models` marks them",
+    )
 
 
 def _version(argv: list[str]) -> str:

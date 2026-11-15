@@ -126,7 +126,9 @@ A hosted version would add Postgres. Nothing in Phases 0–5 needs a server.
 | Evals | The seeded-bug benchmark (7 apps, 40 bugs, benign variants) | Measures what the Tester must do |
 | Coding agents | The adapters in `agents/` | Unchanged |
 
-Exact package versions are pinned in ticket T0.2 after a working spike.
+Versions, from the T0.2 spike on 2026-11-15: `langchain-core` 1.8.1,
+`langchain-openai` 1.8.0 and `langchain-anthropic` 1.7.10 are the floors in
+`pyproject.toml`, each capped below 2.0.
 
 ## 9. What is reused and what is replaced
 
