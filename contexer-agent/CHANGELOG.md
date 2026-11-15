@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+Work on the [agentic harness](docs/agentic/architecture.md) starts here.
+Phase 0 adds the foundations; no agent ships yet.
+
+### Added
+
+- A link checker for the Markdown in this repository
+  (`pytest tests/test_docs_links.py`): relative links and heading anchors,
+  no network.
+
 ### Removed
 
 - **The interactive shell.** `contexer` with no command now prints the help.
@@ -20,6 +29,8 @@
 - Docs: product research is in `docs/product/`, and the LangGraph study sits
   with the multi-agent plans as `docs/multi-agent/langgraph-port.md`. The raw
   research notes are gone; the market research report keeps their findings.
+- Docs: `docs/roadmap.md` and the product plan no longer describe the removed
+  interactive shell or `workflow/loop.py` as existing.
 
 ## 0.4.0 — 2026-10-28
 

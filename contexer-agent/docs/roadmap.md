@@ -32,7 +32,7 @@ Status legend: **done**, **building**, **next**, **later**.
 
 ```text
 contexer verify | contract | replay | run | bench | report        (Typer subcommands)
-   │                                                    REPL (/loop, /verify) stays
+   │                                                    (the REPL was to stay; removed in 0.4)
    ▼
 contract/      Contract model, file store, hashing, approval; compiles goals via
                workflow.criteria.GoalAnalyzer
@@ -50,8 +50,8 @@ github/        commit status + step summary (check runs come with the App)
 bench/         seeded-bug benchmark: catch rate and false-failure rate
 ```
 
-The existing `workflow/loop.py` (`AutonomousLoop`) keeps serving the REPL until
-the controller replaces it (C3). `workflow/criteria.py` remains the goal→check
+At the time, `workflow/loop.py` (`AutonomousLoop`) was to keep serving the REPL
+until the controller replaced it (C3); both were removed in 0.4. `workflow/criteria.py` remains the goal→check
 compiler.
 
 ## 3. Data formats
@@ -168,7 +168,8 @@ Judged criteria are advisory by default, because noisy judges get removed
 | `contexer contract draft GOAL` / `show` / `approve ID` / `list` | Manage contracts |
 | `contexer replay` | `verify --all`, for CI |
 
-The REPL starts only when no subcommand is given.
+The plan was for the REPL to start only when no subcommand is given. It was
+removed in 0.4: `contexer` with no command prints the help.
 
 **Evidence:**
 

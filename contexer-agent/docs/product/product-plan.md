@@ -192,7 +192,8 @@ In summary:
 The existing code stays: the check DSL, the Playwright runner, the verifier
 with proven / LLM-judged / heuristic labels, the criteria compiler and the
 static app server. The OpenCode-specific loop in `workflow/loop.py` becomes one
-adapter behind the new interface.
+adapter behind the new interface. (Done in 0.3: the file no longer exists; the
+adapter is `agents/opencode_agent.py`.)
 
 ### Non-negotiable rules, from the research
 
