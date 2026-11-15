@@ -118,6 +118,7 @@ async def run_agent(
     result.duration_seconds = time.monotonic() - started
     result.messages = run.messages
     result.transcript = run.transcript.path
+    run.transcript.remask()
     run.transcript.write(
         "end",
         status=result.status,

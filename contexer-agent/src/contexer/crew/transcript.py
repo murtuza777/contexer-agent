@@ -55,7 +55,14 @@ class Masker:
     """Replaces secret values in text and in nested data."""
 
     def __init__(self, secrets: Sequence[str] = (), env: Optional[Mapping[str, str]] = None) -> None:
-        self.values = [*(s for s in secrets if s), *environment_secrets(env)]
+        # A list is kept, not copied: a secret the caller learns later (a password an agent
+        # types) is masked from then on.
+        self.secrets: Sequence[str] = secrets if isinstance(secrets, list) else list(secrets)
+        self._environment = environment_secrets(env)
+
+    @property
+    def values(self) -> list[str]:
+        return [*(s for s in self.secrets if s), *self._environment]
 
     def text(self, text: str) -> str:
         return sanitize_sensitive_text(redact(text, self.values))
@@ -87,6 +94,18 @@ class Transcript:
         line = {"at": _now(), "agent": self.agent, "event": event, **self.masker.data(fields)}
         with self.path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
+
+
+    def remask(self) -> None:
+        """Mask the whole file again, for secrets that became known after a line was written."""
+        if self.path is None or not self.path.is_file():
+            return
+        raw = self.path.read_text(encoding="utf-8")
+        # A value inside a JSON string may be escaped; mask that spelling too.
+        escaped = [json.dumps(value, ensure_ascii=False)[1:-1] for value in self.masker.values]
+        masked = self.masker.text(redact(raw, escaped))
+        if masked != raw:
+            self.path.write_text(masked, encoding="utf-8", newline="\n")
 
 
 def read_transcript(path: Path) -> list[dict[str, Any]]:
