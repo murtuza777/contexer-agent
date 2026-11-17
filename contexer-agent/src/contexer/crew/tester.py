@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from contexer.browser.tools import BrowserSession
 from contexer.crew.base import AgentSpec, AgentStatus, run_agent
+from contexer.skills.store import MAX_PROPOSED, Skill, skills_text
 from contexer.verification.checks import Expectation, Step
 
 DEFAULT_MAX_STEPS = 40
@@ -58,6 +59,11 @@ class TesterSummary(BaseModel):
         default_factory=list,
         description="Behaviour you saw that the intent does not settle, each as one question for the person. Not bugs.",
     )
+    skills: list[Skill] = Field(
+        default_factory=list,
+        description="At most 3 things you learned about operating this app that would save the next tester steps: "
+        "how to reach a screen, how to seed or reset data, which flow is slow. Never a credential.",
+    )
 
 
 class _RecordFinding(BaseModel):
@@ -83,6 +89,8 @@ class TesterResult:
     summary: str = ""
     # What the Tester saw that the intent does not settle. For the person to answer; never a result.
     questions: list[str] = field(default_factory=list)
+    # What the Tester proposes to remember about operating this app. Advice for a later run, never proof.
+    skills: list[Skill] = field(default_factory=list)
     steps: int = 0
     tool_calls: int = 0
     tokens_in: int = 0
@@ -104,6 +112,7 @@ async def run_tester(
     *,
     run_dir: Optional[Path],
     existing_checks: Sequence[str] = (),
+    skills: Sequence[Skill] = (),
     max_steps: int = DEFAULT_MAX_STEPS,
     timeout: float = DEFAULT_TIMEOUT,
     secrets: Sequence[str] = (),
@@ -183,7 +192,7 @@ async def run_tester(
     )
     # One list, shared: a password the Tester types later is masked from then on, and in the transcript.
     browser.secrets.extend(s for s in secrets if s)
-    task = _task(intent, await browser.snapshot(), existing_checks)
+    task = _task(intent, await browser.snapshot(), existing_checks, skills)
     result = await run_agent(spec, model, tools, task, run_dir=run_dir, secrets=browser.secrets)
     summary = result.output.summary if isinstance(result.output, TesterSummary) else ""
     questions = [q.strip() for q in result.output.questions if q.strip()] if isinstance(result.output, TesterSummary) else []
@@ -192,6 +201,7 @@ async def run_tester(
         findings=findings,
         summary=summary,
         questions=questions,
+        skills=list(result.output.skills[:MAX_PROPOSED]) if isinstance(result.output, TesterSummary) else [],
         steps=result.steps,
         tool_calls=result.tool_calls,
         tokens_in=result.tokens_in,
@@ -237,7 +247,7 @@ def _not_grounded(violates: str, intent: str, crashed: bool) -> str:
     )
 
 
-def _task(intent: str, snapshot: str, existing_checks: Sequence[str]) -> str:
+def _task(intent: str, snapshot: str, existing_checks: Sequence[str], skills: Sequence[Skill] = ()) -> str:
     parts = [
         "## What the app should do (the intent)",
         intent.strip(),
@@ -247,5 +257,12 @@ def _task(intent: str, snapshot: str, existing_checks: Sequence[str]) -> str:
     ]
     if existing_checks:
         parts += ["", "## Checks that already exist (do not repeat them)", *[f"- {line}" for line in existing_checks]]
-    parts += ["", "Test it. Record findings as you go, then submit a summary."]
+    parts.append("")
+    if skills:
+        parts += [
+            "## What earlier runs learned about this app (advice: it may be out of date, and it proves nothing)",
+            skills_text(skills),
+            "",
+        ]
+    parts.append("Test it. Record findings as you go, then submit a summary.")
     return "\n".join(parts)
