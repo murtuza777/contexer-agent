@@ -10,13 +10,13 @@ import asyncio
 import sys
 import webbrowser
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
 from rich.markup import escape
 
 from contexer.appserver import AppStartError, RunningApp, open_app
+from contexer.cli import term
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.evidence import RunDir, write_evidence
 from contexer.evidence.report import result_json
@@ -26,7 +26,6 @@ from contexer.llm.base import LLMProvider
 from contexer.verification.runner import CheckRunner
 from contexer.verification.verifier import Verifier
 from contexer.workflow.criteria import GoalAnalyzer
-from contexer.cli import term
 
 contract_app = typer.Typer(help="Create, review and approve acceptance contracts.", no_args_is_help=True)
 
@@ -39,13 +38,13 @@ UrlOption = typer.Option(None, "--url", "-u", help="Use an app you already run i
 
 def register(app: typer.Typer) -> None:
     from contexer.cli.bench_cli import bench
+    from contexer.cli.demo_cli import demo
+    from contexer.cli.doctor_cli import doctor
+    from contexer.cli.init_cli import init
+    from contexer.cli.issue_cli import issue_app
     from contexer.cli.run_cli import run
     from contexer.cli.runs_cli import restore, runs
-    from contexer.cli.demo_cli import demo
-    from contexer.cli.init_cli import init
-    from contexer.cli.doctor_cli import doctor
     from contexer.cli.setup_cli import models, setup
-    from contexer.cli.issue_cli import issue_app
     from contexer.cli.test_cli import test
 
     # `contexer --help` lists commands by what a person is doing, in the order they meet them.
@@ -70,11 +69,11 @@ def register(app: typer.Typer) -> None:
 
 
 def verify(
-    goal: Optional[str] = typer.Argument(None, help="Compile this goal into a draft contract and verify it."),
+    goal: str | None = typer.Argument(None, help="Compile this goal into a draft contract and verify it."),
     contract: list[str] = typer.Option([], "--contract", "-c", help="Contract id or file to verify (repeatable)."),
     all_contracts: bool = typer.Option(False, "--all", "-a", help="Verify every contract in the project."),
     project_dir: Path = DirOption,
-    url: Optional[str] = UrlOption,
+    url: str | None = UrlOption,
     judged: str = typer.Option("advisory", "--judged", help="LLM-judged criteria: advisory or block."),
     trace: str = typer.Option("off", "--trace", help="Playwright traces: off, on-failure or on."),
     json_output: bool = typer.Option(False, "--json", help="Print result.json to stdout."),
@@ -107,7 +106,7 @@ def verify(
 
 def replay(
     project_dir: Path = DirOption,
-    url: Optional[str] = UrlOption,
+    url: str | None = UrlOption,
     judged: str = typer.Option("advisory", "--judged", help="LLM-judged criteria: advisory or block."),
     trace: str = typer.Option("on-failure", "--trace", help="Playwright traces: off, on-failure or on."),
     json_output: bool = typer.Option(False, "--json", help="Print result.json to stdout."),
@@ -148,14 +147,14 @@ def _report_to_github(result: RunResult, console: Console, project_dir: Path, *,
 async def run_verification(
     project_dir: Path,
     *,
-    goal: Optional[str] = None,
-    contract_refs: Optional[list[str]] = None,
+    goal: str | None = None,
+    contract_refs: list[str] | None = None,
     all_contracts: bool = False,
-    url: Optional[str] = None,
+    url: str | None = None,
     judged: str = "advisory",
     trace: str = "off",
-    console: Optional[Console] = None,
-    llm: Optional[LLMProvider] = None,
+    console: Console | None = None,
+    llm: LLMProvider | None = None,
 ) -> RunResult:
     """Resolve contracts, start the app, verify, and write the evidence."""
     console = console or Console()
@@ -213,7 +212,7 @@ def _resolve_contracts(store: ContractStore, refs: list[str], all_contracts: boo
     return contracts
 
 
-async def preview_draft(session: VerificationSession, app: RunningApp, contract: Contract) -> Optional[RunResult]:
+async def preview_draft(session: VerificationSession, app: RunningApp, contract: Contract) -> RunResult | None:
     """Run a draft's checks once on the app as it is now, so its reviewer sees how they fare."""
     if not any(c.check for c in contract.criteria):
         return None
@@ -223,7 +222,7 @@ async def preview_draft(session: VerificationSession, app: RunningApp, contract:
         return None
 
 
-def print_draft_preview(console: Console, result: Optional[RunResult]) -> None:
+def print_draft_preview(console: Console, result: RunResult | None) -> None:
     """Facts for the person approving a draft: which checks already pass, fail, or cannot run yet."""
     if result is None or result.decision.outcome == "error":
         return
@@ -281,7 +280,7 @@ def print_drafted_by(console: Console, analyzer: GoalAnalyzer) -> None:
         console.print(f"[dim]Drafted by {escape(served)}[/]")
 
 
-def warn_if_weak_draft(console: Console, contract: Contract, reason: Optional[str] = None) -> None:
+def warn_if_weak_draft(console: Console, contract: Contract, reason: str | None = None) -> None:
     """Say loudly when a draft did not come from the model, and why, before anyone approves it."""
     if contract.source != "rules":
         return
@@ -306,7 +305,7 @@ def warn_if_weak_draft(console: Console, contract: Contract, reason: Optional[st
     )
 
 
-def compiler_llm(project_dir: Optional[Path] = None) -> Optional[LLMProvider]:
+def compiler_llm(project_dir: Path | None = None) -> LLMProvider | None:
     """The model that compiles goals into checks: [compiler] in contexer.toml, then env, then any key."""
     from contexer.config.project import ProjectConfigError, load_project_config, load_project_env
     from contexer.config.settings import load_config
@@ -337,7 +336,7 @@ def _finish(result: RunResult, console: Console, json_output: bool, open_report:
 # -- rendering -----------------------------------------------------------------
 
 
-def _print_start(console: Console, project: Path, goal: Optional[str], contracts: list[Contract]) -> None:
+def _print_start(console: Console, project: Path, goal: str | None, contracts: list[Contract]) -> None:
     term.header(console, "verify", project.name)
     rows = [("Goal", escape(goal))] if goal else []
     rows += [("Contract", f"{escape(c.id)} [dim]· {c.status}[/]") for c in contracts]
@@ -440,7 +439,7 @@ def contract_show(contract_id: str, project_dir: Path = DirOption) -> None:
 def contract_approve(
     contract_id: str,
     project_dir: Path = DirOption,
-    by: Optional[str] = typer.Option(None, "--by", help="Approver name (default: git user.name)."),
+    by: str | None = typer.Option(None, "--by", help="Approver name (default: git user.name)."),
 ) -> None:
     """Approve a contract at its current content; later edits will need re-approval."""
     console = Console()
@@ -459,8 +458,8 @@ def contract_approve(
 def contract_draft(
     goal: str,
     project_dir: Path = DirOption,
-    url: Optional[str] = UrlOption,
-    contract_id: Optional[str] = typer.Option(None, "--id", help="Contract id (default: from the goal)."),
+    url: str | None = UrlOption,
+    contract_id: str | None = typer.Option(None, "--id", help="Contract id (default: from the goal)."),
 ) -> None:
     """Compile a goal into a draft contract grounded in the running app's UI."""
     console = Console()
@@ -469,7 +468,7 @@ def contract_draft(
 
     analyzer = GoalAnalyzer(llm_provider=compiler_llm(project_dir))
 
-    async def _draft() -> tuple[Contract, Optional[RunResult]]:
+    async def _draft() -> tuple[Contract, RunResult | None]:
         run = RunDir.create(project_dir)
         session = VerificationSession(project_dir, run)
         try:

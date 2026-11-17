@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -57,7 +57,7 @@ def runs(
     console.print(table)
 
 
-def _summarise(run_dir: Path) -> Optional[dict[str, str]]:
+def _summarise(run_dir: Path) -> dict[str, str] | None:
     result = _load(run_dir / "result.json")
     run = _load(run_dir / "run.json")
     if result is None and run is None:
@@ -88,7 +88,7 @@ def _summarise(run_dir: Path) -> Optional[dict[str, str]]:
     }
 
 
-def _load(path: Path) -> Optional[dict[str, Any]]:
+def _load(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -98,7 +98,7 @@ def _load(path: Path) -> Optional[dict[str, Any]]:
 
 def restore(
     run_id: str = typer.Argument(..., help="The run, as `contexer runs` lists it."),
-    attempt: Optional[int] = typer.Option(None, "--attempt", "-a", min=0, help="An attempt (0 is the project before the run)."),
+    attempt: int | None = typer.Option(None, "--attempt", "-a", min=0, help="An attempt (0 is the project before the run)."),
     stopped: bool = typer.Option(False, "--stopped", help="The unfinished work of a run you stopped."),
     undo: bool = typer.Option(False, "--undo", help="The files as they were before the last restore from this run."),
     project_dir: Path = typer.Option(Path("."), "--dir", "-d", help="Project directory.", file_okay=False),

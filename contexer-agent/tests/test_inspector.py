@@ -1,6 +1,7 @@
 """Tests for RepositoryInspector."""
 
 from pathlib import Path
+
 from contexer.workflow.inspector import RepositoryInspector
 
 

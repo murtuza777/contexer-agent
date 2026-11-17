@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -28,7 +29,7 @@ class FakeLLM(LLMProvider):
     async def generate(
         self,
         prompt: str | list[Any],
-        system_instruction: Optional[str] = None,
+        system_instruction: str | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         self.prompts.append(str(prompt))
@@ -40,7 +41,7 @@ class FakeLLM(LLMProvider):
             raise reply
         return LLMResponse(text=reply)
 
-    def validate_configuration(self) -> tuple[bool, Optional[str]]:
+    def validate_configuration(self) -> tuple[bool, str | None]:
         return True, None
 
 

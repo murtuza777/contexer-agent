@@ -16,8 +16,9 @@ import re
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import IO, Callable, Optional
+from typing import IO
 
 import httpx
 
@@ -43,18 +44,18 @@ class DevServer:
     def __init__(
         self,
         plan: StartPlan,
-        log_path: Optional[Path] = None,
-        on_status: Optional[Callable[[str], None]] = None,
+        log_path: Path | None = None,
+        on_status: Callable[[str], None] | None = None,
     ) -> None:
         self.plan = plan
         self.log_path = log_path
         self.on_status = on_status or (lambda _msg: None)
-        self.url: Optional[str] = None
-        self._proc: Optional[ProcessTree] = None
+        self.url: str | None = None
+        self._proc: ProcessTree | None = None
         self._lines: collections.deque[str] = collections.deque(maxlen=_LOG_LINES)
         self._lock = threading.Lock()
-        self._reader: Optional[threading.Thread] = None
-        self._log_file: Optional[IO[str]] = None
+        self._reader: threading.Thread | None = None
+        self._log_file: IO[str] | None = None
 
     # -- lifecycle -------------------------------------------------------------
 

@@ -14,7 +14,7 @@ from contexer.llm.base import (
     LLMRateLimitError,
     LLMResponse,
 )
-from contexer.llm.openrouter import OpenRouterProvider, OPENROUTER_BASE_URL
+from contexer.llm.openrouter import OPENROUTER_BASE_URL, OpenRouterProvider
 
 
 class TestOpenRouterProviderValidation:

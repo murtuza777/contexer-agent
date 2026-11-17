@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterator, Literal, Optional
+from typing import Literal
 
 from contexer.appserver.detect import StartPlanError, plan_start
 from contexer.appserver.devserver import DevServer, DevServerError
@@ -28,10 +29,10 @@ class AppStartError(Exception):
 class RunningApp:
     url: str
     kind: AppKind
-    repo_context: Optional[RepositoryContext] = None
+    repo_context: RepositoryContext | None = None
     log_tail: Callable[[], str] = field(default=lambda: "")
     command: str = ""
-    server: Optional[DevServer] = None
+    server: DevServer | None = None
 
     def ensure_running(self) -> str:
         """Bring a crashed dev server back; other kinds are left to their owner."""
@@ -43,12 +44,12 @@ class RunningApp:
 @contextmanager
 def open_app(
     project_dir: str | Path,
-    url: Optional[str] = None,
+    url: str | None = None,
     *,
-    repo_context: Optional[RepositoryContext] = None,
-    settings: Optional[AppSettings] = None,
-    log_path: Optional[Path] = None,
-    on_status: Optional[Callable[[str], None]] = None,
+    repo_context: RepositoryContext | None = None,
+    settings: AppSettings | None = None,
+    log_path: Path | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> Iterator[RunningApp]:
     """Yield a running app; anything Contexer started is stopped on exit.
 

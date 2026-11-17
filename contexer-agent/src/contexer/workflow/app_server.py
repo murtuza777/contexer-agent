@@ -11,7 +11,7 @@ import functools
 import http.server
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 class _QuietNoCacheHandler(http.server.SimpleHTTPRequestHandler):
@@ -36,8 +36,8 @@ class StaticAppServer:
         self.root = Path(root).resolve()
         self.host = host
         self.port = port
-        self._server: Optional[http.server.ThreadingHTTPServer] = None
-        self._thread: Optional[threading.Thread] = None
+        self._server: http.server.ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
 
     @property
     def url(self) -> str:

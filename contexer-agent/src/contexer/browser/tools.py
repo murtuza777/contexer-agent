@@ -29,9 +29,10 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urljoin, urlparse
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Optional, cast
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -50,7 +51,7 @@ from contexer.verification.checks import (
     expand_secrets,
     redact,
 )
-from contexer.verification.runner import CheckRunner, _any_visible, _describe_failed_action, _locate, _short
+from contexer.verification.runner import CheckRunner, any_visible, describe_failed_action, locate, short_error
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, BrowserContext, Page, Playwright
@@ -62,7 +63,7 @@ INTERRUPTED_CLOSE_TIMEOUT_SECONDS = 1.0
 _MAX_ERRORS_SHOWN = 15
 _IGNORED_REQUESTS = ("/favicon.ico",)
 
-ResetCommand = Callable[[], Awaitable[Optional[str]]]
+ResetCommand = Callable[[], Awaitable[str | None]]
 
 
 class Target(BaseModel):
@@ -70,13 +71,13 @@ class Target(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    role: Optional[str] = Field(None, description='ARIA role from the snapshot, e.g. "button". Add `name`.')
-    name: Optional[str] = Field(None, description="Accessible name; only together with `role`.")
-    text: Optional[str] = Field(None, description="Visible text of the element.")
-    label: Optional[str] = Field(None, description="Label of a form field.")
-    placeholder: Optional[str] = Field(None, description="Placeholder of a form field.")
-    test_id: Optional[str] = Field(None, description="The element's data-testid.")
-    css: Optional[str] = Field(None, description="A CSS selector. Last resort.")
+    role: str | None = Field(None, description='ARIA role from the snapshot, e.g. "button". Add `name`.')
+    name: str | None = Field(None, description="Accessible name; only together with `role`.")
+    text: str | None = Field(None, description="Visible text of the element.")
+    label: str | None = Field(None, description="Label of a form field.")
+    placeholder: str | None = Field(None, description="Placeholder of a form field.")
+    test_id: str | None = Field(None, description="The element's data-testid.")
+    css: str | None = Field(None, description="A CSS selector. Last resort.")
 
 
 # A model that sends a target as text gets an error it can act on, not a schema dump.
@@ -94,7 +95,7 @@ class _WithValue(BaseModel):
 
 class _Press(BaseModel):
     key: str = Field(description='A key, e.g. "Enter", "Escape", "Tab".')
-    target: Optional[TargetArg] = Field(None, description="The element to press it on; leave out for the page.")
+    target: TargetArg | None = Field(None, description="The element to press it on; leave out for the page.")
 
 
 class _Goto(BaseModel):
@@ -105,15 +106,15 @@ class _Expect(BaseModel):
     kind: Literal[
         "visible", "hidden", "checked", "unchecked", "count", "text", "value", "attribute", "css", "url", "title", "no_errors"
     ] = Field(description="What to check.")  # fmt: skip
-    target: Optional[TargetArg] = Field(None, description="The element; not needed for url, title, no_errors.")
-    equals: Optional[str] = Field(None, description="Exact value, after whitespace is normalised.")
-    contains: Optional[str] = Field(None, description="Substring, case-insensitive.")
-    matches: Optional[str] = Field(None, description="Regular expression.")
-    changed: Optional[bool] = None
-    attribute: Optional[str] = Field(None, description="Attribute name, for kind=attribute.")
-    property: Optional[str] = Field(None, description="CSS property, for kind=css.")
-    min: Optional[int] = Field(None, description="For kind=count.")
-    max: Optional[int] = Field(None, description="For kind=count.")
+    target: TargetArg | None = Field(None, description="The element; not needed for url, title, no_errors.")
+    equals: str | None = Field(None, description="Exact value, after whitespace is normalised.")
+    contains: str | None = Field(None, description="Substring, case-insensitive.")
+    matches: str | None = Field(None, description="Regular expression.")
+    changed: bool | None = None
+    attribute: str | None = Field(None, description="Attribute name, for kind=attribute.")
+    property: str | None = Field(None, description="CSS property, for kind=css.")
+    min: int | None = Field(None, description="For kind=count.")
+    max: int | None = Field(None, description="For kind=count.")
 
 
 class _Reset(BaseModel):
@@ -131,9 +132,9 @@ class BrowserSession:
         self,
         url: str,
         *,
-        run_dir: Optional[Path] = None,
-        storage_state: Optional[dict[str, Any]] = None,
-        reset: Optional[ResetCommand] = None,
+        run_dir: Path | None = None,
+        storage_state: dict[str, Any] | None = None,
+        reset: ResetCommand | None = None,
         headless: bool = True,
         timeout_scale: float = 1.0,
     ) -> None:
@@ -152,10 +153,10 @@ class BrowserSession:
         self._runner.navigation_timeout *= timeout_scale
         self._runner.action_timeout *= timeout_scale
         self._runner.expect_timeout *= timeout_scale
-        self._playwright: Optional[Playwright] = None
-        self._browser: Optional[Browser] = None
-        self._context: Optional[BrowserContext] = None
-        self._page: Optional[Page] = None
+        self._playwright: Playwright | None = None
+        self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
+        self._page: Page | None = None
         self._page_errors: list[str] = []
         self._console_errors: list[str] = []
         self._failed_requests: list[str] = []
@@ -251,7 +252,7 @@ class BrowserSession:
             return await self._brought_back(page)
         return self._mask(f"Page: {page.url}\n{await capture_ui_snapshot(page)}")
 
-    async def act(self, action: StepAction, target: Any = None, value: Optional[str] = None) -> str:
+    async def act(self, action: StepAction, target: Any = None, value: str | None = None) -> str:
         """Perform one step of the check language, and record it if it happened."""
         page = self._page
         if page is None:
@@ -268,7 +269,7 @@ class BrowserSession:
                 "Only the app's own paths can be opened. Nothing was done."
             )
         try:
-            await self._runner._perform(page, step, self.url)
+            await self._runner.perform(page, step, self.url)
         except Exception as exc:
             return await self._brought_back(page) or await self._action_failed(page, step, exc)
         left = await self._brought_back(page)
@@ -310,7 +311,7 @@ class BrowserSession:
                 actual="; ".join(errors[:3]) if errors else "no errors",
             )
         else:
-            outcome = await self._runner._evaluate(page, expectation, None)
+            outcome = await self._runner.evaluate(page, expectation, None)
         crashed = expectation.kind == "no_errors" and not outcome.passed and bool(self._page_errors)
         observation = self.recorder.add_observation(expectation, outcome.passed, outcome.actual, crashed)
         if outcome.passed:
@@ -342,7 +343,7 @@ class BrowserSession:
         try:
             await page.screenshot(path=str(path), type="jpeg", quality=70, timeout=5000)
         except Exception as exc:
-            return f"Error: the screenshot failed: {_short(exc)}"
+            return f"Error: the screenshot failed: {short_error(exc)}"
         return f"ok: saved {SCREENS_DIR}/{path.name} for the report. You cannot see it; use snapshot to read the page."
 
     async def reset(self, signed_out: bool = False) -> str:
@@ -356,7 +357,7 @@ class BrowserSession:
         try:
             await self._open_page(signed_in=self.storage_state is not None and not signed_out)
         except Exception as exc:
-            return f"Error: the app did not load again: {_short(exc)}"
+            return f"Error: the app did not load again: {short_error(exc)}"
         self.recorder.start_over(login=False if signed_out else None)
         who = "signed out" if signed_out else ("signed in" if self.storage_state is not None else "a new visitor")
         # The page comes with the answer: a model that has to ask for it spends a step on every reset.
@@ -380,7 +381,7 @@ class BrowserSession:
         async def snapshot() -> str:
             return await self.snapshot()
 
-        async def press(key: str, target: Optional[Target] = None) -> str:
+        async def press(key: str, target: Target | None = None) -> str:
             return await self.act("press", target, key)
 
         async def goto(path: str) -> str:
@@ -421,10 +422,10 @@ class BrowserSession:
 
     async def _action_failed(self, page: Page, step: Step, exc: Exception) -> str:
         if step.target is None:
-            return self._mask(f"Error: could not {step.describe()}: {_short(exc)}")
+            return self._mask(f"Error: could not {step.describe()}: {short_error(exc)}")
         try:
-            target = _locate(page, step.target)
-            if not await _any_visible(target, await target.count()):
+            target = locate(page, step.target)
+            if not await any_visible(target, await target.count()):
                 ui = await capture_ui_snapshot(page)
                 return self._mask(
                     f"Error: {step.target.describe()} matches nothing visible on the page. "
@@ -436,9 +437,9 @@ class BrowserSession:
                     self.secrets.append(step.value)
                 self.recorder.add_step(step)
                 return self._mask(f"ok: {step.describe()}")
-            actual = await _describe_failed_action(target, step, exc)
+            actual = await describe_failed_action(target, step, exc)
         except Exception as inner:
-            actual = _short(inner)
+            actual = short_error(inner)
         # The target was there, so the action may have changed the page before it failed.
         self.recorder.tainted = True
         return self._mask(
@@ -500,7 +501,7 @@ class BrowserSession:
 
     async def _is_password(self, page: Page, locator: Locator) -> bool:
         try:
-            kind = await _locate(page, locator).first.get_attribute("type", timeout=500)
+            kind = await locate(page, locator).first.get_attribute("type", timeout=500)
         except Exception:
             return False
         return (kind or "").lower() == "password"
@@ -514,7 +515,7 @@ _SECRET_NAME = re.compile(r"PASS|SECRET|TOKEN|KEY|PWD|OTP")
 _REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def credential_secrets(flow: Check, env: Optional[Mapping[str, str]] = None) -> list[str]:
+def credential_secrets(flow: Check, env: Mapping[str, str] | None = None) -> list[str]:
     """The values of a sign-in flow that must be masked from an agent: passwords and codes, not identities.
 
     A report or a repair prompt masks everything a sign-in types. An agent that tests the app must not

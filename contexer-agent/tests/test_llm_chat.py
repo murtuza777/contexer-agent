@@ -21,8 +21,8 @@ from contexer.llm.chat import (
     chat_model,
     check_tool_calling,
     require_tools,
-    supports_tools,
     resolve_model,
+    supports_tools,
     tool_calling_error,
 )
 from contexer.llm.factory import create_llm_provider

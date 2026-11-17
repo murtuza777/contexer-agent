@@ -7,7 +7,6 @@ import os
 import shutil
 import subprocess
 import sys
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -33,12 +32,12 @@ _SUGGESTIONS = 12
 
 
 def setup(
-    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Provider id (`contexer models --providers`)."),
-    model: Optional[str] = typer.Option(None, "--model", "-m", help="Model that drafts checks from goals."),
-    key: Optional[str] = typer.Option(None, "--key", help="API key; leave out to be asked without echo."),
-    base_url: Optional[str] = typer.Option(None, "--base-url", help="Endpoint for the 'custom' provider, or to override one."),
-    agent: Optional[str] = typer.Option(None, "--agent", help="Coding agent for `contexer run`: claude-code, codex or opencode."),
-    agent_model: Optional[str] = typer.Option(None, "--agent-model", help="Model for the coding agent (OpenCode: provider/model)."),
+    provider: str | None = typer.Option(None, "--provider", "-p", help="Provider id (`contexer models --providers`)."),
+    model: str | None = typer.Option(None, "--model", "-m", help="Model that drafts checks from goals."),
+    key: str | None = typer.Option(None, "--key", help="API key; leave out to be asked without echo."),
+    base_url: str | None = typer.Option(None, "--base-url", help="Endpoint for the 'custom' provider, or to override one."),
+    agent: str | None = typer.Option(None, "--agent", help="Coding agent for `contexer run`: claude-code, codex or opencode."),
+    agent_model: str | None = typer.Option(None, "--agent-model", help="Model for the coding agent (OpenCode: provider/model)."),
     test: bool = typer.Option(True, "--test/--no-test", help="Send one tiny request to prove the model answers."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Take the defaults instead of asking."),
     show: bool = typer.Option(False, "--show", help="Print the saved settings and exit."),
@@ -135,9 +134,9 @@ def ensure_browser(console: Console, ask: bool) -> bool:
 
 
 def models(
-    provider: Optional[str] = typer.Option(None, "--provider", "-p", help="Provider id (default: the one you set up)."),
+    provider: str | None = typer.Option(None, "--provider", "-p", help="Provider id (default: the one you set up)."),
     free: bool = typer.Option(False, "--free", help="Only free models (OpenRouter)."),
-    search: Optional[str] = typer.Option(None, "--search", "-s", help="Only models whose id contains this."),
+    search: str | None = typer.Option(None, "--search", "-s", help="Only models whose id contains this."),
     limit: int = typer.Option(30, "--limit", min=1, help="How many to show."),
     providers: bool = typer.Option(False, "--providers", help="List the providers you can bring a key for."),
 ) -> None:
@@ -172,7 +171,7 @@ def models(
 # -- choices --------------------------------------------------------------------
 
 
-def _choose_provider(console: Console, provider: Optional[str], yes: bool) -> ProviderSpec:
+def _choose_provider(console: Console, provider: str | None, yes: bool) -> ProviderSpec:
     if provider:
         return provider_spec(provider)
     default = next((p for p in PROVIDERS if p.key() and not p.local), provider_spec("openrouter"))
@@ -185,7 +184,7 @@ def _choose_provider(console: Console, provider: Optional[str], yes: bool) -> Pr
     return provider_spec(answer)
 
 
-def _choose_key(console: Console, spec: ProviderSpec, key: Optional[str], yes: bool) -> tuple[Optional[str], bool]:
+def _choose_key(console: Console, spec: ProviderSpec, key: str | None, yes: bool) -> tuple[str | None, bool]:
     """The key to use, and whether it is new (to be saved)."""
     if key:
         return key.strip(), True
@@ -202,7 +201,7 @@ def _choose_key(console: Console, spec: ProviderSpec, key: Optional[str], yes: b
     return pasted, True
 
 
-def _choose_model(console: Console, spec: ProviderSpec, model: Optional[str], available: list[ModelInfo], yes: bool) -> str:
+def _choose_model(console: Console, spec: ProviderSpec, model: str | None, available: list[ModelInfo], yes: bool) -> str:
     known = {m.id for m in available}
     if model:
         if available and model not in known:
@@ -225,16 +224,16 @@ def _choose_agent(
     console: Console,
     spec: ProviderSpec,
     model: str,
-    agent: Optional[str],
-    agent_model: Optional[str],
+    agent: str | None,
+    agent_model: str | None,
     yes: bool,
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[str | None, str | None]:
     installed = [name for name, binary in AGENT_BINARIES.items() if shutil.which(binary)]
     if agent:
-        name: Optional[str] = agent
+        name: str | None = agent
     else:
         if spec.native_agent in installed:
-            recommended: Optional[str] = spec.native_agent
+            recommended: str | None = spec.native_agent
         elif "opencode" in installed and spec.opencode_id:
             recommended = "opencode"
         else:
@@ -287,7 +286,7 @@ def _show_providers(console: Console) -> None:
     console.print(table)
 
 
-def _model_table(console: Console, title: str, rows: list[ModelInfo], default: str, current: Optional[str]) -> None:
+def _model_table(console: Console, title: str, rows: list[ModelInfo], default: str, current: str | None) -> None:
     table = Table(title=title, show_header=True, header_style="dim", box=None, pad_edge=False, title_justify="left")
     for column in ("model", "context", "free", "tools", ""):
         table.add_column(column)
@@ -325,7 +324,7 @@ def _show(console: Console) -> None:
         console.print("[dim]Exported variables and a project's contexer.toml take precedence over these.[/]")
 
 
-def build_provider(spec: ProviderSpec, model: str, api_key: Optional[str], base_url: str) -> LLMProvider:
+def build_provider(spec: ProviderSpec, model: str, api_key: str | None, base_url: str) -> LLMProvider:
     """A provider for ``spec`` using exactly this key, model and endpoint (not whatever the environment says)."""
     from contexer.llm.openrouter import OpenAICompatibleProvider, OpenAIProvider, OpenRouterProvider
 

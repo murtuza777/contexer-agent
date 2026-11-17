@@ -13,8 +13,6 @@ The rules are deliberately fail-safe:
 
 from __future__ import annotations
 
-from typing import Optional
-
 from contexer.gate.models import ContractOutcome, GateDecision, GateOutcome, JudgedPolicy
 
 _SEVERITY: dict[GateOutcome, int] = {"pass": 0, "needs_action": 1, "fail": 2, "error": 3}
@@ -25,7 +23,7 @@ def decide(
     *,
     require_approval: bool = True,
     judged_policy: JudgedPolicy = "advisory",
-    app_error: Optional[str] = None,
+    app_error: str | None = None,
 ) -> GateDecision:
     if app_error:
         return GateDecision(outcome="error", reasons=[app_error])

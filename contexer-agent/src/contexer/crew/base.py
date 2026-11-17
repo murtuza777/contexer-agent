@@ -24,9 +24,10 @@ import asyncio
 import inspect
 import json
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, Sequence
+from typing import Any, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -70,18 +71,18 @@ class AgentResult:
     """How a run ended. ``output`` is set only when ``status`` is ``ok``."""
 
     status: AgentStatus
-    output: Optional[BaseModel] = None
+    output: BaseModel | None = None
     # Model calls made.
     steps: int = 0
     tool_calls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
     # Only when the provider reports what the calls cost (OpenRouter does); otherwise None.
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     duration_seconds: float = 0.0
     error: str = ""
     # agents/<name>.jsonl in the run folder; None when there is no run folder.
-    transcript: Optional[Path] = None
+    transcript: Path | None = None
     messages: list[BaseMessage] = field(default_factory=list, repr=False)
 
 
@@ -94,9 +95,9 @@ async def run_agent(
     tools: Sequence[Tool],
     user_input: str,
     *,
-    run_dir: Optional[Path],
+    run_dir: Path | None,
     secrets: Sequence[str] = (),
-    budget: Optional[Budget] = None,
+    budget: Budget | None = None,
 ) -> AgentResult:
     """Run ``spec`` on ``model`` with ``tools`` until it submits a valid answer or hits a limit.
 
@@ -149,17 +150,17 @@ class _Run:
         model: BaseChatModel,
         tools: Sequence[Tool],
         transcript: Transcript,
-        budget: Optional[Budget] = None,
+        budget: Budget | None = None,
     ) -> None:
         self.budget = budget
         # The last tool call and how many times in a row it was made.
-        self._last_call: Optional[str] = None
+        self._last_call: str | None = None
         self._repeats = 0
         self.spec = spec
         self.model = model
         self.transcript = transcript
         callbacks = tracing_callbacks()  # Langfuse, only when the user configured it
-        self.config: Optional[RunnableConfig] = {"callbacks": callbacks} if callbacks else None
+        self.config: RunnableConfig | None = {"callbacks": callbacks} if callbacks else None
         self.tools: dict[str, BaseTool] = {}
         for item in tools:
             tool = _as_tool(item)
@@ -299,7 +300,7 @@ class _Run:
         candidate: Any,
         *,
         on_invalid: Callable[[str], BaseMessage],
-        on_valid: Optional[Callable[[], BaseMessage]] = None,
+        on_valid: Callable[[], BaseMessage] | None = None,
     ) -> bool:
         """Validate an answer. True when the run is over (accepted, or out of corrections)."""
         try:
@@ -347,7 +348,7 @@ class _Run:
             self.budget.spend(int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), cost)
 
 
-def reported_cost(reply: AIMessage) -> Optional[float]:
+def reported_cost(reply: AIMessage) -> float | None:
     """What the provider says this call cost in US dollars, when it says (OpenRouter's ``usage.cost``)."""
     metadata = reply.response_metadata or {}
     for usage in (metadata.get("token_usage"), metadata.get("usage")):

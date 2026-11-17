@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -92,18 +92,18 @@ Illustrative criterion (its names are made up; take real names from the current 
 class GoalAnalyzer:
     """Uses LLM to analyze user goals and generate acceptance criteria with executable checks."""
 
-    def __init__(self, llm_provider: Optional[LLMProvider] = None, timeout: float = COMPILE_TIMEOUT_SECONDS) -> None:
+    def __init__(self, llm_provider: LLMProvider | None = None, timeout: float = COMPILE_TIMEOUT_SECONDS) -> None:
         self.llm_provider = llm_provider
         self.timeout = timeout
         # Why the last analysis did not use the model (rate limit, auth, no JSON), for the person reviewing it.
-        self.last_error: Optional[str] = None
+        self.last_error: str | None = None
         # The model that actually answered: a router or fallback may differ from the one asked for.
-        self.drafted_by: Optional[str] = None
+        self.drafted_by: str | None = None
 
     async def analyze(
         self,
         goal: str,
-        repo_context: Optional[RepositoryContext] = None,
+        repo_context: RepositoryContext | None = None,
         ui_snapshot: str = "",
     ) -> GoalAnalysis:
         """Derive acceptance criteria with executable checks.
@@ -112,7 +112,7 @@ class GoalAnalyzer:
         app's current locator vocabulary; without it the model can only guess
         names for elements that already exist.
         """
-        best: Optional[GoalAnalysis] = None
+        best: GoalAnalysis | None = None
         self.last_error = None if self.llm_provider else "no drafting model is configured"
         for attempt in range(1, MAX_ANALYSIS_ATTEMPTS + 1) if self.llm_provider else ():
             try:
@@ -151,7 +151,7 @@ class GoalAnalyzer:
     async def _analyze_with_llm(
         self,
         goal: str,
-        repo_context: Optional[RepositoryContext],
+        repo_context: RepositoryContext | None,
         ui_snapshot: str = "",
         json_mode: bool = False,
     ) -> GoalAnalysis:
@@ -198,7 +198,7 @@ class GoalAnalyzer:
                 ),
                 timeout=self.timeout,
             )
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             raise TimeoutError(f"the model did not answer within {self.timeout:.0f}s") from exc
         self.drafted_by = getattr(response, "model", None) or self.llm_provider.model
         data = parse_json_object(response.text, expect_key="acceptance_criteria")
@@ -304,7 +304,7 @@ class GoalAnalyzer:
         )
 
 
-def _parse_check(criterion_id: str, raw: Any) -> Optional[Check]:
+def _parse_check(criterion_id: str, raw: Any) -> Check | None:
     """Validate an LLM-written check; an invalid one is dropped, not half-executed."""
     if raw is None:
         return None
@@ -315,6 +315,10 @@ def _parse_check(criterion_id: str, raw: Any) -> Optional[Check]:
         location = ".".join(str(part) for part in first.get("loc", ()))
         logger.info("Dropping invalid check for %s (%s: %s)", criterion_id, location, first.get("msg"))
         return None
+
+
+# The validation every model-written check goes through, whoever wrote it.
+parse_check = _parse_check
 
 
 def _check_coverage(analysis: GoalAnalysis) -> float:
@@ -347,12 +351,12 @@ _QUOTED = re.compile(r"""(?:^|(?<=[\s(]))(["'])([^"'\n]{1,60})\1(?=[\s.,;:!?)]|$
 _ROLE_WORDS = {"button": "button", "link": "link", "heading": "heading", "title": "heading", "tab": "tab"}
 
 
-def _quoted_ui_text(goal: str) -> list[tuple[str, Optional[str]]]:
+def _quoted_ui_text(goal: str) -> list[tuple[str, str | None]]:
     """Quoted strings in a goal, with the ARIA role named right after them, if any.
 
     ``a 'Get Started' button`` -> ``[("Get Started", "button")]``
     """
-    found: list[tuple[str, Optional[str]]] = []
+    found: list[tuple[str, str | None]] = []
     for match in _QUOTED.finditer(goal):
         text = match.group(2).strip()
         if not text:

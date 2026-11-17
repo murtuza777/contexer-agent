@@ -26,8 +26,9 @@ import subprocess
 import sys
 import time
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse
 
 import typer
@@ -78,7 +79,7 @@ class NoModelError(LLMError):
     """No model is configured for the agents."""
 
 
-def build_model(project: Path, provider: Optional[str] = None, model: Optional[str] = None) -> BaseChatModel:
+def build_model(project: Path, provider: str | None = None, model: str | None = None) -> BaseChatModel:
     """The chat model the agents run on: ``--provider``/``--model``, else the project's and the user's choice.
 
     The choice follows the drafting model (``[compiler]`` in contexer.toml,
@@ -156,14 +157,14 @@ def copy_to_clipboard(text: str) -> bool:
 
 
 def test(
-    intent: Optional[str] = typer.Argument(None, help="What the app should do, in your words."),
+    intent: str | None = typer.Argument(None, help="What the app should do, in your words."),
     project_dir: Path = DirOption,
-    url: Optional[str] = UrlOption,
+    url: str | None = UrlOption,
     again: bool = typer.Option(False, "--again", help="Replay the checks the last run saved (no model); explore only if they pass."),
-    correct: Optional[str] = typer.Option(None, "--correct", help="Record what you meant, then test again with it."),
+    correct: str | None = typer.Option(None, "--correct", help="Record what you meant, then test again with it."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask questions; take the likeliest reading and record it."),
     copy: bool = typer.Option(False, "--copy", help="Put the fix prompt on the clipboard."),
-    max_tokens: Optional[int] = typer.Option(
+    max_tokens: int | None = typer.Option(
         None, "--max-tokens", min=1, help="The most tokens the agents may use in this run (default: [limits] tokens, else 1,500,000)."
     ),
     no_skills: bool = typer.Option(False, "--no-skills", help="Neither load nor save project skills in this run."),
@@ -171,8 +172,8 @@ def test(
         False, "--allow-remote", help="Test a --url that is not on this machine or a private network."
     ),
     steps: int = typer.Option(DEFAULT_MAX_STEPS, "--steps", min=1, help="The most model calls the tester may make."),
-    model: Optional[str] = typer.Option(None, "--model", help="Model id for the agents (default: your drafting model)."),
-    provider: Optional[str] = typer.Option(None, "--provider", help="Provider for --model, e.g. anthropic, azure, openrouter."),
+    model: str | None = typer.Option(None, "--model", help="Model id for the agents (default: your drafting model)."),
+    provider: str | None = typer.Option(None, "--provider", help="Provider for --model, e.g. anthropic, azure, openrouter."),
     save: bool = typer.Option(False, "--save", help="Save the confirmed checks as a draft contract in the project."),
     json_output: bool = typer.Option(False, "--json", help="Print result.json to stdout."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
@@ -286,15 +287,15 @@ async def run_test(
     goal: str,
     model_factory: ModelFactory,
     *,
-    url: Optional[str] = None,
+    url: str | None = None,
     steps: int = DEFAULT_MAX_STEPS,
     save: bool = False,
-    console: Optional[Console] = None,
+    console: Console | None = None,
     mode: Mode = "explore",
-    correction: Optional[str] = None,
+    correction: str | None = None,
     assume: bool = True,
-    stored: Optional[IntentSpec] = None,
-    budget: Optional[Budget] = None,
+    stored: IntentSpec | None = None,
+    budget: Budget | None = None,
     use_skills: bool = True,
 ) -> ExplorationResult:
     """Start the app, sign in, and run one ``contexer test``; the evidence is written whatever happens."""
@@ -342,7 +343,7 @@ class _Job:
         run: RunDir,
         session: VerificationSession,
         app: RunningApp,
-        state: Optional[dict[str, Any]],
+        state: dict[str, Any] | None,
         console: Console,
         result: ExplorationResult,
         budget: Budget,
@@ -353,7 +354,7 @@ class _Job:
         result.budget_tokens = budget.max_tokens
         self.console, self.result = console, result
         self.scale = DEV_SERVER_TIMEOUT_SCALE if app.kind == "dev" else 1.0
-        self.reset = session._reset_before_each(app) if session.reset else None
+        self.reset = session.reset_before_each(app)
         self.credentials = credential_secrets(session.auth.as_check()) if session.auth is not None else []
         self.intents = IntentStore(project)
         self.contracts = ContractStore(project)
@@ -366,9 +367,9 @@ class _Job:
         steps: int,
         save: bool,
         mode: Mode,
-        correction: Optional[str],
+        correction: str | None,
         assume: bool,
-        stored: Optional[IntentSpec],
+        stored: IntentSpec | None,
     ) -> None:
         result = self.result
         spec = stored or IntentSpec(id=self.intents.id_for(goal), goal=goal)
@@ -526,7 +527,7 @@ class _Job:
         checks: list[SavedCheck],
         chat: BaseChatModel,
         snapshot: str,
-        correction: Optional[str],
+        correction: str | None,
         assume: bool,
     ) -> tuple[IntentSpec, list[SavedCheck]]:
         """Run the Intent agent; ask its questions once when a person is there to answer."""
@@ -639,7 +640,7 @@ class _Job:
         path.write_text(text, encoding="utf-8", newline="\n")
         self.result.fix_prompt = str(path)
 
-    def _spent(self, agent: str, steps: int, tokens_in: int, tokens_out: int, cost: Optional[float]) -> None:
+    def _spent(self, agent: str, steps: int, tokens_in: int, tokens_out: int, cost: float | None) -> None:
         usage = next((a for a in self.result.agents if a.agent == agent), None)
         if usage is None:
             usage = AgentUsage(agent=agent)
@@ -667,11 +668,12 @@ def _after_replay(check: SavedCheck, passed: bool) -> SavedCheck:
 
 def _with_confirmed(checks: list[SavedCheck], report: ReplayReport) -> list[SavedCheck]:
     """The feature's checks with this run's confirmed ones added; a check with the same id is replaced."""
-    confirmed = [
-        SavedCheck(id=item.criterion_id, description=item.finding.title, check=item.check, source="confirmed", kind=kind)
-        for kind, items in (("bug", report.bugs), ("works", report.works))
-        for item in items
-    ]
+    def saved(item: Confirmed, kind: Literal["bug", "works"]) -> SavedCheck:
+        return SavedCheck(
+            id=item.criterion_id, description=item.finding.title, check=item.check, source="confirmed", kind=kind
+        )
+
+    confirmed = [*(saved(item, "bug") for item in report.bugs), *(saved(item, "works") for item in report.works)]
     new_ids = {c.id for c in confirmed}
     return [*[c for c in checks if c.id not in new_ids], *confirmed]
 

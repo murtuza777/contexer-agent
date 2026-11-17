@@ -12,8 +12,6 @@ is why the token limit is the one with a default.
 
 from __future__ import annotations
 
-from typing import Optional
-
 # Tokens (in and out together) one run may use unless the project or the command says otherwise.
 # A 40-step Tester run on a small app uses about 230,000.
 DEFAULT_MAX_TOKENS = 1_500_000
@@ -22,18 +20,18 @@ DEFAULT_MAX_TOKENS = 1_500_000
 class Budget:
     """What a run may spend, and what it has spent so far."""
 
-    def __init__(self, max_tokens: Optional[int] = None, max_cost_usd: Optional[float] = None) -> None:
+    def __init__(self, max_tokens: int | None = None, max_cost_usd: float | None = None) -> None:
         self.max_tokens = max_tokens
         self.max_cost_usd = max_cost_usd
         self.tokens_in = 0
         self.tokens_out = 0
-        self.cost_usd: Optional[float] = None
+        self.cost_usd: float | None = None
 
     @property
     def tokens(self) -> int:
         return self.tokens_in + self.tokens_out
 
-    def spend(self, tokens_in: int, tokens_out: int, cost_usd: Optional[float] = None) -> None:
+    def spend(self, tokens_in: int, tokens_out: int, cost_usd: float | None = None) -> None:
         self.tokens_in += max(0, tokens_in)
         self.tokens_out += max(0, tokens_out)
         if cost_usd is not None:

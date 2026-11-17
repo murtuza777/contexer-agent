@@ -17,7 +17,6 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -38,10 +37,10 @@ class GitHubTarget:
     sha: str
     token: str
     api_url: str = "https://api.github.com"
-    target_url: Optional[str] = None
+    target_url: str | None = None
 
 
-def detect_target(project_dir: str | Path, token: Optional[str] = None) -> GitHubTarget:
+def detect_target(project_dir: str | Path, token: str | None = None) -> GitHubTarget:
     """Repository, commit and token from the Actions environment, falling back to git."""
     token = token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if not token:
@@ -64,7 +63,7 @@ def post_status(
     decision: GateDecision,
     *,
     context: str = STATUS_CONTEXT,
-    client: Optional[httpx.Client] = None,
+    client: httpx.Client | None = None,
 ) -> dict:
     payload: dict[str, str] = {
         "state": _STATES[decision.outcome],
@@ -130,7 +129,7 @@ def step_summary(result: RunResult) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_step_summary(result: RunResult) -> Optional[Path]:
+def write_step_summary(result: RunResult) -> Path | None:
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not path:
         return None
@@ -143,7 +142,7 @@ def _md(text: str) -> str:
     return " ".join(str(text).split()).replace("|", "\\|")
 
 
-def _pull_request_head_sha() -> Optional[str]:
+def _pull_request_head_sha() -> str | None:
     """On pull_request events GITHUB_SHA is a merge commit; report on the PR head instead."""
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     if not event_path or not Path(event_path).is_file():
@@ -157,7 +156,7 @@ def _pull_request_head_sha() -> Optional[str]:
     return str(sha) if sha else None
 
 
-def _repo_from_remote(project_dir: str | Path) -> Optional[str]:
+def _repo_from_remote(project_dir: str | Path) -> str | None:
     url = _git(project_dir, "remote", "get-url", "origin")
     match = _REMOTE.search(url or "")
     return match.group("repo") if match else None

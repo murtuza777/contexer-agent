@@ -6,8 +6,9 @@ import asyncio
 import os
 import shutil
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -40,19 +41,19 @@ _VERDICT = {"PASS": ("pass", "green"), "FAIL": ("fail", "red"), "NEEDS ACTION": 
 
 
 def run(
-    goal: Optional[str] = typer.Argument(None, help="What should be true when the work is done."),
-    contract_id: Optional[str] = typer.Option(None, "--contract", "-c", help="Run an existing contract instead."),
+    goal: str | None = typer.Argument(None, help="What should be true when the work is done."),
+    contract_id: str | None = typer.Option(None, "--contract", "-c", help="Run an existing contract instead."),
     project_dir: Path = typer.Option(Path("."), "--dir", "-d", help="Project directory.", file_okay=False),
-    url: Optional[str] = typer.Option(None, "--url", "-u", help="Use an app you already run."),
-    agent_name: Optional[str] = typer.Option(None, "--agent", help="claude-code (default), codex or opencode."),
-    model: Optional[str] = typer.Option(None, "--model", help="Model for the coding agent."),
-    rounds: Optional[int] = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
-    budget: Optional[float] = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
+    url: str | None = typer.Option(None, "--url", "-u", help="Use an app you already run."),
+    agent_name: str | None = typer.Option(None, "--agent", help="claude-code (default), codex or opencode."),
+    model: str | None = typer.Option(None, "--model", help="Model for the coding agent."),
+    rounds: int | None = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
+    budget: float | None = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve the checklist without asking."),
     no_replay: bool = typer.Option(False, "--no-replay", help="Skip re-checking other approved contracts."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
     pr: bool = typer.Option(False, "--pr", help="Commit the result to a new branch and open a pull request with the evidence."),
-    issue: Optional[int] = typer.Option(None, "--issue", min=1, help="Take the goal from this GitHub issue; the pull request closes it."),
+    issue: int | None = typer.Option(None, "--issue", min=1, help="Take the goal from this GitHub issue; the pull request closes it."),
 ) -> None:
     """Turn a goal into approved checks, have a coding agent build it, prove it, and repair until it passes."""
     if sum((bool(goal), bool(contract_id), issue is not None)) != 1:
@@ -63,7 +64,7 @@ def run(
     if unsafe:
         raise typer.BadParameter(f"{unsafe}; run Contexer in your app's folder, or pass --dir")
     pr = pr or issue is not None  # work on an issue ends in a pull request that closes it
-    handoff_plan: Optional[HandoffPlan] = None
+    handoff_plan: HandoffPlan | None = None
     if pr:
         try:
             handoff_plan = plan_handoff(project)  # before anything is spent
@@ -80,14 +81,14 @@ def run(
         agent = create_agent(*choose_agent(config.agent, agent_name, model))
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
-    draft_id: Optional[str] = None
+    draft_id: str | None = None
     if issue is not None:
         goal, draft_id = issue_goal(console, handoff_plan, issue, store)
     drafting = compiler_llm(project) if goal else None
     check_free_quota(console, drafting, agent, yes)
 
-    preview: Optional[RunResult] = None
-    analyzer: Optional[GoalAnalyzer] = None
+    preview: RunResult | None = None
+    analyzer: GoalAnalyzer | None = None
     if goal:
         contract, preview, analyzer = _draft(console, project, store, goal, url, drafting, draft_id)
     else:
@@ -107,8 +108,8 @@ def run(
         replay_others=not no_replay,
     )
     outcome = execute_run(console, project, agent, contract, store, settings, url)
-    handoff: Optional[Handoff] = None
-    handoff_error: Optional[str] = None
+    handoff: Handoff | None = None
+    handoff_error: str | None = None
     if handoff_plan is not None and outcome.terminal not in ("tampered", "cancelled"):
         with console.status("[dim]Committing the work to a branch and opening a pull request...[/dim]"):
             try:
@@ -128,8 +129,8 @@ def execute_run(
     contract: Contract,
     store: ContractStore,
     settings: RunSettings,
-    url: Optional[str] = None,
-    on_progress: Optional[Callable[[str, str], None]] = None,
+    url: str | None = None,
+    on_progress: Callable[[str, str], None] | None = None,
 ) -> RunOutcome:
     """Drive the agent to the approved contract, printing progress; Ctrl+C ends in a "cancelled" outcome."""
     others = [c for c in store.list() if c.id != contract.id and c.status == "approved"] if settings.replay_others else []
@@ -187,7 +188,7 @@ def execute_run(
         activity.stop()
         if controller.last_outcome is None:  # stopped before the first snapshot
             term.note(console, "warn", "Stopped. Nothing was changed.")
-            raise typer.Exit(code=130)
+            raise typer.Exit(code=130) from None
         outcome = controller.last_outcome
     finally:
         activity.stop()
@@ -195,7 +196,7 @@ def execute_run(
     return outcome
 
 
-def issue_goal(console: Console, plan: Optional[HandoffPlan], number: int, store: ContractStore) -> tuple[str, str]:
+def issue_goal(console: Console, plan: HandoffPlan | None, number: int, store: ContractStore) -> tuple[str, str]:
     """The goal an issue describes (its title and text), and a contract id that names the issue."""
     token = github_token()
     if plan is None or plan.repo is None or token is None:
@@ -222,13 +223,13 @@ def _draft(
     project: Path,
     store: ContractStore,
     goal: str,
-    url: Optional[str],
+    url: str | None,
     drafting: Any = None,
-    contract_id: Optional[str] = None,
-) -> tuple[Contract, Optional[RunResult], GoalAnalyzer]:
+    contract_id: str | None = None,
+) -> tuple[Contract, RunResult | None, GoalAnalyzer]:
     analyzer = GoalAnalyzer(llm_provider=drafting)
 
-    async def compile_contract() -> tuple[Contract, Optional[RunResult]]:
+    async def compile_contract() -> tuple[Contract, RunResult | None]:
         run_dir = RunDir.create(project)
         session = VerificationSession(project, run_dir)
         cid = contract_id or store.unique_id(goal)
@@ -252,8 +253,8 @@ def _approve(
     store: ContractStore,
     contract: Contract,
     yes: bool,
-    preview: Optional[RunResult] = None,
-    analyzer: Optional[GoalAnalyzer] = None,
+    preview: RunResult | None = None,
+    analyzer: GoalAnalyzer | None = None,
 ) -> Contract:
     print_checklist(console, contract)
     print_draft_preview(console, preview)
@@ -309,7 +310,7 @@ def check_free_quota(console: Console, drafting: Any, agent: CodingAgentAdapter,
         raise typer.Exit(code=2)
 
 
-def choose_agent(project: AgentSettings, flag_name: Optional[str], flag_model: Optional[str]) -> tuple[str, Optional[str]]:
+def choose_agent(project: AgentSettings, flag_name: str | None, flag_model: str | None) -> tuple[str, str | None]:
     """Coding agent and model: --agent/--model, then [agent] in contexer.toml, then `contexer setup`, then Claude Code."""
     set_in_project = project.model_fields_set
     name = (
@@ -328,7 +329,7 @@ _RATE_LIMITED = ("rate limit", "too many requests", "429")
 _ACCOUNT_PROBLEMS = ("credit balance", "credits", "unauthorized", "401", "authentication", "api key", "not logged in", "login")
 
 
-def agent_hint(outcome: RunOutcome) -> Optional[str]:
+def agent_hint(outcome: RunOutcome) -> str | None:
     """What to do when the coding agent itself could not run (no credit, not logged in)."""
     reason = " ".join([outcome.reason, *(a.agent.error or "" for a in outcome.attempts)]).lower()
     again = f"`contexer run --contract {outcome.contract_id}`"
@@ -356,8 +357,8 @@ def agent_hint(outcome: RunOutcome) -> Optional[str]:
 def _render(
     console: Console,
     outcome: RunOutcome,
-    handoff: Optional[Handoff] = None,
-    handoff_error: Optional[str] = None,
+    handoff: Handoff | None = None,
+    handoff_error: str | None = None,
     pr: bool = False,
 ) -> None:
     style = term.TERMINAL_STYLE.get(outcome.terminal, "yellow")

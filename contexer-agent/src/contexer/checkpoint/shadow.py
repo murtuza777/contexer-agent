@@ -18,7 +18,6 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 SHADOW_DIR = Path(".contexer") / "shadow.git"
 
@@ -73,7 +72,7 @@ class ShadowRepo:
 
     # -- public API ---------------------------------------------------------------
 
-    def snapshot(self, ref: Optional[str] = None, message: str = "contexer snapshot") -> str:
+    def snapshot(self, ref: str | None = None, message: str = "contexer snapshot") -> str:
         """Record the current files; return the snapshot's commit id."""
         self._ensure()
         self._git("add", "--all", "--", ".")
@@ -91,7 +90,7 @@ class ShadowRepo:
         self._git("add", "--all", "--", ".")
         self._git("read-tree", "-u", "--reset", commit)
 
-    def resolve(self, ref: str) -> Optional[str]:
+    def resolve(self, ref: str) -> str | None:
         """The commit a snapshot ref (``<run>/<n>``) points to, if it exists."""
         if not (self.git_dir / "HEAD").is_file():
             return None

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 import asyncio
 import logging
 import time
-from typing import Optional
+from abc import ABC, abstractmethod
 
 from contexer.opencode.client import OpenCodeClient
 from contexer.opencode.exceptions import (
@@ -30,8 +29,8 @@ class CodingAgent(ABC):
     @abstractmethod
     async def create_session(
         self,
-        title: Optional[str] = None,
-        directory: Optional[str] = None,
+        title: str | None = None,
+        directory: str | None = None,
     ) -> OpenCodeSession:
         """Create a new session in the coding engine."""
 
@@ -59,7 +58,7 @@ class CodingAgent(ABC):
     async def get_messages(
         self,
         session_id: str,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[OpenCodeMessage]:
         """Retrieve message history for a session."""
 
@@ -77,19 +76,19 @@ class OpenCodeAdapter(CodingAgent):
 
     def __init__(
         self,
-        client: Optional[OpenCodeClient] = None,
+        client: OpenCodeClient | None = None,
         base_url: str = "http://127.0.0.1:4096",
         timeout: float = 30.0,
-        model_provider: Optional[str] = "opencode",
-        model_id: Optional[str] = "nemotron-3.5-lightning-free",
-        agent_name: Optional[str] = None,
+        model_provider: str | None = "opencode",
+        model_id: str | None = "nemotron-3.5-lightning-free",
+        agent_name: str | None = None,
     ) -> None:
         self.client = client or OpenCodeClient(base_url=base_url, timeout=timeout)
         self.model_provider = model_provider
         self.model_id = model_id
         self.agent_name = agent_name
 
-    def _get_model_config(self) -> Optional[dict[str, str]]:
+    def _get_model_config(self) -> dict[str, str] | None:
         if self.model_provider and self.model_id:
             return {"providerID": self.model_provider, "modelID": self.model_id}
         return None
@@ -100,8 +99,8 @@ class OpenCodeAdapter(CodingAgent):
 
     async def create_session(
         self,
-        title: Optional[str] = None,
-        directory: Optional[str] = None,
+        title: str | None = None,
+        directory: str | None = None,
     ) -> OpenCodeSession:
         """Create a new session in OpenCode."""
         return await self.client.create_session(title=title, directory=directory)
@@ -157,7 +156,7 @@ class OpenCodeAdapter(CodingAgent):
 
         duration = time.monotonic() - start_time
         status = ExecutionStatus.COMPLETED
-        error_msg: Optional[str] = None
+        error_msg: str | None = None
         response_text = ""
 
         text_parts = [
@@ -193,7 +192,7 @@ class OpenCodeAdapter(CodingAgent):
         session_id: str,
         timeout: float = 120.0,
         poll_interval: float = 0.5,
-        start_time: Optional[float] = None,
+        start_time: float | None = None,
     ) -> OpenCodeExecutionResult:
         """Poll the session until terminal state (idle / completed / error / timeout)."""
         if start_time is None:
@@ -232,14 +231,14 @@ class OpenCodeAdapter(CodingAgent):
 
         # Inspect completed messages
         messages = await self.client.get_messages(session_id)
-        last_assistant_msg: Optional[OpenCodeMessage] = None
+        last_assistant_msg: OpenCodeMessage | None = None
         for msg in reversed(messages):
             if msg.info.role == "assistant":
                 last_assistant_msg = msg
                 break
 
         status = ExecutionStatus.COMPLETED
-        error_msg: Optional[str] = None
+        error_msg: str | None = None
         response_text = ""
 
         if last_assistant_msg:
@@ -285,7 +284,7 @@ class OpenCodeAdapter(CodingAgent):
     async def get_messages(
         self,
         session_id: str,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> list[OpenCodeMessage]:
         """Retrieve messages from OpenCode."""
         return await self.client.get_messages(session_id, limit=limit)

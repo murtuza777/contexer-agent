@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 from contexer.config.settings import DEFAULT_OPENROUTER_MODEL
 
@@ -39,7 +39,7 @@ class ProviderSpec:
     # Variable that holds the endpoint, for providers where every user has their own (Azure).
     base_url_env: str = ""
 
-    def key(self) -> Optional[str]:
+    def key(self) -> str | None:
         value = os.environ.get(self.key_env, "").strip()
         return value or None
 
@@ -48,7 +48,7 @@ class ProviderSpec:
         own = os.environ.get(self.base_url_env, "").strip() if self.base_url_env else ""
         return normalize_endpoint(own or self.base_url)
 
-    def opencode_model(self, model: str) -> Optional[str]:
+    def opencode_model(self, model: str) -> str | None:
         """``provider/model`` for OpenCode, or None if OpenCode does not know this provider."""
         return f"{self.opencode_id}/{model}" if self.opencode_id and model else None
 

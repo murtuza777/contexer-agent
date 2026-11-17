@@ -17,8 +17,8 @@ environment variable (``${APP_PASSWORD}``) is fine.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from pydantic import BaseModel
 

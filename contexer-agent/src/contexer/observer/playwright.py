@@ -6,7 +6,7 @@ import base64
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from contexer.observer.models import BrowserObservation
 
@@ -105,11 +105,12 @@ class PlaywrightObserver:
         url: str,
         timeout: float = 15.0,
         screenshot: bool = True,
-        screenshot_dir: Optional[str | Path] = None,
-        storage_state: Optional[dict[str, Any]] = None,
+        screenshot_dir: str | Path | None = None,
+        storage_state: dict[str, Any] | None = None,
     ) -> BrowserObservation:
         """Navigate to URL and capture runtime page state, errors, and DOM."""
-        from playwright.async_api import async_playwright, Error as PlaywrightError
+        from playwright.async_api import Error as PlaywrightError
+        from playwright.async_api import async_playwright
 
         console_errors: list[str] = []
         console_warnings: list[str] = []
@@ -199,8 +200,8 @@ class PlaywrightObserver:
                         logger.debug("Failed to extract headings: %s", e)
 
                     # Capture screenshot
-                    shot_path_str: Optional[str] = None
-                    shot_b64: Optional[str] = None
+                    shot_path_str: str | None = None
+                    shot_b64: str | None = None
                     if screenshot:
                         try:
                             shot_bytes = await page.screenshot(type="png")

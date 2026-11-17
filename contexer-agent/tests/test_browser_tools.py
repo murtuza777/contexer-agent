@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Any
 
 import pytest
 
@@ -28,7 +29,7 @@ TOOL_NAMES = [
 ]  # fmt: skip
 
 
-def _copy(name: str, tmp_path: Path, bug: Optional[str] = None) -> Path:
+def _copy(name: str, tmp_path: Path, bug: str | None = None) -> Path:
     work = tmp_path / name
     shutil.copytree(FIXTURES / name / "app", work, ignore=shutil.ignore_patterns("runs"))
     if bug:
@@ -192,11 +193,11 @@ async def test_reset_runs_the_projects_reset_command_and_reports_when_it_fails(t
     work = _copy("todo", tmp_path)
     ran: list[str] = []
 
-    async def reset_ok() -> Optional[str]:
+    async def reset_ok() -> str | None:
         ran.append("reset")
         return None
 
-    async def reset_broken() -> Optional[str]:
+    async def reset_broken() -> str | None:
         return "`npm run db:reset` exited with code 1"
 
     with open_app(work) as running:

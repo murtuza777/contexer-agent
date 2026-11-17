@@ -1,6 +1,7 @@
 """Tests for strict, evidence-based verifier."""
 
 import pytest
+
 from contexer.observer.models import BrowserObservation
 from contexer.verification.models import AcceptanceCriterion, GoalAnalysis
 from contexer.verification.verifier import Verifier

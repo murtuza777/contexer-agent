@@ -12,7 +12,6 @@ import base64
 import html
 import json
 from pathlib import Path
-from typing import Optional
 
 from contexer.evidence.rundir import RunDir
 from contexer.gate.models import ContractOutcome, RunResult
@@ -158,7 +157,7 @@ def _contract_section(outcome: ContractOutcome) -> str:
 </section>"""
 
 
-def _criterion_row(cid: str, description: str, steps: list[str], result: Optional[CriterionResult]) -> str:
+def _criterion_row(cid: str, description: str, steps: list[str], result: CriterionResult | None) -> str:
     if result is None:
         return (
             f'<li class="crit crit-unverified"><div class="crit-line"><span class="icon">?</span>'
@@ -338,7 +337,7 @@ def _ordered(outcomes: list[ContractOutcome]) -> list[ContractOutcome]:
     return sorted(outcomes, key=rank)
 
 
-def _data_uri(path: Optional[str]) -> str:
+def _data_uri(path: str | None) -> str:
     if not path:
         return ""
     file = Path(path)

@@ -9,6 +9,7 @@ restore, replay, issue, models and bench. Those render through ``cli/term.py``.
 from __future__ import annotations
 
 import sys
+
 import typer
 
 from contexer import __version__

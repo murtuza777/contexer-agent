@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -22,18 +21,18 @@ from contexer.cli import term
 
 
 def bench(
-    fixtures: Optional[Path] = typer.Option(None, "--fixtures", help="Fixtures directory (default: ./bench/fixtures)."),
-    repeats: Optional[int] = typer.Option(
+    fixtures: Path | None = typer.Option(None, "--fixtures", help="Fixtures directory (default: ./bench/fixtures)."),
+    repeats: int | None = typer.Option(
         None, "--repeats", "-n", min=1, help="Runs per good/benign variant (default: 3; 1 for the tester suite)."
     ),
     app: list[str] = typer.Option([], "--app", help="Only these fixture apps (repeatable)."),
-    out: Optional[Path] = typer.Option(None, "--out", help="Write the full report as JSON."),
+    out: Path | None = typer.Option(None, "--out", help="Write the full report as JSON."),
     live: bool = typer.Option(False, "--live", help="Score contracts the LLM compiles from each goal instead."),
     suite: str = typer.Option(
         "gate", "--suite", help="gate: replay each app's contract. tester: an agent explores each app from its goal."
     ),
     agent: str = typer.Option("stub", "--agent", help="The agent the tester suite measures (stub: reports nothing)."),
-    steps: Optional[int] = typer.Option(None, "--steps", min=1, help="Tester suite: the most model calls per app variant."),
+    steps: int | None = typer.Option(None, "--steps", min=1, help="Tester suite: the most model calls per app variant."),
 ) -> None:
     """Run the seeded-bug benchmark against every fixture app."""
     console = Console()
@@ -115,7 +114,7 @@ def render_bench(console: Console, report: BenchReport) -> None:
 
 
 def _bench_tester(
-    console: Console, root: Path, repeats: int, only: list[str], out: Optional[Path], agent: str, steps: Optional[int]
+    console: Console, root: Path, repeats: int, only: list[str], out: Path | None, agent: str, steps: int | None
 ) -> None:
     from contexer.bench.tester import TESTER_AGENTS, TesterRun, results_markdown, run_tester_bench
 

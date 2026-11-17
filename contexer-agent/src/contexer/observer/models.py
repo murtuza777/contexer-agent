@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -20,11 +19,11 @@ class BrowserObservation(BaseModel):
     headings: list[str] = Field(default_factory=list)
     # ARIA tree + data-testids + placeholders; grounds locators in checks.
     ui_snapshot: str = ""
-    status_code: Optional[int] = None
-    screenshot_path: Optional[str] = None
-    screenshot_base64: Optional[str] = None
+    status_code: int | None = None
+    screenshot_path: str | None = None
+    screenshot_base64: str | None = None
     success: bool = True
-    error: Optional[str] = None
+    error: str | None = None
 
     @property
     def has_errors(self) -> bool:

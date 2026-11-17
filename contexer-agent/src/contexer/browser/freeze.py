@@ -20,8 +20,9 @@ acceptance checks for the fix.
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -45,9 +46,9 @@ class Confirmed(BaseModel):
     criterion_id: str
     # What the replay saw, in the runner's words.
     evidence: str = ""
-    screenshot: Optional[str] = None
+    screenshot: str | None = None
     # The last replay's full result: what the fix prompt quotes word for word.
-    result: Optional[CheckResult] = None
+    result: CheckResult | None = None
 
 
 class Unconfirmed(BaseModel):
@@ -72,11 +73,11 @@ async def replay_findings(
     findings: list[Finding],
     url: str,
     *,
-    runner: Optional[CheckRunner] = None,
+    runner: CheckRunner | None = None,
     repeats: int = DEFAULT_REPEATS,
-    storage_state: Optional[dict[str, Any]] = None,
-    before_each: Optional[Callable[[], Awaitable[Optional[str]]]] = None,
-    artifacts_dir: Optional[Path] = None,
+    storage_state: dict[str, Any] | None = None,
+    before_each: Callable[[], Awaitable[str | None]] | None = None,
+    artifacts_dir: Path | None = None,
     timeout_scale: float = 1.0,
 ) -> ReplayReport:
     """Replay every finding ``repeats`` times in fresh browser contexts and sort them by what happened."""
@@ -132,7 +133,7 @@ async def replay_findings(
     return report
 
 
-def draft_contract(intent: str, report: ReplayReport, contract_id: Optional[str] = None) -> Optional[Contract]:
+def draft_contract(intent: str, report: ReplayReport, contract_id: str | None = None) -> Contract | None:
     """The confirmed checks as a contract nobody has approved yet; None when nothing was confirmed."""
     confirmed = [*report.bugs, *report.works]
     if not confirmed:

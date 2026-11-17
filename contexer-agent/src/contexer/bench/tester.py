@@ -26,8 +26,9 @@ suite runs without a model and must score 0 found, 0 false alarms.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Literal, Optional, Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -63,7 +64,7 @@ class Exploration(BaseModel):
     steps: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     # Why the agent stopped early, if it did (a limit, a model error).
     error: str = ""
 
@@ -96,23 +97,21 @@ class LiveTester:
 
     name = "tester"
 
-    def __init__(self, model: Optional[object] = None, max_steps: Optional[int] = None) -> None:
+    def __init__(self, model: object | None = None, max_steps: int | None = None) -> None:
         self.model = model
         self.max_steps = max_steps
         # The model that answered, for the results page.
         self.model_label = ""
         # Where to keep each run's transcript (the working copy is deleted), and what to call it.
-        self.keep_dir: Optional[Path] = None
+        self.keep_dir: Path | None = None
         self.variant_label = ""
 
     async def explore(self, goal: str, app: RunningApp, project_dir: Path) -> Exploration:
         from contexer.browser.freeze import freeze
-        from contexer.browser.tools import BrowserSession
+        from contexer.browser.tools import BrowserSession, credential_secrets
         from contexer.cli.test_cli import build_model
         from contexer.crew.tester import DEFAULT_MAX_STEPS, run_tester
         from contexer.gate.session import DEV_SERVER_TIMEOUT_SCALE
-        from contexer.browser.tools import credential_secrets
-
         from contexer.llm.chat import describe_model
 
         model = self.model or build_model(project_dir)
@@ -127,7 +126,7 @@ class LiveTester:
             app.url,
             run_dir=run.path,
             storage_state=state,
-            reset=session._reset_before_each(app) if session.reset else None,
+            reset=session.reset_before_each(app),
             timeout_scale=DEV_SERVER_TIMEOUT_SCALE if app.kind == "dev" else 1.0,
         )
         try:
@@ -180,11 +179,11 @@ class TesterRun(BaseModel):
     rejected: list[str] = Field(default_factory=list)
     unconfirmed: list[str] = Field(default_factory=list)
     # Bug variants only: a finding reproduced on the bug and passed on the correct app.
-    found: Optional[bool] = None
+    found: bool | None = None
     steps: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     duration_seconds: float = 0.0
     # The app did not start, or the agent stopped early.
     error: str = ""
@@ -210,7 +209,7 @@ class TesterScore(BaseModel):
     steps: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
 
 
 class TesterBenchReport(BaseModel):
@@ -239,8 +238,8 @@ async def run_tester_bench(
     agent: TesterAgent,
     *,
     repeats: int = 1,
-    only: Optional[list[str]] = None,
-    on_run: Optional[Callable[[TesterRun], None]] = None,
+    only: list[str] | None = None,
+    on_run: Callable[[TesterRun], None] | None = None,
 ) -> TesterBenchReport:
     """Run ``agent`` on the correct app and every benign variant ``repeats`` times, and on every bug once."""
     started = time.monotonic()

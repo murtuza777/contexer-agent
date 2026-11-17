@@ -16,9 +16,10 @@ from __future__ import annotations
 import base64
 import os
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING
 
 from contexer.contract import Contract
 from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
@@ -40,8 +41,8 @@ class HandoffPlan:
     project: Path
     root: Path  # the top of the git checkout; the project may be a folder inside it
     base: str  # the branch the work starts from
-    remote: Optional[str]
-    repo: Optional[str]  # owner/name on GitHub
+    remote: str | None
+    repo: str | None  # owner/name on GitHub
 
 
 @dataclass
@@ -49,7 +50,7 @@ class Handoff:
     branch: str
     commit: str
     pushed: bool
-    url: Optional[str]  # the pull request, or a link that opens one
+    url: str | None  # the pull request, or a link that opens one
     is_pull_request: bool
     draft: bool
     note: str = ""
@@ -82,12 +83,12 @@ def plan_handoff(project: str | Path) -> HandoffPlan:
 
 def hand_off(
     plan: HandoffPlan,
-    outcome: "RunOutcome",
+    outcome: RunOutcome,
     contract: Contract,
     *,
-    issue: Optional[int] = None,
-    client_factory: Optional[Callable[[str, str], GitHubClient]] = None,
-) -> Optional[Handoff]:
+    issue: int | None = None,
+    client_factory: Callable[[str, str], GitHubClient] | None = None,
+) -> Handoff | None:
     """Commit the run's changes to a new branch, push it and open a pull request. None if nothing changed."""
     if not outcome.changed_files:
         return None
@@ -146,7 +147,7 @@ def hand_off(
 # -- the pull request ---------------------------------------------------------------------
 
 
-def pull_request_body(outcome: "RunOutcome", contract: Contract, *, issue: Optional[int] = None) -> str:
+def pull_request_body(outcome: RunOutcome, contract: Contract, *, issue: int | None = None) -> str:
     final = outcome.final
     decision = final.decision if final is not None else None
     lines: list[str] = []
@@ -203,7 +204,7 @@ def pull_request_body(outcome: "RunOutcome", contract: Contract, *, issue: Optio
     return "\n".join(lines) + "\n"
 
 
-def _title(outcome: "RunOutcome", contract: Contract) -> str:
+def _title(outcome: RunOutcome, contract: Contract) -> str:
     title = contract.goal.strip().splitlines()[0].strip() if contract.goal.strip() else contract.id
     return _shorten(title, 100)
 
@@ -216,7 +217,7 @@ def _shorten(text: str, limit: int) -> str:
     return f"{cut}…"
 
 
-def _commit_message(outcome: "RunOutcome", contract: Contract) -> str:
+def _commit_message(outcome: RunOutcome, contract: Contract) -> str:
     subject = _shorten(_title(outcome, contract), 72)
     decision = outcome.final.decision if outcome.final is not None else None
     if outcome.terminal == "succeeded" and decision is not None:
@@ -226,7 +227,7 @@ def _commit_message(outcome: "RunOutcome", contract: Contract) -> str:
     return f"{subject}\n\n{proof} (contract {contract.id}, run {outcome.run_id}).\n"
 
 
-def _evidence_link(outcome: "RunOutcome") -> str:
+def _evidence_link(outcome: RunOutcome) -> str:
     run_id = os.environ.get("GITHUB_RUN_ID")
     repo = os.environ.get("GITHUB_REPOSITORY")
     if run_id and repo:
@@ -287,7 +288,7 @@ def _identity(root: Path) -> list[str]:
     return ["-c", f"user.name={_BOT[0]}", "-c", f"user.email={_BOT[1]}"]
 
 
-def _git(cwd: Path, *args: str, timeout: float = 30) -> Optional[str]:
+def _git(cwd: Path, *args: str, timeout: float = 30) -> str | None:
     try:
         out = _run_git(cwd, args, timeout)
     except (OSError, subprocess.SubprocessError):

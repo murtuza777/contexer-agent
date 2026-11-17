@@ -13,7 +13,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -24,7 +24,7 @@ class GitHubError(Exception):
     """GitHub could not be reached, or refused the request."""
 
 
-def github_token() -> Optional[str]:
+def github_token() -> str | None:
     token = os.environ.get("CONTEXER_GITHUB_TOKEN") or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     if token:
         return token
@@ -40,13 +40,13 @@ def github_token() -> Optional[str]:
     return out.stdout.strip() or None
 
 
-def repo_from_url(url: str) -> Optional[str]:
+def repo_from_url(url: str) -> str | None:
     """``owner/name`` from a GitHub remote URL (https or ssh)."""
     match = _REMOTE.search(url.strip())
     return match.group("repo") if match else None
 
 
-def repo_of(project_dir: str | Path, remote: str = "origin") -> Optional[str]:
+def repo_of(project_dir: str | Path, remote: str = "origin") -> str | None:
     """The GitHub repository a checkout pushes to: ``GITHUB_REPOSITORY`` in Actions, else the remote."""
     if os.environ.get("GITHUB_REPOSITORY"):
         return os.environ["GITHUB_REPOSITORY"]
@@ -64,8 +64,8 @@ class GitHubClient:
         self,
         repo: str,
         token: str,
-        api_url: Optional[str] = None,
-        transport: Optional[httpx.BaseTransport] = None,
+        api_url: str | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.repo = repo
         self.api_url = (api_url or os.environ.get("GITHUB_API_URL") or "https://api.github.com").rstrip("/")
@@ -82,7 +82,7 @@ class GitHubClient:
     def close(self) -> None:
         self._http.close()
 
-    def __enter__(self) -> "GitHubClient":
+    def __enter__(self) -> GitHubClient:
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -138,7 +138,7 @@ class GitHubClient:
 
     # -- internals ------------------------------------------------------------------
 
-    def _request(self, method: str, path: str, payload: Optional[dict[str, Any]] = None) -> Any:
+    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         try:
             response = self._http.request(method, f"{self.api_url}{path}", json=payload)
         except httpx.HTTPError as exc:

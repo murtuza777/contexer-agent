@@ -14,10 +14,11 @@ one in a fresh browser, and only what reproduces is shown to anyone.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional, Sequence
+from typing import Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import StructuredTool
@@ -48,7 +49,7 @@ class Finding(BaseModel):
     steps: list[Step] = Field(default_factory=list)
     expectation: Expectation
     # False when the page was signed out on purpose; None follows the project.
-    login: Optional[bool] = None
+    login: bool | None = None
     # What the page showed when the Tester looked.
     observed: str = ""
 
@@ -97,10 +98,10 @@ class TesterResult:
     tool_calls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     duration_seconds: float = 0.0
     error: str = ""
-    transcript: Optional[Path] = None
+    transcript: Path | None = None
 
 
 def tester_prompt() -> str:
@@ -112,13 +113,13 @@ async def run_tester(
     model: BaseChatModel,
     browser: BrowserSession,
     *,
-    run_dir: Optional[Path],
+    run_dir: Path | None,
     existing_checks: Sequence[str] = (),
     skills: Sequence[Skill] = (),
     max_steps: int = DEFAULT_MAX_STEPS,
     timeout: float = DEFAULT_TIMEOUT,
     secrets: Sequence[str] = (),
-    budget: Optional[Budget] = None,
+    budget: Budget | None = None,
 ) -> TesterResult:
     """Let ``model`` test the app in ``browser`` against ``intent``.
 

@@ -16,9 +16,10 @@ Two parts, kept apart on purpose:
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Sequence
+from typing import TYPE_CHECKING
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool, StructuredTool
@@ -86,12 +87,12 @@ class RepairBrief(BaseModel):
 
 @dataclass
 class DiagnosisResult:
-    brief: Optional[RepairBrief]
+    brief: RepairBrief | None
     status: AgentStatus
     steps: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     error: str = ""
 
 
@@ -107,10 +108,10 @@ async def diagnose(
     intent: str = "",
     diff: str = "",
     server_log: str = "",
-    run_dir: Optional[Path] = None,
+    run_dir: Path | None = None,
     max_steps: int = DEFAULT_MAX_STEPS,
     secrets: Sequence[str] = (),
-    budget: Optional[Budget] = None,
+    budget: Budget | None = None,
 ) -> DiagnosisResult:
     """Let ``model`` look for the cause of ``failures`` in the project. No brief when it could not finish."""
     spec = AgentSpec(
@@ -179,7 +180,7 @@ def _capped(text: str, limit: int) -> str:
 
 def fix_prompt(
     failures: Sequence[Failure],
-    brief: Optional[RepairBrief] = None,
+    brief: RepairBrief | None = None,
     *,
     intent: str = "",
     working: Sequence[str] = (),

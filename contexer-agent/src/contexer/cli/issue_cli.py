@@ -11,7 +11,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import NoReturn, Optional
+from typing import NoReturn
 
 import typer
 from rich.console import Console
@@ -48,7 +48,7 @@ DirOption = typer.Option(Path("."), "--dir", "-d", help="Project directory.", fi
 def draft(
     number: int = typer.Argument(..., help="The issue number."),
     project_dir: Path = DirOption,
-    url: Optional[str] = typer.Option(None, "--url", "-u", help="Use an app you already run."),
+    url: str | None = typer.Option(None, "--url", "-u", help="Use an app you already run."),
 ) -> None:
     """Draft the checks for an issue and post them on it, for someone with write access to approve."""
     console = Console()
@@ -76,10 +76,10 @@ def build(
     number: int = typer.Argument(..., help="The issue number."),
     by: str = typer.Option(..., "--by", help="The GitHub login approving the checks; needs write access."),
     project_dir: Path = DirOption,
-    agent_name: Optional[str] = typer.Option(None, "--agent", help="claude-code, codex or opencode."),
-    model: Optional[str] = typer.Option(None, "--model", help="Model for the coding agent."),
-    rounds: Optional[int] = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
-    budget: Optional[float] = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
+    agent_name: str | None = typer.Option(None, "--agent", help="claude-code, codex or opencode."),
+    model: str | None = typer.Option(None, "--model", help="Model for the coding agent."),
+    rounds: int | None = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
+    budget: float | None = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
 ) -> None:
     """Approve the checks drafted on an issue in BY's name, build them, and open a pull request that closes it."""
     console = Console()
@@ -118,8 +118,8 @@ def build(
             judged_policy=config.gate.judged,
         )
         outcome = execute_run(console, project, agent, contract, store, settings, on_progress=live.event)
-        handoff: Optional[Handoff] = None
-        handoff_error: Optional[str] = None
+        handoff: Handoff | None = None
+        handoff_error: str | None = None
         if outcome.terminal not in ("tampered", "cancelled"):
             try:
                 handoff = hand_off(plan, outcome, contract, issue=number)
@@ -135,8 +135,8 @@ def event(
     project_dir: Path = DirOption,
     label: str = typer.Option(DEFAULT_LABEL, "--label", help="The label that asks Contexer to draft checks."),
     plan_only: bool = typer.Option(False, "--plan", help="Only print what the event asks for: draft, build or ignore."),
-    agent_name: Optional[str] = typer.Option(None, "--agent", help="Coding agent for builds."),
-    model: Optional[str] = typer.Option(None, "--model", help="Model for the coding agent."),
+    agent_name: str | None = typer.Option(None, "--agent", help="Coding agent for builds."),
+    model: str | None = typer.Option(None, "--model", help="Model for the coding agent."),
 ) -> None:
     """In GitHub Actions: draft or build for the issue or comment that triggered the workflow."""
     name, path = os.environ.get("GITHUB_EVENT_NAME", ""), os.environ.get("GITHUB_EVENT_PATH", "")
@@ -172,7 +172,7 @@ class _LiveStatus:
     def __init__(self, client: GitHubClient, number: int, headline: str) -> None:
         self.client, self.number, self.headline = client, number, headline
         self.lines: list[str] = []
-        self.comment_id: Optional[int] = None
+        self.comment_id: int | None = None
         self._last = 0.0
         self._post(force=True)
 
@@ -199,7 +199,7 @@ class _LiveStatus:
             pass  # the run matters more than its progress comment
 
 
-def _result_headline(outcome: RunOutcome, handoff: Optional[Handoff], error: Optional[str]) -> tuple[str, str]:
+def _result_headline(outcome: RunOutcome, handoff: Handoff | None, error: str | None) -> tuple[str, str]:
     decision = outcome.final.decision if outcome.final is not None else None
     link = ""
     if handoff is not None and handoff.url:

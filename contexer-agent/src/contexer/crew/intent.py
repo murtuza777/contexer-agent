@@ -10,7 +10,7 @@ goal would be tested differently. Code keeps the rest in its own hands:
   no question is asked: the first reading is taken and recorded as an
   assumption;
 * every draft check is validated by the check language
-  (``workflow/criteria.py: _parse_check``). Invalid ones go back to the agent
+  (``workflow/criteria.py: parse_check``). Invalid ones go back to the agent
   once; what is still invalid is dropped and reported;
 * after a correction only the checks the agent names are replaced or
   removed. The others are the same objects as before, and a check a replay
@@ -19,9 +19,10 @@ goal would be tested differently. Code keeps the rest in its own hands:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field, ValidationError
@@ -32,7 +33,7 @@ from contexer.crew.budget import Budget
 from contexer.crew.untrusted import untrusted
 from contexer.intent.store import IntentSpec, SavedCheck
 from contexer.verification.checks import Check
-from contexer.workflow.criteria import CHECK_DSL_GUIDE, _parse_check
+from contexer.workflow.criteria import CHECK_DSL_GUIDE, parse_check
 
 MAX_QUESTIONS = 3
 # How much an Intent agent may write into the stored intent in one run.
@@ -85,7 +86,7 @@ class IntentResult:
     steps: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     error: str = ""
 
 
@@ -97,14 +98,14 @@ async def run_intent(
     goal: str,
     model: BaseChatModel,
     *,
-    stored: Optional[IntentSpec] = None,
+    stored: IntentSpec | None = None,
     existing_checks: Sequence[SavedCheck] = (),
-    correction: Optional[str] = None,
+    correction: str | None = None,
     repo_summary: str = "",
     ui_snapshot: str = "",
     assume: bool = False,
-    run_dir: Optional[Path] = None,
-    budget: Optional[Budget] = None,
+    run_dir: Path | None = None,
+    budget: Budget | None = None,
 ) -> IntentResult:
     """Write or update the intent for ``goal``.
 
@@ -227,7 +228,7 @@ def _validated(drafts: list[DraftCheck]) -> tuple[list[SavedCheck], list[tuple[s
     invalid: list[tuple[str, dict[str, Any], str]] = []
     for draft in drafts:
         check_id = slugify(draft.id) if draft.id.strip() else slugify(draft.description)
-        check = _parse_check(check_id, draft.check)
+        check = parse_check(check_id, draft.check)
         if check is None:
             invalid.append((check_id, draft.check, _why_invalid(draft.check)))
         else:

@@ -36,6 +36,8 @@ Phase 0 adds the foundations; no agent ships yet.
 - A tool audit in `docs/architecture.md`, enforced by a test: which agent
   has which tool, and that none of them can write to the project.
 - A held-out benchmark app, `bookings`, that no prompt was tuned on.
+- `ruff` and `pyright` run in CI before the tests. The package is type-clean on Windows, Linux and
+  macOS, and modules no longer call each other's private functions.
 - **The loop without a coding agent in the middle.** `contexer test` now
   understands the goal, tests against it, and writes the fix prompt; you
   paste the prompt into any coding tool and run `contexer test --again`.

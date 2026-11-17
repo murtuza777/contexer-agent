@@ -23,9 +23,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Callable, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -33,16 +34,16 @@ from contexer import __version__
 from contexer.agents.base import AgentTurn, CodingAgentAdapter
 from contexer.appserver import AppStartError, RunningApp, open_app
 from contexer.checkpoint import ShadowRepo
+from contexer.config.project import CONFIG_FILE
 from contexer.contract import Contract
 from contexer.contract.models import utc_now
 from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
-from contexer.config.project import CONFIG_FILE
-from contexer.intent.store import INTENT_DIR
 from contexer.controller.prompts import implement_prompt, repair_prompt
-from contexer.evidence.rundir import RunDir
 from contexer.evidence.report import write_evidence
+from contexer.evidence.rundir import RunDir
 from contexer.gate.models import AgentRunSummary, AttemptRow, GateDecision, JudgedPolicy, RunResult
 from contexer.gate.session import VerificationSession
+from contexer.intent.store import INTENT_DIR
 from contexer.verification.runner import CheckRunner
 from contexer.verification.verifier import Verifier
 from contexer.workflow.inspector import RepositoryInspector
@@ -66,7 +67,7 @@ EventFn = Callable[[str, str], None]  # (kind, message)
 
 class RunSettings(BaseModel):
     max_repair_rounds: int = 2
-    budget_usd: Optional[float] = None
+    budget_usd: float | None = None
     turn_timeout: float = 900.0
     wall_clock: float = 3600.0
     judged_policy: JudgedPolicy = "advisory"
@@ -86,7 +87,7 @@ class Attempt(BaseModel):
     unverified: int = 0
     score: int
     signatures: list[str] = Field(default_factory=list)
-    reverted_to: Optional[int] = None
+    reverted_to: int | None = None
     note: str = ""
     result_dir: str = ""
 
@@ -98,8 +99,8 @@ class RunOutcome(BaseModel):
     terminal: TerminalState
     reason: str = ""
     attempts: list[Attempt] = Field(default_factory=list)
-    best_attempt: Optional[int] = None
-    final: Optional[RunResult] = None
+    best_attempt: int | None = None
+    final: RunResult | None = None
     cost_usd: float = 0.0
     duration_seconds: float = 0.0
     started_at: str = ""
@@ -128,11 +129,11 @@ class RunController:
         self,
         project_dir: str | Path,
         agent: CodingAgentAdapter,
-        settings: Optional[RunSettings] = None,
+        settings: RunSettings | None = None,
         *,
-        url: Optional[str] = None,
-        on_event: Optional[EventFn] = None,
-        runner: Optional[CheckRunner] = None,
+        url: str | None = None,
+        on_event: EventFn | None = None,
+        runner: CheckRunner | None = None,
     ) -> None:
         self.project = Path(project_dir).resolve()
         self.agent = agent
@@ -141,9 +142,9 @@ class RunController:
         self.on_event = on_event or (lambda _kind, _msg: None)
         self.runner = runner or CheckRunner(trace="on-failure")
         # Set as soon as a run ends, also when Ctrl+C ends it with an exception.
-        self.last_outcome: Optional[RunOutcome] = None
+        self.last_outcome: RunOutcome | None = None
 
-    async def run(self, contract: Contract, others: Optional[list[Contract]] = None) -> RunOutcome:
+    async def run(self, contract: Contract, others: list[Contract] | None = None) -> RunOutcome:
         if contract.status != "approved":
             raise ValueError(f"contract '{contract.id}' must be approved before a run ({contract.status})")
         others = [c for c in (others or []) if c.id != contract.id and c.status == "approved"]
@@ -167,9 +168,9 @@ class RunController:
         )
         results: dict[int, RunResult] = {}
         snapshots: dict[int, str] = {0: baseline}
-        best: Optional[int] = None
+        best: int | None = None
         best_score = -(10**9)
-        session_id: Optional[str] = None
+        session_id: str | None = None
         prompt = implement_prompt(contract, repo, others)
         fresh = True
         last_signatures: set[str] = set()
@@ -177,7 +178,7 @@ class RunController:
         # (after any revert), so "changed files" means the agent's changes.
         current = baseline
 
-        def on_exit(exc_type: Optional[type[BaseException]], _exc: object, _tb: object) -> bool:
+        def on_exit(exc_type: type[BaseException] | None, _exc: object, _tb: object) -> bool:
             if exc_type is not None and issubclass(exc_type, (asyncio.CancelledError, KeyboardInterrupt)):
                 # Registered first, so it runs after the app has stopped.
                 self._stopped(outcome, run, contract, shadow, snapshots, best, results, started)
@@ -185,7 +186,7 @@ class RunController:
 
         with ExitStack() as stack:
             stack.push(on_exit)
-            app: Optional[RunningApp] = None
+            app: RunningApp | None = None
             for n in range(1, self.settings.max_repair_rounds + 2):
                 if time.monotonic() - started > self.settings.wall_clock:
                     outcome.terminal, outcome.reason = "timed_out", "Wall-clock budget used up."
@@ -239,7 +240,7 @@ class RunController:
                     break
 
                 # -- prove -------------------------------------------------------
-                app_error: Optional[str] = None
+                app_error: str | None = None
                 try:
                     if app is None:
                         app = stack.enter_context(
@@ -296,7 +297,7 @@ class RunController:
                     outcome.terminal, outcome.reason = "succeeded", "Every check proven in the browser."
                     break
 
-                reverted_from: Optional[int] = None
+                reverted_from: int | None = None
                 usable = result.decision.outcome != "error"  # an app that does not start is never kept
                 if usable and attempt.score > best_score:
                     best, best_score = n, attempt.score
@@ -370,7 +371,7 @@ class RunController:
         contract: Contract,
         shadow: ShadowRepo,
         snapshots: dict[int, str],
-        best: Optional[int],
+        best: int | None,
         results: dict[int, RunResult],
         started: float,
     ) -> None:

@@ -21,9 +21,10 @@ import json
 import os
 import re
 import warnings
-from datetime import datetime, timezone
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 from contexer.llm.base import sanitize_sensitive_text
 from contexer.llm.catalog import PROVIDERS
@@ -43,7 +44,7 @@ _TOKEN_VARIABLES = (
 _MIN_SECRET_LENGTH = 6
 
 
-def environment_secrets(env: Optional[Mapping[str, str]] = None) -> list[str]:
+def environment_secrets(env: Mapping[str, str] | None = None) -> list[str]:
     """The provider keys and tokens set in the environment."""
     env = os.environ if env is None else env
     names = [spec.key_env for spec in PROVIDERS] + list(_TOKEN_VARIABLES)
@@ -54,7 +55,7 @@ def environment_secrets(env: Optional[Mapping[str, str]] = None) -> list[str]:
 class Masker:
     """Replaces secret values in text and in nested data."""
 
-    def __init__(self, secrets: Sequence[str] = (), env: Optional[Mapping[str, str]] = None) -> None:
+    def __init__(self, secrets: Sequence[str] = (), env: Mapping[str, str] | None = None) -> None:
         # A list is kept, not copied: a secret the caller learns later (a password an agent
         # types) is masked from then on.
         self.secrets: Sequence[str] = secrets if isinstance(secrets, list) else list(secrets)
@@ -80,10 +81,10 @@ class Masker:
 class Transcript:
     """Appends masked JSON lines to ``<run_dir>/agents/<agent>.jsonl``; does nothing without a run folder."""
 
-    def __init__(self, run_dir: Optional[Path], agent: str, masker: Optional[Masker] = None) -> None:
+    def __init__(self, run_dir: Path | None, agent: str, masker: Masker | None = None) -> None:
         self.agent = agent
         self.masker = masker or Masker()
-        self.path: Optional[Path] = None
+        self.path: Path | None = None
         if run_dir is not None:
             self.path = Path(run_dir) / AGENTS_DIR / f"{_file_stem(agent)}.jsonl"
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +114,7 @@ def read_transcript(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def tracing_callbacks(env: Optional[Mapping[str, str]] = None) -> list[Any]:
+def tracing_callbacks(env: Mapping[str, str] | None = None) -> list[Any]:
     """LangChain callbacks that send traces to Langfuse, or none when it is not configured.
 
     Install the optional extra to use it: ``pip install "contexer-agent[tracing]"``.
@@ -122,7 +123,7 @@ def tracing_callbacks(env: Optional[Mapping[str, str]] = None) -> list[Any]:
     if not (env.get("LANGFUSE_PUBLIC_KEY", "").strip() and env.get("LANGFUSE_SECRET_KEY", "").strip()):
         return []
     try:
-        from langfuse.langchain import CallbackHandler
+        from langfuse.langchain import CallbackHandler  # pyright: ignore[reportMissingImports]  # optional extra
     except ImportError:
         warnings.warn(
             'LANGFUSE_* is set but the langfuse package is not installed: pip install "contexer-agent[tracing]". '
@@ -134,7 +135,7 @@ def tracing_callbacks(env: Optional[Mapping[str, str]] = None) -> list[Any]:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _file_stem(agent: str) -> str:

@@ -19,8 +19,8 @@ from typer.testing import CliRunner
 from contexer.cli import app as cli
 from contexer.contract import ContractStore
 from contexer.demo import create_demo_project, fixed_app_js
-from contexer.llm.chat import ToolCallingError
 from contexer.intent.store import IntentStore
+from contexer.llm.chat import ToolCallingError
 from contexer.skills.store import SkillStore
 from tests.fakes import AgentScript, calls, submit
 

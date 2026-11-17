@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -189,7 +189,7 @@ async def test_the_read_tools_are_confined_to_the_project_and_keep_out_of_contex
     (project / "node_modules" / "lib" / "index.js").write_text("remaining-count", encoding="utf-8")
 
     assert [t.name for t in project_tools(project)] == ["read_file", "grep"]
-    refused: list[Optional[str]] = [
+    refused: list[str | None] = [
         await _call(project, "read_file", path="../outside.txt"),
         await _call(project, "read_file", path=str(tmp_path / "outside.txt")),
         await _call(project, "read_file", path=".contexer/contracts/todo-basics.json"),

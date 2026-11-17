@@ -6,8 +6,6 @@ message; surfaced naively it reads as "application unreachable".
 
 from __future__ import annotations
 
-from typing import Optional
-
 INSTALL_HINT = "Chromium for Playwright is not installed. Run: python -m playwright install chromium"
 LINUX_DEPS_HINT = "Chromium cannot start: system libraries are missing. Run: python -m playwright install-deps chromium"
 
@@ -19,7 +17,7 @@ _MISSING_MARKERS = (
 _DEPS_MARKERS = ("host system is missing dependencies", "error while loading shared libraries")
 
 
-def browser_problem(error: Optional[str]) -> Optional[str]:
+def browser_problem(error: str | None) -> str | None:
     """A one-line, actionable diagnosis if ``error`` is a browser-install problem."""
     if not error:
         return None

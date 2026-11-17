@@ -5,8 +5,8 @@ import pytest
 import typer
 from rich.console import Console
 
-from contexer.agents.opencode_agent import OpenCodeAgent
 from contexer.agents.base import AgentTurn
+from contexer.agents.opencode_agent import OpenCodeAgent
 from contexer.cli.run_cli import agent_hint, check_free_quota
 from contexer.controller.run import Attempt, RunOutcome
 from contexer.llm import discovery

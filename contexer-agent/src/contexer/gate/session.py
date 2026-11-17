@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional, Union
+from typing import Any
 
 from contexer import __version__
 from contexer.appserver import RunningApp
@@ -28,7 +29,6 @@ from contexer.verification.runner import SignInError
 from contexer.verification.verifier import Verifier
 from contexer.workflow.criteria import GoalAnalyzer
 from contexer.workflow.inspector import RepositoryContext
-
 
 # A dev server compiles each page and API route the first time it is hit, which
 # on a cold start or a busy machine takes seconds; static files answer at once.
@@ -56,9 +56,9 @@ class VerificationSession:
         self,
         project_dir: str | Path,
         run: RunDir,
-        verifier: Optional[Verifier] = None,
-        observer: Optional[PlaywrightObserver] = None,
-        auth: Union[Optional[AuthSettings], _FromProject] = FROM_PROJECT,
+        verifier: Verifier | None = None,
+        observer: PlaywrightObserver | None = None,
+        auth: AuthSettings | None | _FromProject = FROM_PROJECT,
     ) -> None:
         self.project_dir = Path(project_dir).resolve()
         self.run = run
@@ -66,18 +66,18 @@ class VerificationSession:
         self.verifier = verifier or Verifier(llm_provider=None)
         self.observer = observer or PlaywrightObserver()
         config = _project_config(self.project_dir)
-        self.auth: Optional[AuthSettings] = (config.auth if config else None) if isinstance(auth, _FromProject) else auth
+        self.auth: AuthSettings | None = (config.auth if config else None) if isinstance(auth, _FromProject) else auth
         # [app] reset: run before every check so checks don't see each other's server-side data.
-        self.reset: Optional[str] = config.app.reset if config else None
+        self.reset: str | None = config.app.reset if config else None
         self._app_env: dict[str, str] = dict(config.app.env) if config else {}
         load_project_env(self.project_dir)  # [auth] secrets can live in the project's .env
         self._started = time.monotonic()
         self._started_at = utc_now()
-        self.load: Optional[BrowserObservation] = None
-        self.sign_in_error: Optional[str] = None
-        self._signed_in_state: Optional[dict[str, Any]] = None
+        self.load: BrowserObservation | None = None
+        self.sign_in_error: str | None = None
+        self._signed_in_state: dict[str, Any] | None = None
 
-    async def signed_in_state(self, app: RunningApp) -> Optional[dict[str, Any]]:
+    async def signed_in_state(self, app: RunningApp) -> dict[str, Any] | None:
         """Sign in once per session; None when there is no [auth] or it failed."""
         if self.auth is None or self.sign_in_error is not None:
             return None
@@ -102,11 +102,15 @@ class VerificationSession:
         self.load = await self.observer.observe(app.url, **kwargs)
         return self.load
 
-    def _reset_before_each(self, app: RunningApp) -> Callable[[], Awaitable[Optional[str]]]:
+    def reset_before_each(self, app: RunningApp) -> Callable[[], Awaitable[str | None]] | None:
+        """The project's ``[app] reset`` as a callable to run before each check, or None when it has none."""
+        return self._reset_before_each(app) if self.reset else None
+
+    def _reset_before_each(self, app: RunningApp) -> Callable[[], Awaitable[str | None]]:
         assert self.reset is not None
         command = reset_command(self.reset, app.url)
 
-        async def reset() -> Optional[str]:
+        async def reset() -> str | None:
             return await asyncio.to_thread(run_reset, command, self.project_dir, self._app_env)
 
         return reset
@@ -116,7 +120,7 @@ class VerificationSession:
         goal: str,
         analyzer: GoalAnalyzer,
         contract_id: str,
-        repo_context: Optional[RepositoryContext] = None,
+        repo_context: RepositoryContext | None = None,
     ) -> Contract:
         """Compile a goal into a draft contract grounded in the app's current UI."""
         ui = self.load.ui_snapshot if self.load and self.load.success else ""
@@ -133,7 +137,7 @@ class VerificationSession:
     ) -> RunResult:
         load = self.load or await self.observe(app)
         outcomes: list[ContractOutcome] = []
-        app_error: Optional[str] = None
+        app_error: str | None = None
         if not load.success:
             app_error = browser_problem(load.error) or f"Application unreachable at {app.url}: {load.error}"
         elif self.sign_in_error is not None:
@@ -173,12 +177,12 @@ class VerificationSession:
 
     def result(
         self,
-        app: Optional[RunningApp],
+        app: RunningApp | None,
         outcomes: list[ContractOutcome],
         decision: GateDecision,
         *,
         require_approval: bool = True,
-        error: Optional[str] = None,
+        error: str | None = None,
     ) -> RunResult:
         return RunResult(
             run_id=self.run.run_id,
@@ -197,7 +201,7 @@ class VerificationSession:
         )
 
 
-def _project_config(project_dir: Path) -> Optional[ProjectConfig]:
+def _project_config(project_dir: Path) -> ProjectConfig | None:
     try:
         return load_project_config(project_dir)
     except ProjectConfigError:

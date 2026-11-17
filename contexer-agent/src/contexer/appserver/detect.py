@@ -16,7 +16,6 @@ import socket
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from contexer.config.project import AppSettings
 
@@ -37,7 +36,7 @@ class StartPlan:
     cwd: Path
     framework: str = "unknown"
     env: dict[str, str] = field(default_factory=dict)
-    install_argv: Optional[list[str]] = None
+    install_argv: list[str] | None = None
     ready_path: str = "/"
     ready_timeout: float = 120.0
 
@@ -46,7 +45,7 @@ class StartPlan:
         return f"http://{HOST}:{self.port}/"
 
 
-def plan_start(project_dir: str | Path, settings: Optional[AppSettings] = None) -> StartPlan:
+def plan_start(project_dir: str | Path, settings: AppSettings | None = None) -> StartPlan:
     project = Path(project_dir).resolve()
     settings = settings or AppSettings()
     pkg = _read_package_json(project)
@@ -133,7 +132,7 @@ def _port_args(framework: str, port: int) -> list[str]:
     return []  # PORT / HOST environment variables only
 
 
-def package_manager(project: Path, pkg: Optional[dict]) -> str:
+def package_manager(project: Path, pkg: dict | None) -> str:
     declared = str((pkg or {}).get("packageManager") or "")
     for name in ("pnpm", "yarn", "bun", "npm"):
         if declared.startswith(name):
@@ -176,7 +175,7 @@ def shell_argv(command: str) -> list[str]:
     return ["/bin/sh", "-c", command]
 
 
-def _read_package_json(project: Path) -> Optional[dict]:
+def _read_package_json(project: Path) -> dict | None:
     path = project / "package.json"
     if not path.is_file():
         return None
