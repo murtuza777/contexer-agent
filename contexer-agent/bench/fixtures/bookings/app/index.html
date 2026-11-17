@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bookings</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>Book a slot</h1>
+    <div class="who">
+      <label for="name">Your name</label>
+      <input id="name" autocomplete="off">
+      <p id="form-error" role="alert" hidden></p>
+    </div>
+    <ul id="slots" aria-label="Time slots"></ul>
+    <p><span data-testid="free-count">4 free</span></p>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
