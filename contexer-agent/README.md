@@ -56,7 +56,9 @@ The same groups as `contexer --help`:
 | `contexer doctor` | Check everything Contexer needs, with the fix for each problem |
 | `contexer init [--ci] [--issues]` | Detect how the app starts and prepare `.contexer/`; `--ci` writes the gate workflow, `--issues` the issue workflow |
 | **Build and prove** | |
-| `contexer test "INTENT"` | The Tester agent uses the running app like a user and reports only findings that replay: confirmed bugs, confirmed working behaviours. No coding agent, nothing changed |
+| `contexer test "INTENT"` | Understands what you meant (asking only when the goal can be read two ways), uses the running app like a user, reports only findings that replay, and writes the fix prompt to paste into your coding agent. No application code is changed |
+| `contexer test --again` | Replays the checks the last run saved, with no model; explores further only when they pass |
+| `contexer test --correct "..."` | Records what you meant ("deleting should ask first") in the intent and tests again |
 | `contexer run "GOAL"` / `--contract ID` | Approve the checklist, drive the coding agent, prove, repair, and keep the best attempt |
 | `contexer run ... --pr` / `--issue N` | End in a pull request with the evidence; with `--issue` the goal comes from the issue and the PR closes it |
 | `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
@@ -209,7 +211,7 @@ python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integrati
 contexer bench --repeats 2
 ```
 
-The suite (about 440 tests, 8 to 12 minutes) runs real Chromium against fixture apps, real Node process trees
+The suite (about 500 tests, 8 to 12 minutes) runs real Chromium against fixture apps, real Node process trees
 for the dev-server tests, and real git for snapshots. It needs no network and
 no model. The benchmark's React + Vite fixture runs `npm ci` once, so the
 benchmark needs network the first time. Live-service tests skip themselves when their prerequisites are

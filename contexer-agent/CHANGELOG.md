@@ -7,6 +7,32 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Added
 
+- **The loop without a coding agent in the middle.** `contexer test` now
+  understands the goal, tests against it, and writes the fix prompt; you
+  paste the prompt into any coding tool and run `contexer test --again`.
+  - **Intent** (`.contexer/intent/<feature>.md`): the goal, the behaviours
+    derived from it, your corrections and the assumptions taken, as
+    Markdown you can edit and commit. The Intent agent asks at most 3
+    questions, each only where two readings of the goal would be tested
+    differently; `--yes` takes the likeliest reading and records it.
+    `--correct "deleting should ask first"` records a correction, updates
+    only the checks it affects, and tests again. The tamper guard covers
+    the intent like a contract.
+  - **Fix prompt** (`fix-prompt.md`, printed, `--copy` for the clipboard):
+    the Diagnoser reads the project (read-only) for the likely cause. The
+    facts in the prompt (steps, expected, actual, exceptions) are inserted
+    by code from the replay, word for word; the cause is labelled a
+    hypothesis. With no cause found the prompt is still complete.
+  - **`--again`**: replays the checks the last run confirmed, with no model.
+    If any still fails it says which and stops; if all pass it explores.
+  - **Project skills** (`.contexer/skills/<name>.md`): up to 3 things per
+    run the Tester learned about operating the app, given to later runs as
+    advice. A skill containing a secret is refused.
+  Live on the demo app with Azure `gpt-5.4`: 3 bugs confirmed, a fix prompt
+  naming the `refesh()` typo, a one-line fix by a coding agent from the
+  pasted prompt, and `--again` green on all 6 saved checks. The skills
+  measurement did not show fewer Tester steps on a second run (28 and 28);
+  see `docs/agentic/phase-2.md`.
 - **`contexer test "what the app should do"`**: the Tester agent uses your
   running app in a real browser against the intent you state, then every
   finding is replayed by code in a fresh browser. Only findings that

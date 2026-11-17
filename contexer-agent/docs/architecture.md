@@ -119,7 +119,9 @@ A `contexer run "GOAL" --pr`, end to end:
 | `evidence/` | Run directories, `report.html`, `result.json` |
 | `github/` | Commit status and job summary, the REST client, the pull-request hand-off, the issue flow |
 | `llm/` | Provider catalog, model discovery, provider clients, structured-output parsing, chat models with tools (`chat.py`) |
-| `crew/` | Contexer's own agents: the loop (`base.py: run_agent`), transcripts, and the Tester (`tester.py`, `prompts/tester.md`) |
+| `crew/` | Contexer's own agents: the loop (`base.py: run_agent`), transcripts, the Intent agent (`intent.py`), the Tester (`tester.py`) and the Diagnoser (`diagnoser.py`); prompts in `prompts/` |
+| `intent/` | The intent store: what each feature should do, in the project (`.contexer/intent/`) |
+| `skills/` | The skills store: what Contexer learned about operating the app (`.contexer/skills/`) |
 | `browser/` | A browser an agent operates: the tools (`tools.py`), the recording of what it did (`recorder.py`), and freezing findings into checks and replaying them (`freeze.py`) |
 | `config/` | Environment settings, `contexer.toml`, per-user settings in `~/.contexer` |
 | `workflow/` | Goal-to-checks compiler (`criteria.py`), repository inspector, static file server |
@@ -144,8 +146,12 @@ there only because `langchain-anthropic` needs it.
   contexer.toml                     optional settings (§16)
   .env                              optional keys and [auth] secrets (never committed)
   .contexer/
-    .gitignore                      "/*  !/.gitignore  !/contracts/": only contracts are committed
+    .gitignore                      commits contracts/, intent/ and skills/; ignores the rest
     contracts/<id>.json             contracts (commit these)
+    intent/<feature>.md             what the feature should do: goal, behaviours, corrections, assumptions
+    intent/<feature>.checks.json    its checks: drafts, and the ones a replay confirmed
+    intent/index.md                 the list of features
+    skills/<name>.md                what Contexer learned about operating the app (advice)
     runs/<run-id>/                  evidence for one verify or run (§13)
     shadow.git/                     private snapshot repository (§10)
 ```
@@ -715,12 +721,51 @@ flowchart LR
 - **`contexer test`.** Builds the model (`--provider`/`--model`, else the
   drafting model's choice; a model its provider lists without tools is
   refused), starts the app, signs in, runs the Tester, replays, and writes
-  `result.json`, `report.html`, `agents/tester.jsonl`, `replay/` screenshots,
-  `draft-contract.json` and `unconfirmed.json` in the run folder. `--save`
+  `result.json`, `report.html`, `agents/<agent>.jsonl`, `replay/` screenshots,
+  `draft-contract.json`, `fix-prompt.md` and `unconfirmed.json` in the run folder. `--save`
   also stores the draft among the project's contracts. Outcomes and exit
   codes: `no_bugs` 0, `bugs` 1, `could_not_test` 2 (no model, or the model
   failed before any bug was confirmed), `error` 3 (the app did not start,
   sign-in failed, Chromium missing), 130 after Ctrl+C.
+- **Intent** (`intent/store.py`, `crew/intent.py`). A feature's intent is a
+  Markdown file a person can edit: the goal, the behaviours derived from it,
+  dated corrections, and assumptions taken without asking. `as_text()` is
+  what the agents read; corrections are marked as overriding the rest.
+  `run_intent` gives the Intent agent the goal, the stored intent, the
+  project summary and the page, and takes back behaviours, draft checks and
+  questions. Code keeps these rules: a correction is written into the intent
+  before the model is called; a question without two different readings is
+  dropped and at most 3 are kept; with `assume` the first reading is
+  recorded as an assumption instead of asked; each draft check is validated
+  by `workflow/criteria.py: _parse_check`, sent back once when invalid, then
+  dropped and reported; after a correction only the checks the agent names
+  are replaced or removed, and a check a replay confirmed cannot be removed.
+  The tamper guard (`controller/run.py`) covers `intent/` as well as
+  `contracts/`.
+- **Diagnoser** (`crew/diagnoser.py`). `fix_prompt(failures, brief)` writes
+  the prompt a person pastes into a coding agent. Everything under "What is
+  wrong" (the steps, each failed expectation with what the browser saw, the
+  uncaught exceptions) is inserted by code from the `CheckResult`, word for
+  word, and is the same text with or without a brief. `diagnose` runs the
+  agent with `read_file` and `grep`, both read-only, confined to the project
+  and closed to `.contexer/`, `.git/`, dependencies and `.env` files. Its
+  `RepairBrief` adds the likely cause (labelled a hypothesis), the files,
+  the instruction and what must keep working. With no brief the prompt is
+  still complete.
+- **Skills** (`skills/store.py`). When it submits, the Tester may propose up
+  to 3 skills about operating the app. `SkillStore.save` refuses one that
+  contains a configured secret or anything shaped like an API key. Before a
+  run, the skills whose name or description shares a meaningful word with
+  the intent (at most 5) are added to the Tester's task as advice.
+- **One run of `contexer test`.** Intent agent (questions asked once when a
+  person is at the terminal and `--yes` is not given), Tester, replay,
+  then for confirmed bugs the Diagnoser and `fix-prompt.md`. The intent and
+  the confirmed checks are saved in `.contexer/intent/`. `--again` replays
+  the saved confirmed checks with no model: if any fails it prints which,
+  rebuilds the prompt from the facts and stops without building a model; if
+  all pass it goes on to explore. `--correct "..."` records a correction
+  through the Intent agent and tests again. `--copy` puts the prompt on the
+  clipboard.
 - **Ctrl+C.** asyncio cancels Playwright's own tasks with ours, and a close
   then waits for an answer that never comes. `BrowserSession.close` bounds
   the wait (5 s, 1 s when interrupted) and leaves the close behind; the
@@ -785,6 +830,7 @@ agents/<name>.jsonl    one transcript per Contexer agent (crew/), secrets masked
 replay/                contexer test: a screenshot per replayed finding
 screens/               contexer test: screenshots the Tester took
 draft-contract.json    contexer test: the confirmed checks, not approved
+fix-prompt.md          contexer test: the prompt to paste into a coding agent, when a bug was confirmed
 unconfirmed.json       contexer test: findings that did not reproduce, with the reason
 sign-in.jpg            when sign-in failed
 observation_*.png      the page as observed before drafting
@@ -1059,7 +1105,7 @@ drive OpenCode.
 
 ## 21. Tests
 
-About 440 tests (`contexer-agent/tests/`), about 8 minutes, no network and no
+About 500 tests (`contexer-agent/tests/`), about 8 minutes, no network and no
 model. They use real Chromium against fixture apps, real Node process trees
 for the dev-server tests, real git for snapshots and hand-offs (with a local
 bare remote), fake `claude` and `codex` binaries that speak the real stream

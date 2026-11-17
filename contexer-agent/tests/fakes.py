@@ -84,3 +84,64 @@ class ScriptedChatModel(BaseChatModel):
         if self.delay:
             await asyncio.sleep(self.delay)
         return self._next(messages, kwargs, run_manager)
+
+
+class AgentScript(BaseChatModel):
+    """One model for a command that runs several agents: each agent replays its own queue.
+
+    ``AgentScript(tester=[...], intent=[...], diagnoser=[...])``. The agent is told apart by the first
+    words of its system prompt. An agent with no replies left gets the plainest valid answer (the Intent
+    agent adds nothing to the goal, the Diagnoser has no opinion), so a test scripts only what it is
+    about; the Tester has no default, because a Tester call nobody scripted is a bug in the test.
+    """
+
+    queues: dict[str, list[Any]] = Field(default_factory=dict)
+    seen: dict[str, list[list[BaseMessage]]] = Field(default_factory=dict)
+    model_name: str = "scripted-model"
+
+    _AGENTS = {"You are the Tester": "tester", "You are the Intent agent": "intent", "You are the Diagnoser": "diagnoser"}
+
+    def __init__(self, **queues: Any) -> None:
+        super().__init__(queues={name: list(replies) for name, replies in queues.items()})
+
+    @property
+    def _llm_type(self) -> str:
+        return "agent-script"
+
+    @property
+    def total_calls(self) -> int:
+        return sum(len(calls_) for calls_ in self.seen.values())
+
+    def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> Any:
+        return self.bind(**kwargs)
+
+    def _agent(self, messages: list[BaseMessage]) -> str:
+        system = str(messages[0].content) if messages else ""
+        for opening, name in self._AGENTS.items():
+            if system.startswith(opening):
+                return name
+        raise AssertionError(f"AgentScript does not know the agent whose prompt starts: {system[:60]!r}")
+
+    def _next(self, messages: list[BaseMessage]) -> ChatResult:
+        agent = self._agent(messages)
+        self.seen.setdefault(agent, []).append(list(messages))
+        queue = self.queues.get(agent) or []
+        if queue:
+            reply = queue.pop(0)
+        elif agent == "intent":
+            reply = submit(behaviours=[])
+        elif agent == "diagnoser":
+            reply = submit()
+        else:
+            raise AssertionError(f"AgentScript received an unexpected {agent} call")
+        if isinstance(reply, BaseException):
+            raise reply
+        if callable(reply):
+            reply = reply(list(messages))
+        return ChatResult(generations=[ChatGeneration(message=reply)])
+
+    def _generate(self, messages: list[BaseMessage], stop: Optional[list[str]] = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
+        return self._next(messages)
+
+    async def _agenerate(self, messages: list[BaseMessage], stop: Optional[list[str]] = None, run_manager: Any = None, **kwargs: Any) -> ChatResult:
+        return self._next(messages)

@@ -108,3 +108,62 @@ transcript shows 0 model calls for the failing `--again` case.
 - With the skills folder deleted, a run behaves exactly as a first run.
 
 **Verify.** `pytest tests/test_skills.py`; the two-run measurement.
+
+---
+
+## Results, 2026-11-18
+
+Built, with tests written first. Live checks ran on Azure AI Foundry
+`gpt-5.4`.
+
+**The phase gate: one live session on the demo app.**
+
+| Step | What happened |
+| --- | --- |
+| `contexer test "Users can add tasks and complete them, and the remaining count stays correct" --yes` | 3 confirmed bugs, 3 confirmed working behaviours, 0 unconfirmed, 2 questions (persistence after a reload, duplicate names) raised instead of reported as bugs. 23 Tester steps, about 150,000 input tokens for the three agents |
+| The fix prompt | Named the cause: the checkbox handler in `app.js` line 19 calls the undefined `refesh()`. The facts under it are the replay's |
+| Pasted into a coding agent (Claude Code, through Contexer's adapter) | One line changed: `refesh()` became `render()` |
+| `contexer test --again` | "6 saved checks pass", then 18 more Tester steps found nothing new. Exit 0 |
+
+`--again` with the bug put back and every model key removed from the
+environment: "4 of 9 saved checks still failing", exit 1, a fix prompt
+rebuilt from the replay, and no `agents/` folder in the run: no model was
+built or called.
+
+OpenCode on the free OpenRouter model was tried first for the coding-agent
+step and failed twice on a request timeout before editing anything.
+
+**T2.1, questions.** Two clear goals ("Users can add a task and it appears
+in the list", "Users can delete tasks and clear the finished ones") got 0
+questions. Two goals that can be read two ways ("Users can archive tasks
+they are done with", "Tasks can be reordered and the order is remembered")
+got 1 question each, with two readings that would be tested differently.
+No draft check was invalid in these runs.
+
+**T2.4, the two-run measurement on `members`: not met.** The ticket expects
+the second run to use fewer Tester steps. Measured: 28 steps both times;
+tool calls went from 52 to 41 and input tokens from 202,000 to 197,000. The
+second run was given two saved skills (how `reset` reaches the signed-in and
+signed-out states, where the project count is). One pair of runs, and this
+fixture signs in before the Tester starts, so there is little for a skill to
+save. The mechanism works; the benefit is not shown.
+
+**Where the build differs from the tickets.**
+
+- `workflow/criteria.py`'s drafting prompt is not retired. `contexer verify
+  "GOAL"` and the classic `contexer run` still draft with it; it goes when
+  the new engine replaces them in Phase 3. The Intent agent validates its
+  checks with that file's `_parse_check`, as the ticket says.
+- A feature's checks are kept next to its intent, in
+  `.contexer/intent/<feature>.checks.json`: the Intent agent's drafts and
+  the ones a replay confirmed. `--again` replays the confirmed ones only; a
+  draft has never run and proves nothing yet.
+- With nobody at the terminal (CI, a pipe), questions are not asked and the
+  first reading is recorded as an assumption, exactly as with `--yes`.
+- A question is asked once per run. If the answers raise a new question, it
+  is left for `--correct`.
+- The read tools also refuse `.git/`, dependencies and `.env` files, not
+  only paths outside the project and `.contexer/`.
+- When a saved check that failed passes on `--again`, it is shown and kept
+  as "Fixed: ...".
+

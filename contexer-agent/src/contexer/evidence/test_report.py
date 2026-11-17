@@ -61,6 +61,18 @@ class ExplorationResult(BaseModel):
     run_dir: str = ""
     # The draft contract's id, when it was saved among the project's contracts (--save).
     contract: Optional[str] = None
+    # The stored intent this run tested against (.contexer/intent/<id>.md).
+    intent_id: str = ""
+    # fix-prompt.md in the run folder, when there is something to fix.
+    fix_prompt: Optional[str] = None
+    # --again: how many saved checks were replayed, and how many still fail.
+    replayed: int = 0
+    still_failing: int = 0
+    # Draft checks from the Intent agent that were not valid, each with the reason.
+    dropped_checks: list[str] = Field(default_factory=list)
+    # What the Tester proposed to remember about operating the app: saved, and refused (a secret in it).
+    skills_saved: list[str] = Field(default_factory=list)
+    skills_rejected: list[str] = Field(default_factory=list)
     started_at: str = ""
     duration_seconds: float = 0.0
     error: str = ""
@@ -128,6 +140,18 @@ def render_test_report(result: ExplorationResult) -> str:
         if result.questions
         else ""
     )
+    prompt_text = ""
+    if result.fix_prompt:
+        try:
+            prompt_text = Path(result.fix_prompt).read_text(encoding="utf-8")
+        except OSError:
+            prompt_text = ""
+    prompt_html = (
+        '<section class="card"><h2>Fix prompt</h2><p class="muted">Paste it into your coding agent, then run '
+        f"<code>contexer test --again</code>. Also saved as <code>fix-prompt.md</code>.</p><pre>{_e(prompt_text)}</pre></section>"
+        if prompt_text
+        else ""
+    )
     body = "\n".join(
         part
         for part in (
@@ -145,6 +169,7 @@ def render_test_report(result: ExplorationResult) -> str:
 </header>""",
             notes_html,
             _findings("Bugs", "refuted", "✗", result.bugs, "Nothing the tester reported as a bug reproduced."),
+            prompt_html,
             _findings("Working behaviours", "verified", "✓", result.works, ""),
             unconfirmed_html,
             questions_html,

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import socket
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,9 @@ from contexer.cli import app as cli
 from contexer.contract import ContractStore
 from contexer.demo import create_demo_project, fixed_app_js
 from contexer.llm.chat import ToolCallingError
-from tests.fakes import ScriptedChatModel, calls, submit
+from contexer.intent.store import IntentStore
+from contexer.skills.store import SkillStore
+from tests.fakes import AgentScript, calls, submit
 
 INTENT = "Users can add and complete tasks, and the remaining count stays correct"
 INPUT = {"placeholder": "What needs doing?"}
@@ -57,10 +60,10 @@ def demo(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def scripted(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """``scripted(*replies)`` makes the command use a scripted model; returns it for inspection."""
+    """``scripted(*tester_replies, intent=[...], diagnoser=[...])`` makes the command use scripted agents."""
 
-    def install(*replies: Any) -> ScriptedChatModel:
-        model = ScriptedChatModel(*replies)
+    def install(*replies: Any, **queues: Any) -> AgentScript:
+        model = AgentScript(tester=list(replies), **queues)
         monkeypatch.setattr("contexer.cli.test_cli.build_model", lambda *_a, **_k: model)
         return model
 
@@ -74,6 +77,10 @@ def _run(*args: str) -> Any:
 def _run_folder(project: Path) -> Path:
     [folder] = (project / ".contexer" / "runs").iterdir()
     return folder
+
+
+def _latest_run(project: Path) -> Path:
+    return max((project / ".contexer" / "runs").iterdir(), key=lambda p: p.stat().st_mtime_ns)
 
 
 def test_the_seeded_bug_is_reported_as_confirmed_with_exit_code_1(demo: Path, scripted: Any) -> None:
@@ -165,7 +172,7 @@ def test_steps_caps_the_tester_and_the_findings_so_far_are_still_replayed(demo: 
     out = _plain(result.output)
     assert result.exit_code == 1
     assert "1 confirmed bug" in out and "stopped at the step limit" in out
-    assert len(model.seen) == 3
+    assert len(model.seen["tester"]) == 3
 
 
 def test_without_a_model_the_command_explains_what_to_set_and_exits_2(demo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -206,7 +213,7 @@ def test_an_app_that_does_not_start_is_an_error_with_exit_code_3(tmp_path: Path,
     result = _run(INTENT, "--dir", str(project))
 
     assert result.exit_code == 3, result.output
-    assert model.seen == []  # no model call was spent on an app that is not running
+    assert model.total_calls == 0  # no model call was spent on an app that is not running
 
 
 def test_ctrl_c_stops_the_browser_and_the_app_and_exits_130(
@@ -265,3 +272,290 @@ def test_the_command_is_listed_in_the_help() -> None:
     usage = _plain(_run("--help").output)
     for option in ("--url", "--steps", "--model", "--dir"):
         assert option in usage
+
+
+# -- Phase 2: the intent, the fix prompt, --again and --correct ---------------------
+
+DIAGNOSIS = [
+    calls(("read_file", {"path": "app.js"})),
+    submit(
+        cause="The change handler calls refesh(), which does not exist, so the count is never updated.",
+        files=["app.js"],
+        instruction="Call the existing refresh function instead of refesh().",
+    ),
+]
+BROKEN = submit(summary="Completing is broken.")
+
+
+def test_the_fix_prompt_is_printed_and_saved_with_the_facts_and_the_cause(demo: Path, scripted: Any) -> None:
+    model = scripted(EXPLORE, REPORT_BOTH, BROKEN, diagnoser=list(DIAGNOSIS))
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    out = _plain(result.output)
+    assert result.exit_code == 1, result.output
+    assert "Fix prompt" in out and "paste it into your coding agent" in out
+    folder = _run_folder(demo)
+    prompt = (folder / "fix-prompt.md").read_text(encoding="utf-8")
+    assert 'equals "0 left"' in prompt and '"1 left"' in prompt  # the facts, from the replay
+    assert "refesh()" in prompt and "- `app.js`" in prompt  # the cause, from the Diagnoser
+    assert "Adding a task shows it in the list" in prompt  # what must keep working
+    assert "contexer test --again" in prompt
+    assert "refesh()" in out  # printed, not only saved
+    data = json.loads((folder / "result.json").read_text(encoding="utf-8"))
+    assert data["fix_prompt"].endswith("fix-prompt.md")
+    assert len(model.seen["diagnoser"]) == 2 and (folder / "agents" / "diagnoser.jsonl").is_file()
+
+
+def test_no_bugs_means_no_diagnoser_call_and_no_fix_prompt(demo: Path, scripted: Any) -> None:
+    (demo / "app.js").write_text(fixed_app_js(), encoding="utf-8")
+    model = scripted(EXPLORE, REPORT_WORKING, submit(summary="Both behaviours work."))
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    assert result.exit_code == 0
+    assert "diagnoser" not in model.seen and not (_run_folder(demo) / "fix-prompt.md").exists()
+    assert "Fix prompt" not in _plain(result.output)
+
+
+def test_a_diagnoser_that_fails_still_leaves_a_prompt_written_from_the_facts(demo: Path, scripted: Any) -> None:
+    scripted(EXPLORE, REPORT_BOTH, BROKEN, diagnoser=[RuntimeError("Error code: 429 - rate limit exceeded")])
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    assert result.exit_code == 1
+    prompt = (_run_folder(demo) / "fix-prompt.md").read_text(encoding="utf-8")
+    assert '"1 left"' in prompt and "Likely cause" not in prompt
+
+
+def test_copy_puts_the_prompt_on_the_clipboard_and_says_so(demo: Path, scripted: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    copied: list[str] = []
+    monkeypatch.setattr("contexer.cli.test_cli.copy_to_clipboard", lambda text: copied.append(text) or True)
+    scripted(EXPLORE, REPORT_BOTH, BROKEN)
+
+    result = _run(INTENT, "--dir", str(demo), "--copy")
+
+    assert len(copied) == 1 and '"1 left"' in copied[0]
+    assert copied[0] == (_run_folder(demo) / "fix-prompt.md").read_text(encoding="utf-8")
+    assert "copied to the clipboard" in _plain(result.output)
+
+    monkeypatch.setattr("contexer.cli.test_cli.copy_to_clipboard", lambda text: False)
+    scripted(EXPLORE, REPORT_BOTH, BROKEN)
+    again = _run(INTENT, "--dir", str(demo), "--copy")
+    assert "could not be copied" in _plain(again.output)
+
+
+def test_a_run_saves_the_intent_and_the_confirmed_checks_for_the_next_one(demo: Path, scripted: Any) -> None:
+    scripted(EXPLORE, REPORT_BOTH, BROKEN, intent=[submit(behaviours=["Completing a task lowers the remaining count"])])
+
+    assert _run(INTENT, "--dir", str(demo)).exit_code == 1
+
+    store = IntentStore(demo)
+    spec = store.latest()
+    assert spec is not None and spec.goal == INTENT
+    assert spec.behaviours == ["Completing a task lowers the remaining count"]
+    saved = store.load_checks(spec.id)
+    assert [(c.source, c.kind) for c in saved] == [("confirmed", "bug"), ("confirmed", "works")]
+    assert saved[0].description == "Completing a task does not lower the count"
+
+
+def test_again_with_the_saved_checks_still_failing_makes_no_model_call(
+    demo: Path, scripted: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scripted(EXPLORE, REPORT_BOTH, BROKEN)
+    assert _run(INTENT, "--dir", str(demo)).exit_code == 1
+    first_prompt = (_run_folder(demo) / "fix-prompt.md").read_text(encoding="utf-8")
+
+    built: list[bool] = []
+
+    def no_model(*_a: Any, **_k: Any) -> Any:
+        built.append(True)
+        raise AssertionError("no model is needed to replay saved checks")
+
+    monkeypatch.setattr("contexer.cli.test_cli.build_model", no_model)
+    result = _run("--again", "--dir", str(demo))
+
+    out = _plain(result.output)
+    assert result.exit_code == 1, result.output
+    assert built == []  # the model was not even built
+    assert "1 of 2 saved checks still failing" in out
+    assert "Completing a task does not lower the count" in out
+    folder = _latest_run(demo)
+    data = json.loads((folder / "result.json").read_text(encoding="utf-8"))
+    assert (data["outcome"], data["steps"], data["tool_calls"]) == ("bugs", 0, 0)
+    assert not (folder / "agents").exists()  # no agent ran
+    # The prompt is rebuilt from the facts of this replay, with no model.
+    prompt = (folder / "fix-prompt.md").read_text(encoding="utf-8")
+    assert '"1 left"' in prompt and "Likely cause" not in prompt and prompt != first_prompt
+
+
+def test_again_explores_once_the_saved_checks_pass(demo: Path, scripted: Any) -> None:
+    scripted(EXPLORE, REPORT_BOTH, BROKEN)
+    assert _run(INTENT, "--dir", str(demo)).exit_code == 1
+
+    (demo / "app.js").write_text(fixed_app_js(), encoding="utf-8")  # the coding agent applied the fix
+    model = scripted(submit(summary="Nothing new found."))
+    result = _run("--again", "--dir", str(demo))
+
+    out = _plain(result.output)
+    assert result.exit_code == 0, result.output
+    assert "2 saved checks pass" in out and "No confirmed bugs" in out
+    # A check that failed last time and passes now is shown as fixed, not as a bug that "works".
+    assert "Fixed: Completing a task does not lower the count" in out
+    assert "Fixed: Adding a task shows it in the list" not in out
+    assert len(model.seen["tester"]) == 1  # it went on to explore
+    task = model.seen["tester"][0][1].content
+    assert INTENT in task
+    assert "Completing a task does not lower the count" in task  # the saved checks are not repeated
+    # The checks that passed are still saved, now as working behaviour.
+    store = IntentStore(demo)
+    assert [(c.source, c.kind) for c in store.load_checks(store.latest().id)] == [("confirmed", "works")] * 2  # type: ignore[union-attr]
+
+
+def test_again_with_nothing_saved_says_what_to_run_first(demo: Path, scripted: Any) -> None:
+    model = scripted()
+    result = _run("--again", "--dir", str(demo))
+
+    assert result.exit_code == 2
+    assert 'contexer test "what the app should do"' in _plain(result.output)
+    assert model.total_calls == 0
+
+
+def test_correct_records_the_correction_and_tests_again_with_it(demo: Path, scripted: Any) -> None:
+    (demo / "app.js").write_text(fixed_app_js(), encoding="utf-8")
+    scripted(EXPLORE, REPORT_WORKING, submit(summary="Both behaviours work."))
+    assert _run(INTENT, "--dir", str(demo)).exit_code == 0
+
+    model = scripted(
+        submit(summary="Tested the correction."),
+        intent=[submit(behaviours=["Completing a task strikes it through and lowers the remaining count"])],
+    )
+    result = _run("--correct", "A completed task is struck through", "--dir", str(demo))
+
+    assert result.exit_code == 0, result.output
+    store = IntentStore(demo)
+    spec = store.latest()
+    assert spec is not None and spec.goal == INTENT
+    assert [c.text for c in spec.corrections] == ["A completed task is struck through"]
+    assert "A completed task is struck through" in store.path_for(spec.id).read_text(encoding="utf-8")
+    # Both agents worked from the corrected intent.
+    assert "A completed task is struck through" in model.seen["intent"][0][1].content
+    tester_task = model.seen["tester"][0][1].content
+    assert "A completed task is struck through" in tester_task and "strikes it through" in tester_task
+
+
+def test_correct_with_no_intent_yet_explains_itself(demo: Path, scripted: Any) -> None:
+    result = (scripted(), _run("--correct", "Deleting should ask first", "--dir", str(demo)))[1]
+    assert result.exit_code == 2 and "contexer test" in _plain(result.output)
+
+
+QUESTION = {"question": "Should deleting ask first?", "reading_a": "Delete at once", "reading_b": "Ask before deleting"}
+
+
+def test_a_question_is_asked_once_and_the_answer_becomes_part_of_the_intent(
+    demo: Path, scripted: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[str] = []
+
+    def answer(question: str) -> str:
+        asked.append(question)
+        return "Ask before deleting"
+
+    monkeypatch.setattr("contexer.cli.test_cli.is_interactive", lambda: True)
+    monkeypatch.setattr("contexer.cli.test_cli.ask_user", answer)
+    (demo / "app.js").write_text(fixed_app_js(), encoding="utf-8")
+    model = scripted(
+        submit(summary="Tested."),
+        intent=[
+            submit(behaviours=["Deleting a task removes it"], questions=[QUESTION]),
+            submit(behaviours=["Deleting a task asks for confirmation, then removes it"], questions=[QUESTION]),
+        ],
+    )
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    assert result.exit_code == 0, result.output
+    assert len(asked) == 1 and "Should deleting ask first?" in asked[0]
+    assert "Delete at once" in asked[0] and "Ask before deleting" in asked[0]  # both readings are shown
+    assert len(model.seen["intent"]) == 2  # once to ask, once with the answer; never a second round of questions
+    spec = IntentStore(demo).latest()
+    assert spec is not None
+    assert [c.text for c in spec.corrections] == ["Should deleting ask first? Ask before deleting"]
+    assert spec.behaviours == ["Deleting a task asks for confirmation, then removes it"]
+    assert "asks for confirmation" in model.seen["tester"][0][1].content
+
+
+def test_yes_never_asks_and_records_the_assumption(demo: Path, scripted: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    def never(question: str) -> str:
+        raise AssertionError("--yes must not ask")
+
+    monkeypatch.setattr("contexer.cli.test_cli.is_interactive", lambda: True)
+    monkeypatch.setattr("contexer.cli.test_cli.ask_user", never)
+    (demo / "app.js").write_text(fixed_app_js(), encoding="utf-8")
+    model = scripted(submit(summary="Tested."), intent=[submit(behaviours=["Deleting a task removes it"], questions=[QUESTION])])
+
+    result = _run(INTENT, "--dir", str(demo), "--yes")
+
+    assert result.exit_code == 0, result.output
+    assert len(model.seen["intent"]) == 1
+    spec = IntentStore(demo).latest()
+    assert spec is not None and spec.corrections == []
+    assert spec.assumptions == ["Delete at once (assumed without asking; the other reading was: Ask before deleting)"]
+    assert "assumed without asking" in _plain(result.output).lower()
+
+
+def test_the_new_options_are_in_the_help() -> None:
+    usage = _plain(_run("--help").output)
+    for option in ("--again", "--correct", "--copy", "--yes"):
+        assert option in usage
+
+
+# -- Phase 2: project skills --------------------------------------------------------
+
+MEMBERS = Path(__file__).resolve().parents[1] / "bench" / "fixtures" / "members" / "app"
+MEMBERS_INTENT = "Members can sign in, see a dashboard and create projects"
+
+
+def _tester_task(script: AgentScript) -> str:
+    """What the Tester was asked, with the app's port taken out so two runs can be compared."""
+    return re.sub(r"127\.0\.0\.1:\d+", "127.0.0.1:PORT", script.seen["tester"][0][1].content)
+
+
+def test_a_run_saves_what_the_tester_learned_and_the_next_run_is_given_it(tmp_path: Path, scripted: Any) -> None:
+    project = create_demo_project(tmp_path / "demo")
+    (project / "app.js").write_text(fixed_app_js(), encoding="utf-8")
+    intent = "Users can add tasks and complete them"
+    learned = {"name": "add-a-task", "description": "How to add tasks to the list", "body": "Fill the field, click Add."}
+
+    first = scripted(submit(summary="Works.", skills=[learned]))
+    result = _run(intent, "--dir", str(project), "--yes")
+    assert result.exit_code == 0, result.output
+    assert "1 skill saved" in _plain(result.output)
+    assert SkillStore(project).load("add-a-task").body == "Fill the field, click Add."
+
+    second = scripted(submit(summary="Works."))
+    assert _run(intent, "--dir", str(project), "--yes").exit_code == 0
+    assert "How to add tasks to the list" in _tester_task(second)
+    assert "How to add tasks to the list" not in _tester_task(first)
+
+    # With the skills folder deleted, a run is exactly a first run.
+    shutil.rmtree(project / ".contexer" / "skills")
+    third = scripted(submit(summary="Works."))
+    assert _run(intent, "--dir", str(project), "--yes").exit_code == 0
+    assert _tester_task(third) == _tester_task(first)
+
+
+def test_a_proposed_skill_with_the_test_accounts_password_is_rejected_not_saved(tmp_path: Path, scripted: Any) -> None:
+    project = tmp_path / "members"
+    shutil.copytree(MEMBERS, project, ignore=shutil.ignore_patterns("runs"))
+    leaking = {"name": "sign-in", "description": "How to sign in", "body": "Use demo@example.com with correct-horse."}
+    safe = {"name": "projects", "description": "How to create a project", "body": "Type a name, press Create project."}
+    scripted(submit(summary="Works.", skills=[leaking, safe]))
+
+    result = _run(MEMBERS_INTENT, "--dir", str(project), "--yes")
+
+    out = _plain(result.output)
+    assert result.exit_code == 0, result.output
+    assert [s.name for s in SkillStore(project).list()] == ["projects"]
+    assert "1 skill saved" in out and "1 skill rejected" in out and "secret" in out
+    assert "correct-horse" not in result.output
