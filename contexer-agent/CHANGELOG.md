@@ -96,6 +96,13 @@ Phase 0 adds the foundations; no agent ships yet.
   `LOG_LEVEL`, `VERBOSE`, `OPENCODE_TIMEOUT`), and the streaming and
   tool-calling code in the model providers, which only the shell used.
 
+### Fixed
+
+- An app started by Contexer no longer inherits the markers of an agent
+  session (`AI_AGENT`, `CLAUDECODE`, `CLAUDE_CODE_*`). Started from a coding
+  agent's terminal, Next.js stopped `next dev` to show an upgrade notice and
+  the app "did not start".
+
 ### Changed
 
 - Docs: product research is in `docs/product/`, and the LangGraph study sits

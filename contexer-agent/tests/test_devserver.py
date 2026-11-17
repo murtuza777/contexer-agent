@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from contexer.appserver import AppStartError, open_app
-from contexer.appserver.detect import detect_framework, package_manager, plan_start
+from contexer.appserver.detect import StartPlan, detect_framework, package_manager, plan_start
 from contexer.appserver.devserver import DevServer, DevServerError
 from contexer.config.project import AppSettings
 
@@ -217,3 +217,21 @@ def test_a_launcher_that_starts_its_child_at_once_cannot_escape_the_kill(tmp_pat
     while _pid_alive(pid) and time.monotonic() < deadline:
         time.sleep(0.2)
     assert not _pid_alive(pid)
+
+
+def test_the_app_is_not_told_it_runs_inside_an_agent_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Started from a coding agent's terminal, Contexer inherits that session's markers.
+
+    Dev tooling reacts to them: Next.js stopped `next dev` to show an agent an upgrade notice, so the app
+    "did not start". The app under test gets the environment a person's terminal would give it.
+    """
+    for name in ("AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_AGENT_SDK_VERSION", "CLAUDE_PID"):
+        monkeypatch.setenv(name, "1")
+    monkeypatch.setenv("MY_APP_SETTING", "kept")
+    plan = StartPlan(argv=["node", "server.js"], display="node server.js", port=3000, cwd=tmp_path, env={"PORT": "3000"})
+
+    env = DevServer(plan)._env()
+
+    assert not [name for name in env if name == "AI_AGENT" or name.startswith("CLAUDE")]
+    assert env["MY_APP_SETTING"] == "kept" and env["PORT"] == "3000" and env["CI"] == "1"
+    assert "PATH" in env or "Path" in env

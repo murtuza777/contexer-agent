@@ -22,7 +22,7 @@ from typing import IO, Callable, Optional
 import httpx
 
 from contexer.appserver.detect import StartPlan
-from contexer.procutil import ProcessTree, spawn_tree
+from contexer.procutil import ProcessTree, spawn_tree, without_agent_session
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _ANNOUNCED_URL = re.compile(r"https?://(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):(\d{2,5})")
@@ -188,7 +188,9 @@ class DevServer:
         return bases
 
     def _env(self) -> dict[str, str]:
-        env = dict(os.environ)
+        # Dev tooling behaves differently when it thinks an agent is driving it (Next.js stops to show
+        # an upgrade notice); the app is started the way the person's own terminal would start it.
+        env = without_agent_session(dict(os.environ))
         env.update(self.plan.env)
         env.setdefault("FORCE_COLOR", "0")
         env.setdefault("CI", "1")  # no interactive prompts from dev tooling

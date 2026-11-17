@@ -37,6 +37,21 @@ def popen_args(argv: list[str]) -> list[str] | str:
     return argv
 
 
+# Variables a hosting agent session sets for its own plumbing, or to tell tools an agent is driving.
+# Contexer is often started from a coding agent's terminal; what it starts is not that session.
+AGENT_SESSION_PREFIXES = ("CLAUDE_CODE_", "CLAUDE_AGENT_SDK_")
+AGENT_SESSION_VARS = frozenset({"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PREVIEW_CLASSIFIER_FLOOR", "AI_AGENT"})
+
+
+def without_agent_session(env: dict[str, str]) -> dict[str, str]:
+    """``env`` as a person's own terminal would have it: no markers of a hosting agent session."""
+    return {
+        name: value
+        for name, value in env.items()
+        if name not in AGENT_SESSION_VARS and not name.startswith(AGENT_SESSION_PREFIXES)
+    }
+
+
 class ProcessTree:
     """A ``Popen`` plus whatever is needed to stop its descendants."""
 

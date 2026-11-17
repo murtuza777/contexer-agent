@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from contexer.agents.base import AgentTurn, CodingAgentAdapter, ProgressFn
-from contexer.procutil import ProcessTree, spawn_tree
+from contexer.procutil import AGENT_SESSION_PREFIXES, AGENT_SESSION_VARS, ProcessTree, spawn_tree
 
 DEFAULT_ALLOWED_TOOLS = (
     "Read",
@@ -61,8 +61,8 @@ DENIED_TOOLS = (
 
 # Variables a hosting Claude Code session sets for its own plumbing. A coding
 # agent Contexer starts is a separate session and must not inherit them.
-_PARENT_SESSION_PREFIXES = ("CLAUDE_CODE_", "CLAUDE_AGENT_SDK_")
-_PARENT_SESSION_VARS = {"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PREVIEW_CLASSIFIER_FLOOR"}
+_PARENT_SESSION_PREFIXES = AGENT_SESSION_PREFIXES
+_PARENT_SESSION_VARS = AGENT_SESSION_VARS
 # Contexer pushes and opens the pull request itself. The agent edits files and needs no way into the
 # repository: text from an issue reaches its prompt, and in Actions these tokens can push and comment.
 _REPOSITORY_TOKENS = {
