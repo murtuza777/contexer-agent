@@ -74,6 +74,8 @@ free model drafted from the same goals caught 33 of 40 (below).
 
 - **No false alarm on correct code**, in 22 runs. That is the target the
   product stands on: a person is never told about a bug that is not there.
+  It did not hold on an app the prompt had never seen: see the held-out
+  result below before quoting this number.
 - **25 of 40 found.** An earlier run of six of the apps found 24 of their 35,
   and this one 21 of the same 35: the 21 are a subset of the 24. The three lost
   (`members/no-auth-guard`, `signup/submit-reloads-page`,
@@ -132,6 +134,63 @@ now covered by a test):
 changed between the two runs using what the first one showed. The seeded
 bugs were not used to write expectations, but the prompt has seen these
 apps' failure modes; a held-out app would be the honest next measurement.
+
+### A held-out app, `bookings`, 2026-11-18
+
+The seven apps above are not a fair test of the Tester any more: its prompt
+was changed using what its runs on them showed. `bookings` (a slot-booking
+app, 6 seeded bugs, 3 benign variants) was written afterwards and no prompt
+has been tuned on it. Same model and settings, one run per variant, three
+measurements as guards were added:
+
+| Measured with | Found | False alarms on correct code | Tokens in |
+| --- | --- | --- | --- |
+| The Tester as it was after the seven-app runs | 3 / 6 | **2 in 4 runs** | 2.3M |
+| + the Challenger (a second model look at each bug) | 3 / 6 | 1 in 4 runs | 2.7M |
+| + "the app said why" (decided by code) | 3 / 6 | **0 in 4 runs** | 2.7M |
+
+**The first row is the honest number for what the seven-app result claimed.**
+Zero false alarms on the apps the prompt had seen became two in four on one
+it had not. Both were the same mistake: the app clears the name field after
+a booking, the Tester clicked a second slot without typing a name again,
+the app said "Enter your name", and the Tester reported "booking a second
+slot fails". It reproduces every time, so replay confirmed it, and it quotes
+the goal, so the quote rule passed.
+
+What was tried, in order:
+
+1. A failed check now tells the Tester what the app is showing ("The page
+   is showing: Enter your name"). The Tester recorded the bug anyway.
+2. The Challenger, a separate model call that reviews each confirmed bug
+   and can only set findings aside, caught it in one run and let it stand
+   in another.
+3. A rule in code, with no model: a check that failed while the app was
+   displaying its own message (`role=alert`) is not asserted as a bug. It is
+   listed for the person with that message. This removed the remaining one.
+
+Two model-judgement layers reduced the false alarm and did not remove it;
+the rule that removed it is the one that does not ask a model. The
+Challenger stays as a filter for other mistakes. On `todo` it cost nothing:
+5 of 6 found and no false alarm, as before.
+
+**Caveats, which matter here.**
+
+- `bookings` was held out for the first row only. The Challenger and the
+  "app said why" rule were written after seeing it fail, so rows two and
+  three show that the fixes work on the case they were built for, not that
+  they generalise. Another unseen app is needed for that.
+- The rule costs recall where a real bug shows an alert: such a finding is
+  listed for the person and not reported as a bug. None of the six bugs in
+  `bookings` was lost to it; it has not been run on the other seven apps.
+- The same three bugs were missed in all three measurements. In the last
+  one's transcripts: for `cancel-wrong-slot` the Tester only ever cancelled
+  the earliest booking, which is the one the bug removes anyway; for
+  `double-booking` it saw the Book button still there on a booked slot and
+  raised it as a question instead of trying to book again; for `stale-name`
+  it booked under several names and never checked the name shown for a
+  later booking.
+- One run per variant; the same author wrote the app, its bugs and the
+  guards.
 
 ### Stub agent, 2026-11-15
 

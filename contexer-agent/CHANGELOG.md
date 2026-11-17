@@ -35,7 +35,19 @@ Phase 0 adds the foundations; no agent ships yet.
     Contexer runs to start and reset the app.
 - A tool audit in `docs/architecture.md`, enforced by a test: which agent
   has which tool, and that none of them can write to the project.
-- A held-out benchmark app, `bookings`, that no prompt was tuned on.
+- A held-out benchmark app, `bookings`, that no prompt was tuned on. **It
+  showed that the Tester's zero false alarms did not generalise: 3 of 6
+  bugs found, and a bug reported on correct code in 2 of 4 runs.** Two
+  guards were added because of it and it was measured again: 0 false
+  alarms in 4 runs, still 3 of 6 found. `bench/RESULTS.md` has all three
+  measurements and why the last two are not held-out evidence.
+  - **The Challenger**: after replay, one model call reviews each
+    confirmed bug and can set it aside as the tester's doing, with a
+    reason that is shown. It can only remove.
+  - **When the app said why**: a failed check records the messages the
+    app is showing. A bug whose check failed while the app displayed a
+    message is listed for you with that message and not reported as a
+    bug. Decided by code, with no model.
 - `ruff` and `pyright` run in CI before the tests. The package is type-clean on Windows, Linux and
   macOS, and modules no longer call each other's private functions.
 - **The loop without a coding agent in the middle.** `contexer test` now

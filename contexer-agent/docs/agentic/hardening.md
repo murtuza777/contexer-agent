@@ -133,3 +133,55 @@ Left in Phase 5: the risk scan before a run (`.env` not ignored, committed
 credentials), the `.contexer/**` deny rule for the Codex and OpenCode
 adapters, a cheaper model per agent, a cost estimate before a run, and a
 live injection run against a real model.
+
+---
+
+## Results, 2026-11-18
+
+All ten tickets are built, with tests written first. Lint and type checks
+run in CI before the tests.
+
+**H10 found what the guardrails were missing.** On `bookings`, an app no
+prompt had been tuned on, the Tester found 3 of 6 seeded bugs and reported a
+bug on correct code in 2 of 4 runs; on the seven apps its prompt had seen it
+had reported none in 22. The details and the three measurements are in
+[bench/RESULTS.md](../../bench/RESULTS.md#a-held-out-app-bookings-2026-11-18).
+Two things were added because of it, neither in the plan above:
+
+- **The Challenger** (`crew/challenger.py`): one model call after replay that
+  reviews each confirmed bug and can only set findings aside, each with a
+  reason that is shown. It halved the false alarms on `bookings` and did not
+  remove them.
+- **"The app said why"**: a failed check records the messages the app is
+  showing; a bug whose check failed while a `role=alert` message was on the
+  page is listed for the person and not asserted as a bug. Decided by code.
+  With it, `bookings` had no false alarm in 4 runs.
+
+The lesson is the rule this document starts from. Showing the model the
+app's message did not stop the false alarm, and a second model did not
+reliably stop it. The check that does not ask a model did.
+
+**Where the build differs from the plan.**
+
+- H5: tool results are not wrapped in the marker, only the text Contexer
+  puts into an agent's task (page, project summary, diff, server log,
+  failure report, saved skills). Tool results come back through the provider
+  as tool messages, which is already a separate channel; the system prompt
+  says they are data.
+- H9: branch protection on `main` is a repository setting only the owner
+  can change. This work came in through a pull request; before it,
+  everything was pushed to `main` directly.
+- Not planned, and added: `--no-skills`, the "note on the next two
+  sections" in the fix prompt, three-platform type checking, and a retry
+  when the benchmark lays out the next variant while a stopped dev server is
+  still writing its cache (a CI failure on this branch).
+
+**Still open.**
+
+- A second unseen app, to measure whether the Challenger and "the app said
+  why" generalise, and what the second costs in real bugs that show an
+  alert.
+- The seven-app benchmark has not been re-run with the new guards (about
+  14M tokens).
+- A live injection run against a real model (left in Phase 5).
+

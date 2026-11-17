@@ -4,7 +4,8 @@ Status: approved plan, 2026-11-13. Nothing here is built yet. This document
 replaces the plans in [`docs/multi-agent/`](../multi-agent/) where they differ.
 
 Tickets: [Phase 0](phase-0.md) · [Phase 1](phase-1.md) · [Phase 2](phase-2.md) ·
-[Phase 3](phase-3.md) · [Phase 4](phase-4.md) · [Phase 5](phase-5.md)
+[Phase 3](phase-3.md) · [Phase 4](phase-4.md) · [Phase 5](phase-5.md) ·
+[Hardening and guardrails](hardening.md)
 
 ## 1. The problem
 
