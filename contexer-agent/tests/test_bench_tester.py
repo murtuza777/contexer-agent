@@ -194,7 +194,8 @@ async def test_the_tester_agent_is_measured_through_the_same_replays(tmp_path: P
                 ("expect", {"kind": "text", "target": {"test_id": "remaining-count"}, "equals": "0 left"}),
             ),
             # On the correct app e1 passes, so recording it as a bug is refused and nothing is reported.
-            calls(("record_finding", {"kind": "bug", "title": "The count ignores completed tasks", "observation": "e1"})),
+            calls(("record_finding", {"kind": "bug", "title": "The count ignores completed tasks", "observation": "e1",
+                   "violates": "the remaining count stays correct"})),
             submit(summary="Done."),
         ]
 
@@ -213,3 +214,29 @@ async def test_the_tester_agent_is_measured_through_the_same_replays(tmp_path: P
     # The transcripts outlive the working copy, so a miss can be diagnosed.
     kept = sorted(p.name for p in (tmp_path / "transcripts").iterdir())
     assert kept == ["todo-bug-count-ignores-done-1.jsonl", "todo-good-good-1.jsonl"]
+
+
+async def test_an_agent_that_crashes_on_one_variant_does_not_end_the_suite(tmp_path: Path) -> None:
+    """A dropped connection to one app took the whole live benchmark down; one run's failure is one run's."""
+
+    class Crashing:
+        name = "crashing"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def explore(self, goal: str, app: RunningApp, project_dir: Path) -> Exploration:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("Page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:51504/")
+            return Exploration(steps=3)
+
+    agent = Crashing()
+    report = await run_tester_bench(_mini_fixture(tmp_path), agent)
+
+    assert agent.calls == 2
+    [score] = report.apps
+    crashed, completed = report.runs
+    assert crashed.error.startswith("the tester failed: RuntimeError: Page.goto")
+    assert (score.errors, score.clean_runs, score.bugs, score.steps) == (1, 0, 1, 3)
+    assert "1 run(s) were not scored" in results_markdown(report)

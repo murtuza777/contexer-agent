@@ -41,6 +41,8 @@ from contexer.verification.runner import CheckRunner
 from contexer.verification.verifier import Verifier
 
 Replay = Literal["refuted", "verified", "unverified"]
+# How the error of a run that could not be scored begins.
+NOT_SCORED = ("the app did not start", "the tester failed", "the app could not be opened")
 
 
 class Finding(BaseModel):
@@ -107,7 +109,7 @@ class LiveTester:
         from contexer.cli.test_cli import build_model
         from contexer.crew.tester import DEFAULT_MAX_STEPS, run_tester
         from contexer.gate.session import DEV_SERVER_TIMEOUT_SCALE
-        from contexer.verification.runner import _typed_values
+        from contexer.browser.tools import credential_secrets
 
         from contexer.llm.chat import describe_model
 
@@ -126,6 +128,10 @@ class LiveTester:
             reset=session._reset_before_each(app) if session.reset else None,
             timeout_scale=DEV_SERVER_TIMEOUT_SCALE if app.kind == "dev" else 1.0,
         )
+        try:
+            await browser.start()
+        except Exception as exc:
+            return Exploration(error=f"the app could not be opened in the browser: {str(exc).splitlines()[0]}")
         async with browser:
             tested = await run_tester(
                 goal,
@@ -133,7 +139,7 @@ class LiveTester:
                 browser,
                 run_dir=run.path,
                 max_steps=self.max_steps or DEFAULT_MAX_STEPS,
-                secrets=_typed_values(session.auth.as_check()) if session.auth is not None else [],
+                secrets=credential_secrets(session.auth.as_check()) if session.auth is not None else [],
             )
         if self.keep_dir is not None and tested.transcript is not None and tested.transcript.is_file():
             import shutil
@@ -274,12 +280,20 @@ async def _run_variant(agent: TesterAgent, goal: str, variant: Variant, repeat: 
         run.error = f"the app did not start: {exc}\n{exc.log_tail}".strip()[-1500:]
         run.duration_seconds = time.monotonic() - started
         return run
+    except Exception as exc:  # one run's failure is one run's: the suite goes on
+        first_line = (str(exc).splitlines() or [""])[0]
+        run.error = f"the tester failed: {type(exc).__name__}: {first_line}"[:1500]
+        run.duration_seconds = time.monotonic() - started
+        return run
 
     run.findings = len(exploration.findings)
     run.steps = exploration.steps
     run.tokens_in, run.tokens_out = exploration.tokens_in, exploration.tokens_out
     run.cost_usd = exploration.cost_usd
     run.error = exploration.error
+    if run.error.startswith(NOT_SCORED):
+        run.duration_seconds = time.monotonic() - started
+        return run
     reproduced = [f for f, verdict in zip(exploration.findings, replayed) if verdict == "refuted"]
     run.unconfirmed = [f.title for f, verdict in zip(exploration.findings, replayed) if verdict != "refuted"]
 
@@ -343,7 +357,7 @@ def _score(score: TesterScore, run: TesterRun) -> None:
         score.stopped_early += 1
     if run.cost_usd is not None:
         score.cost_usd = (score.cost_usd or 0.0) + run.cost_usd
-    if run.error.startswith("the app did not start"):
+    if run.error.startswith(NOT_SCORED):
         score.errors += 1
         return
     score.false_alarms += len(run.false_alarms)
@@ -392,7 +406,7 @@ def results_markdown(report: TesterBenchReport) -> str:
     if total.stopped_early:
         lines += ["", f"In {total.stopped_early} run(s) the agent stopped early (a step or time limit, or a model error); what it had recorded was still scored."]
     if total.errors:
-        lines += ["", f"{total.errors} run(s) were not scored because the app did not start."]
+        lines += ["", f"{total.errors} run(s) were not scored: the app did not start, or the agent failed before testing it."]
     if report.agent == "stub":
         lines += [
             "",

@@ -158,7 +158,7 @@ def _bench_tester(
         f"{totals.unconfirmed} unconfirmed · [dim]{report.duration_seconds:.0f}s[/]"
     )
     if totals.errors:
-        console.print(f"[red]{totals.errors} run(s) not scored: the app did not start.[/]")
+        console.print(f"[red]{totals.errors} run(s) not scored: the app did not start, or the agent failed.[/]")
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
@@ -178,7 +178,9 @@ def _tester_line(run: object) -> str:
 
     assert isinstance(run, TesterRun)
     label = f"{run.app}/{run.kind}/{run.name}" + (f" #{run.repeat + 1}" if run.kind != "bug" else "")
-    if run.error.startswith("the app did not start"):
+    from contexer.bench.tester import NOT_SCORED
+
+    if run.error.startswith(NOT_SCORED):
         return f"  [red]error[/] {escape(label)} [dim]{escape(run.error.splitlines()[0])}[/]"
     if run.kind == "bug":
         mark = "[green]found[/]" if run.found else "[yellow]not found[/]"
