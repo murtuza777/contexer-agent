@@ -233,5 +233,5 @@ def test_the_app_is_not_told_it_runs_inside_an_agent_session(tmp_path: Path, mon
     env = DevServer(plan)._env()
 
     assert not [name for name in env if name == "AI_AGENT" or name.startswith("CLAUDE")]
-    assert env["MY_APP_SETTING"] == "kept" and env["PORT"] == "3000" and env["CI"] == "1"
+    assert env["MY_APP_SETTING"] == "kept" and env["PORT"] == "3000" and env["CI"]  # CI may already be set
     assert "PATH" in env or "Path" in env
