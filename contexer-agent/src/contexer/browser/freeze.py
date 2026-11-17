@@ -46,6 +46,8 @@ class Confirmed(BaseModel):
     # What the replay saw, in the runner's words.
     evidence: str = ""
     screenshot: Optional[str] = None
+    # The last replay's full result: what the fix prompt quotes word for word.
+    result: Optional[CheckResult] = None
 
 
 class Unconfirmed(BaseModel):
@@ -106,7 +108,12 @@ async def replay_findings(
             continue
         verdict = verdicts.pop()
         confirmed = Confirmed(
-            finding=finding, check=check, criterion_id=cid, evidence=last.summary(), screenshot=last.screenshot
+            finding=finding,
+            check=check,
+            criterion_id=cid,
+            evidence=last.summary(),
+            screenshot=last.screenshot,
+            result=last,
         )
         if verdict == "could not run":
             report.unconfirmed.append(Unconfirmed(finding=finding, reason=f"the replay could not run: {last.summary()}"))
