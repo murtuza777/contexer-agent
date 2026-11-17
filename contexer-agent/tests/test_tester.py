@@ -290,3 +290,25 @@ async def test_a_bug_must_quote_the_intent_it_breaks_or_be_an_outright_error(bro
     assert "not in the intent" in refusals[1] and "questions" in refusals[1]
     assert "no_errors" in refusals[2]
     assert [f.title for f in result.findings] == ["The count is wrong after completing", "Completing a task throws"]
+
+
+async def test_a_console_line_about_a_refused_request_is_not_a_crash(browsers: Any, tmp_path: Path) -> None:
+    """A server that answers 400 to invalid input is validation working; the browser still logs it.
+
+    On the guestbook fixture that console line was reported as a bug on the correct app. Only an
+    uncaught exception counts as "the app broke"; anything else has to quote the intent.
+    """
+    browser = await browsers()
+    browser._console_errors.append("[error] Failed to load resource: the server responded with a status of 400 (Bad Request)")
+    model = ScriptedChatModel(
+        calls(("expect", {"kind": "no_errors"})),  # e1 fails, on the console line alone
+        calls(_finding("bug", "e1", "Submitting without a message logs a console error", violates="error")),
+        submit(summary="Done."),
+    )
+
+    result = await run_tester(INTENT, model, browser, run_dir=tmp_path / "run")
+
+    assert result.findings == []
+    refused = [m.content for m in model.seen[2] if isinstance(m, ToolMessage)][-1]
+    assert refused.startswith("Error:") and "uncaught exception" in refused
+    assert browser.recorder.observations[0].crashed is False

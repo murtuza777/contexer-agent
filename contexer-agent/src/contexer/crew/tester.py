@@ -67,8 +67,8 @@ class _RecordFinding(BaseModel):
     violates: str = Field(
         "",
         description="For a bug: the exact words of the intent it breaks, copied from the intent. "
-        "Or the single word 'error' when the app threw an exception or logged a console error (the observation "
-        "must be a failed no_errors).",
+        "Or the single word 'error' when the app threw an uncaught exception (the observation must be a failed "
+        "no_errors).",
     )
     description: str = Field("", description="What you did and what you saw, in a sentence or two.")
     severity: Severity = Field("medium", description="high, medium or low.")
@@ -142,7 +142,7 @@ async def run_tester(
                 "states the correct behaviour and fails."
             )
         if kind == "bug":
-            problem = _not_grounded(violates, intent, seen.expectation.kind)
+            problem = _not_grounded(violates, intent, seen.crashed)
             if problem:
                 return problem
         if kind == "works" and not seen.passed:
@@ -207,22 +207,28 @@ def _words(text: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
-def _not_grounded(violates: str, intent: str, expectation_kind: str) -> str:
+def _not_grounded(violates: str, intent: str, crashed: bool) -> str:
     """Why a bug is refused, or '' when it rests on the intent or on an outright error.
 
     A bug is the app not doing what the intent states, or the app throwing. Code checks the first by
-    finding the quoted words in the intent, and the second by the kind of observation.
+    finding the quoted words in the intent, and the second by an uncaught exception behind a failed
+    ``no_errors``. A console line alone does not count: a server that answers 400 to invalid input is
+    validation working, and the browser logs it all the same.
     """
     quote = _words(violates)
     if not quote:
         return (
             "Error: a bug needs `violates`: the exact words of the intent it breaks, or 'error' when the app "
-            "threw an exception or logged a console error."
+            "threw an uncaught exception."
         )
     if quote == "error":
-        if expectation_kind == "no_errors":
+        if crashed:
             return ""
-        return "Error: violates='error' is for a failed no_errors expectation. Point at that observation, or quote the intent."
+        return (
+            "Error: violates='error' is for a failed no_errors with an uncaught exception behind it. A console "
+            "line about a request the server refused (400, 404, 422) is not a crash: refusing bad input is "
+            "often the app working. If the intent says this should succeed, quote the intent; otherwise leave it out."
+        )
     if len(quote) >= 6 and quote in _words(intent):
         return ""
     return (

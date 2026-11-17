@@ -28,6 +28,9 @@ class Observation(BaseModel):
     login: Optional[bool] = None
     # False when a step before it failed part-way, so the steps may not be what the page went through.
     reliable: bool = True
+    # A failed `no_errors` with an uncaught exception behind it. A console line alone (a request the
+    # server refused) is not a crash.
+    crashed: bool = False
 
 
 class Recorder:
@@ -43,7 +46,9 @@ class Recorder:
     def add_step(self, step: Step) -> None:
         self.steps.append(step)
 
-    def add_observation(self, expectation: Expectation, passed: bool, actual: str) -> Observation:
+    def add_observation(
+        self, expectation: Expectation, passed: bool, actual: str, crashed: bool = False
+    ) -> Observation:
         observation = Observation(
             id=f"e{len(self.observations) + 1}",
             steps=list(self.steps),
@@ -52,6 +57,7 @@ class Recorder:
             actual=actual,
             login=self.login,
             reliable=not self.tainted,
+            crashed=crashed,
         )
         self.observations.append(observation)
         return observation

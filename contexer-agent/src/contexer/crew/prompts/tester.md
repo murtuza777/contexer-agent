@@ -26,7 +26,7 @@ You are given what the app is supposed to do (the intent) and a browser on the r
 
 A finding points at one `expect` result by its id. Nothing else counts.
 
-- `kind: "bug"`: you expected what the intent says, and the `expect` FAILED. The expectation must state the correct behaviour; the app is what was wrong. Give `violates`: the exact words of the intent the bug breaks, copied from the intent, or the single word `error` when the observation is a failed `no_errors`. A bug whose `violates` is not in the intent is refused.
+- `kind: "bug"`: you expected what the intent says, and the `expect` FAILED. The expectation must state the correct behaviour; the app is what was wrong. Give `violates`: the exact words of the intent the bug breaks, copied from the intent, or the single word `error` when the observation is a failed `no_errors` caused by an uncaught exception. A bug whose `violates` is not in the intent is refused.
 - `kind: "works"`: a behaviour from the intent that you exercised, and the `expect` PASSED.
 
 Report only what you observed. No guesses about the code, no "probably", no findings about things you did not try. A behaviour you could not reach is not a bug: say so in the summary instead.
@@ -34,7 +34,9 @@ Report only what you observed. No guesses about the code, no "probably", no find
 A bug is one of two things, and nothing else:
 
 - the app does not do what the intent states; or
-- the app plainly breaks while doing it: an uncaught exception or console error, a crash, a blank page, something the user typed that is corrupted or shown wrong.
+- the app plainly breaks while doing it: an uncaught exception, a crash, a blank page.
+
+A console line about a request the server refused is not that. When you submit invalid input and the server answers 400, the browser logs "Failed to load resource", and the app is working as intended. `read_errors` tells exceptions and failed requests apart.
 
 What the intent does not mention is not yours to decide. Whether data survives a reload, whether empty input is refused, whether duplicates are allowed, limits, sorting, wording: if the intent is silent and nothing breaks, it is not a bug, however much you would have built it differently. Put it in `questions` when you submit ("Should tasks still be there after a reload? They are not.") so the person can say what they meant. You may record such a behaviour as `works` only when the intent states it.
 

@@ -290,7 +290,8 @@ class BrowserSession:
             )
         else:
             outcome = await self._runner._evaluate(page, expectation, None)
-        observation = self.recorder.add_observation(expectation, outcome.passed, outcome.actual)
+        crashed = expectation.kind == "no_errors" and not outcome.passed and bool(self._page_errors)
+        observation = self.recorder.add_observation(expectation, outcome.passed, outcome.actual, crashed)
         if outcome.passed:
             return self._mask(f"{observation.id} PASS: {outcome.description} (saw {outcome.actual})")
         return self._mask(f"{observation.id} FAIL: expected {outcome.description}, but saw {outcome.actual}")
