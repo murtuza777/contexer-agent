@@ -46,10 +46,97 @@ contracts are good.
 
 ## Tester suite (measures an agent that explores)
 
-`contexer bench --suite tester --agent stub`, 2026-11-15: 0 of 40 bugs found,
-0 false alarms, every app started. The stub agent reports nothing; this is
-the floor the Tester agent starts from in Phase 1, and the 40/40 above is
-what it is measured against. Latest run per agent:
+The Tester gets each app's one-line goal and the running app, never the
+contract, and its findings are replayed by code
+([method](README.md#the-tester-suite)).
+
+### Azure AI Foundry `gpt-5.4`, 2026-11-17
+
+`contexer bench --suite tester --agent tester`, 40 steps per variant, one run
+per variant (40 bugs, 22 runs on correct or benign code):
+
+| App | Seeded bugs | Found | False alarms on correct code | Rejected | Tokens in |
+| --- | --- | --- | --- | --- | --- |
+| todo | 6 | 5 | 0 / 4 runs | 0 | 2.3M |
+| shop | 6 | 5 | 0 / 3 runs | 0 | 2.9M |
+| signup | 6 | 2 | 0 / 3 runs | 3 | 1.4M |
+| notes | 6 | 5 | 0 / 3 runs | 2 | 2.5M |
+| members | 5 | 1 | 0 / 3 runs | 3 | 1.4M |
+| budget-react | 6 | 3 | 0 / 3 runs | 1 | 2.3M |
+| guestbook-next | 5 | 4 | 0 / 3 runs | 2 | 1.1M |
+| **total** | **40** | **25** | **0 / 22 runs** | 11 | **14.0M** |
+
+Per-app detail and the bugs not found: [tester-results/tester.md](tester-results/tester.md).
+For comparison, the hand-written contracts catch 40 of 40, and contracts a
+free model drafted from the same goals caught 33 of 40 (below).
+
+**What the numbers say.**
+
+- **No false alarm on correct code**, in 22 runs. That is the target the
+  product stands on: a person is never told about a bug that is not there.
+- **25 of 40 found.** An earlier run of six of the apps found 24 of their 35,
+  and this one 21 of the same 35: the 21 are a subset of the 24. The three lost
+  (`members/no-auth-guard`, `signup/submit-reloads-page`,
+  `budget-react/category-ignored`) were reported both times, and the second
+  time with a check the correct app fails too. So the prompt changes between
+  the runs did not raise the number found; what they bought is the bug-must-
+  quote-the-goal rule and the lessons listed below. One run per variant is
+  noisy by a few bugs either way; these are not precise rates.
+- **11 findings were rejected**: they reproduced on the seeded bug, but the
+  correct app fails the same check, so they prove nothing and are not
+  counted. Reading them, most are the right bug with a guessed expectation
+  (a URL containing "sign-in" where the page is `login.html`, the wording of
+  an error the buggy app never shows). A user running `contexer test` has no
+  correct app to compare with and would be shown these as confirmed bugs;
+  for the seeded bugs that would have been right.
+- **Cost.** About 225,000 input tokens per 40-step run, 14.0M for the suite.
+  Azure reports no price per call; read the cost in the portal.
+
+**Why bugs were missed.** Each of the 15 was looked up in the kept
+transcript of this run:
+
+| What the transcript shows | Bugs | Note |
+| --- | --- | --- |
+| Seen, and the check was rejected | `members/sign-out-keeps-session`, `members/no-auth-guard`, `signup/submit-reloads-page`, `budget-react/category-ignored` | The Tester reported the failure with an expectation the correct app fails too (above) |
+| Seen, and accepted as correct | `members/welcome-shows-email`, `members/count-not-pluralised`, `guestbook-next/name-dropped` | It read "Welcome, demo@example.com" as a welcome by name; it saw "1 projects" and expected exactly that; it expected "Alice: Hello world", saw the name missing, and took its own expectation to be the mistake |
+| Seen, and raised as a question | `signup/email-not-validated`, `budget-react/amount-not-cleared` | For the amount field the goal is silent, so a question is the designed outcome. For the email it is a real miss: "not-an-email" was accepted, the goal says invalid input is rejected, and the Tester still asked instead of reporting |
+| No failing expectation in the run | `shop/all-keeps-filter`, `budget-react/filter-stuck`, `notes/pin-not-reordered`, `todo/input-not-cleared`, `signup/password-min-wrong`, `signup/stale-error` | It filtered but never went back to "All", or never tried the case. Three of these six runs ended on the 40-step limit; 17 of all 62 did |
+
+Two of these point at a tension in the Tester's instructions, not at the
+model. Telling it to expect only what it has seen on the page stops guessed
+wording, and also makes it accept what a buggy page shows ("1 projects").
+Telling it that anything the goal does not state is a question stops
+opinions being reported as bugs, and also made it timid about a goal that
+did cover the case. One-line goals leave a lot unsaid; the answers a person
+gives to those questions are what Phase 2 stores and tests against.
+
+**What the live runs changed in the code** (each found in a transcript, each
+now covered by a test):
+
+- an action that landed but reported a timeout left the recording out of
+  step with the page; the recording is now verified or marked unreliable;
+- `reset` returns the page, and a behaviour that acts on one item of a list is
+  tested with two (todo went from 3 of 6 to 5 of 6);
+- behaviour the goal does not mention is a question, and a bug must quote
+  the words of the goal it breaks;
+- the sign-in email was masked as a secret, which hid a page greeting the
+  member by email;
+- a console line for a request the server refused (HTTP 400 on empty input)
+  was reported as a crash on the correct guestbook app: 3 of 3 clean runs in
+  the first attempt at this round. Only an uncaught exception counts now;
+  `guestbook-next` was run again after that fix and is the row above;
+- a Next.js dev server refused to start when it saw the agent session's
+  environment.
+
+**Caveats.** One model, one run per variant, and the Tester's prompt was
+changed between the two runs using what the first one showed. The seeded
+bugs were not used to write expectations, but the prompt has seen these
+apps' failure modes; a held-out app would be the honest next measurement.
+
+### Stub agent, 2026-11-15
+
+`contexer bench --suite tester --agent stub`: 0 of 40 bugs found, 0 false
+alarms, every app started. The stub reports nothing; this is the floor.
 [tester-results/stub.md](tester-results/stub.md).
 
 ## LLM-compiled contracts (measures the compiler)

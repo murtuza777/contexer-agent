@@ -48,7 +48,14 @@ Phase 0 adds the foundations; no agent ships yet.
   anything else goes to `unconfirmed.json` with the reason. Confirmed checks
   form a draft contract.
 - `contexer bench --suite tester --agent tester` measures the Tester on the
-  seeded bugs.
+  seeded bugs. **First numbers, Azure AI Foundry `gpt-5.4`, 2026-11-17: 25
+  of 40 seeded bugs found, 0 false alarms in 22 runs on correct code**, 11
+  findings rejected because the correct app fails their check too, 14.0M
+  input tokens. One run per variant. Detail and the reasons for each miss
+  are in `bench/RESULTS.md`.
+- The tester benchmark counts a finding on a seeded bug that the correct app
+  also fails as **rejected**, apart from a **false alarm** (a finding on
+  correct code).
 - **Chat models that can call tools** (`llm/chat.py`). `chat_model(provider,
   model)` builds a LangChain chat model for every provider in the catalog,
   with the same keys and precedence rules as the drafting model: one class
@@ -107,6 +114,9 @@ Phase 0 adds the foundations; no agent ships yet.
   `no_errors`. This closes the gap that let "I would have built it
   differently" through as a bug.
 - `expect` accepts `count` with `equals`, which is how models write it.
+- A console line about a request the server refused (HTTP 400 on empty
+  input) is no longer a crash. On the guestbook fixture it was reported as a
+  bug on the correct app; only an uncaught exception counts.
 - The tester benchmark survives an agent that fails on one variant; that run
   is reported and not scored.
 - An app started by Contexer no longer inherits the markers of an agent
