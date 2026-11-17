@@ -35,6 +35,16 @@ class ConfirmedFinding(BaseModel):
     screenshot: Optional[str] = None
 
 
+class AgentUsage(BaseModel):
+    """What one of Contexer's agents used in a run."""
+
+    agent: str
+    steps: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: Optional[float] = None
+
+
 class ExplorationResult(BaseModel):
     """Everything ``contexer test`` reports. Only replayed findings are listed."""
 
@@ -61,6 +71,10 @@ class ExplorationResult(BaseModel):
     run_dir: str = ""
     # The draft contract's id, when it was saved among the project's contracts (--save).
     contract: Optional[str] = None
+    # What each agent used; tokens_in, tokens_out and cost_usd above are their sums.
+    agents: list[AgentUsage] = Field(default_factory=list)
+    # The token budget this run had.
+    budget_tokens: Optional[int] = None
     # The stored intent this run tested against (.contexer/intent/<id>.md).
     intent_id: str = ""
     # fix-prompt.md in the run folder, when there is something to fix.

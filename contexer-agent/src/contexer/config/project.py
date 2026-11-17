@@ -56,6 +56,22 @@ class GateSettings(BaseModel):
     judged: Literal["advisory", "block"] = "advisory"
 
 
+class LimitSettings(BaseModel):
+    """What one run of Contexer's own agents may spend.
+
+    ```toml
+    [limits]
+    tokens = 800000     # in and out together; default 1,500,000
+    cost_usd = 2.50     # only where the provider reports prices
+    ```
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    tokens: Optional[int] = Field(default=None, gt=0)
+    cost_usd: Optional[float] = Field(default=None, gt=0)
+
+
 class AgentSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -117,6 +133,7 @@ class ProjectConfig(BaseModel):
     compiler: CompilerSettings = Field(default_factory=CompilerSettings)
     gate: GateSettings = Field(default_factory=GateSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    limits: LimitSettings = Field(default_factory=LimitSettings)
 
 
 class ProjectConfigError(Exception):

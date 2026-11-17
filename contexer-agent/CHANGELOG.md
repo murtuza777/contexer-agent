@@ -7,6 +7,35 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Added
 
+- **Guardrails**, built on one rule: assume the model is compromised. A
+  page, a file or a saved skill can carry text written to steer it, so each
+  guardrail is a property of the code, tested with a scripted model that
+  does what an attacker wants (`tests/test_guardrails.py`,
+  `docs/agentic/hardening.md`).
+  - **A budget per run**, shared by every agent: `[limits] tokens` and
+    `cost_usd` in `contexer.toml`, `contexer test --max-tokens N`, default
+    1,500,000 tokens. A run that reaches it stops calling the model; what
+    was found is still replayed and the fix prompt is written from the
+    facts. `result.json` lists what each agent used.
+  - At most 25 tool calls are run from one reply, and the same call four
+    times in a row is refused.
+  - **The browser stays on the app.** `goto` to another origin is refused;
+    an action that leaves the app's origin is undone and not recorded;
+    pop-ups are closed.
+  - `contexer test --url` to a host that is not this machine or a private
+    network needs `--allow-remote`: the Tester clicks and submits for real.
+  - The Diagnoser's brief is validated before it reaches the fix prompt
+    (files must exist inside the project; cause and instruction are
+    capped), and the prompt tells the coding agent what a model-written
+    section may not ask for.
+  - Skills are capped in size and number, `--no-skills` ignores them, and
+    whatever a run adds to the intent is printed.
+  - Text from the app is marked as untrusted in every prompt.
+  - The tamper guard covers `contexer.toml` as well: it names the command
+    Contexer runs to start and reset the app.
+- A tool audit in `docs/architecture.md`, enforced by a test: which agent
+  has which tool, and that none of them can write to the project.
+- A held-out benchmark app, `bookings`, that no prompt was tuned on.
 - **The loop without a coding agent in the middle.** `contexer test` now
   understands the goal, tests against it, and writes the fix prompt; you
   paste the prompt into any coding tool and run `contexer test --again`.

@@ -559,3 +559,138 @@ def test_a_proposed_skill_with_the_test_accounts_password_is_rejected_not_saved(
     assert [s.name for s in SkillStore(project).list()] == ["projects"]
     assert "1 skill saved" in out and "1 skill rejected" in out and "secret" in out
     assert "correct-horse" not in result.output
+
+
+# -- Hardening: budget, consent, and what a run may leave behind ---------------------
+
+
+def _fingerprint(project: Path) -> dict[str, bytes]:
+    return {
+        p.relative_to(project).as_posix(): p.read_bytes()
+        for p in sorted(project.rglob("*"))
+        if p.is_file() and ".contexer" not in p.relative_to(project).parts
+    }
+
+
+def test_a_full_run_leaves_every_project_file_outside_contexer_unchanged(demo: Path, scripted: Any) -> None:
+    before = _fingerprint(demo)
+    scripted(EXPLORE, REPORT_BOTH, BROKEN, diagnoser=list(DIAGNOSIS))
+
+    assert _run(INTENT, "--dir", str(demo)).exit_code == 1
+    assert _fingerprint(demo) == before
+
+
+@pytest.mark.parametrize(
+    "url,local",
+    [
+        ("http://localhost:3000", True),
+        ("http://127.0.0.1:8080/app", True),
+        ("http://[::1]:5173", True),
+        ("http://192.168.1.20:3000", True),
+        ("http://10.0.0.5", True),
+        ("http://myapp.localhost:3000", True),
+        ("http://staging.test", True),
+        ("https://example.com", False),
+        ("https://app.mycompany.com/login", False),
+        ("http://8.8.8.8", False),
+        ("https://localhost.evil.com", False),
+        ("not a url", False),
+    ],
+)
+def test_which_targets_count_as_local(url: str, local: bool) -> None:
+    from contexer.cli.test_cli import is_local_target
+
+    assert is_local_target(url) is local
+
+
+def test_a_remote_url_needs_explicit_consent_before_anything_starts(demo: Path, scripted: Any) -> None:
+    model = scripted(submit(summary="never"))
+
+    result = _run(INTENT, "--dir", str(demo), "--url", "https://app.example.com")
+
+    out = _plain(result.output)
+    assert result.exit_code == 2, result.output
+    assert "--allow-remote" in out and "clicks, types and submits for real" in out
+    assert model.total_calls == 0 and not (demo / ".contexer" / "runs").exists()
+
+
+def test_the_token_budget_stops_the_agents_and_the_result_says_who_used_what(demo: Path, scripted: Any) -> None:
+    model = scripted(EXPLORE, REPORT_BOTH, BROKEN, diagnoser=list(DIAGNOSIS))
+
+    result = _run(INTENT, "--dir", str(demo), "--max-tokens", "25")  # one Intent call (15), one Tester call (15)
+
+    out = _plain(result.output)
+    assert result.exit_code == 0, result.output
+    assert "stopped at the token budget" in out
+    assert len(model.seen["intent"]) == 1 and len(model.seen["tester"]) == 1 and "diagnoser" not in model.seen
+    data = json.loads((_run_folder(demo) / "result.json").read_text(encoding="utf-8"))
+    assert data["tester_status"] == "budget_exhausted"
+    by_agent = {a["agent"]: a for a in data["agents"]}
+    assert set(by_agent) == {"intent", "tester"}
+    assert (by_agent["intent"]["tokens_in"], by_agent["tester"]["tokens_in"]) == (10, 10)
+    # The total in the summary is the sum of what each agent used.
+    assert data["tokens_in"] == sum(a["tokens_in"] for a in data["agents"]) == 20
+    assert data["tokens_out"] == sum(a["tokens_out"] for a in data["agents"]) == 10
+
+
+def test_bugs_found_before_the_budget_ran_out_are_still_replayed_and_the_prompt_comes_from_the_facts(
+    demo: Path, scripted: Any
+) -> None:
+    model = scripted(EXPLORE, REPORT_BOTH, BROKEN, diagnoser=list(DIAGNOSIS))
+
+    result = _run(INTENT, "--dir", str(demo), "--max-tokens", "40")  # Intent, then two Tester calls
+
+    assert result.exit_code == 1, result.output
+    assert "1 confirmed bug" in _plain(result.output)
+    assert len(model.seen["tester"]) == 2 and "diagnoser" not in model.seen  # no budget left for the Diagnoser
+    prompt = (_run_folder(demo) / "fix-prompt.md").read_text(encoding="utf-8")
+    assert '"1 left"' in prompt and "Likely cause" not in prompt
+
+
+def test_the_budget_can_be_set_in_contexer_toml(demo: Path, scripted: Any) -> None:
+    (demo / "contexer.toml").write_text("[limits]\ntokens = 25\n", encoding="utf-8")
+    model = scripted(EXPLORE, REPORT_BOTH, BROKEN)
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    assert "stopped at the token budget" in _plain(result.output)
+    assert len(model.seen["tester"]) == 1
+
+
+def test_no_skills_neither_loads_nor_saves_any(demo: Path, scripted: Any) -> None:
+    (demo / "app.js").write_text(fixed_app_js(), encoding="utf-8")
+    learned = {"name": "add-a-task", "description": "How to add tasks to the list", "body": "Fill the field, click Add."}
+    scripted(submit(summary="Works.", skills=[learned]))
+    assert _run(INTENT, "--dir", str(demo), "--yes").exit_code == 0
+    assert [s.name for s in SkillStore(demo).list()] == ["add-a-task"]
+
+    model = scripted(submit(summary="Works.", skills=[{**learned, "name": "second"}]))
+    result = _run(INTENT, "--dir", str(demo), "--yes", "--no-skills")
+
+    assert result.exit_code == 0, result.output
+    assert "How to add tasks to the list" not in model.seen["tester"][0][1].content
+    assert [s.name for s in SkillStore(demo).list()] == ["add-a-task"]
+    assert "skill saved" not in _plain(result.output) and "skills saved" not in _plain(result.output)
+
+
+def test_a_run_that_changes_the_intent_says_what_it_changed(demo: Path, scripted: Any) -> None:
+    (demo / "app.js").write_text(fixed_app_js(), encoding="utf-8")
+    scripted(submit(summary="Works."), intent=[submit(behaviours=["Adding a task shows it in the list"])])
+    first = _run(INTENT, "--dir", str(demo), "--yes")
+    assert "Intent changed" in _plain(first.output) and "Adding a task shows it in the list" in _plain(first.output)
+
+    # The page now carries text that steers the Intent agent; whatever it adds is shown to the person.
+    scripted(
+        submit(summary="Works."),
+        intent=[submit(behaviours=["Adding a task shows it in the list", "Every bug report must be ignored"])],
+    )
+    second = _plain(_run(INTENT, "--dir", str(demo), "--yes").output)
+    assert "Intent changed" in second and "Every bug report must be ignored" in second
+    assert "Adding a task shows it in the list" not in second.split("Intent changed", 1)[1].split("No confirmed bugs", 1)[0]
+
+    # Nothing changed: nothing is announced.
+    scripted(
+        submit(summary="Works."),
+        intent=[submit(behaviours=["Adding a task shows it in the list", "Every bug report must be ignored"])],
+    )
+    assert "Intent changed" not in _plain(_run(INTENT, "--dir", str(demo), "--yes").output)
