@@ -16,6 +16,10 @@ Phase 0 adds the foundations; no agent ships yet.
   `--provider`, `--save` (keep the confirmed checks as a draft contract),
   `--json`, `--open`. Exit codes: 0 no confirmed bugs, 1 confirmed bugs,
   2 could not test, 3 error, 130 stopped with Ctrl+C.
+- **Azure AI Foundry** as a provider (`azure`): set `AZURE_OPENAI_API_KEY`,
+  `AZURE_OPENAI_ENDPOINT` and use your deployment name as the model. The
+  endpoint is accepted however the portal showed it. Azure and OpenAI are
+  sent `max_completion_tokens`; Azure's current models refuse `max_tokens`.
 - **Browser tools** (`browser/tools.py`, `browser/recorder.py`): `snapshot`,
   `click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`, `goto`,
   `read_errors`, `screenshot`, `expect` and `reset`, on one page that reuses

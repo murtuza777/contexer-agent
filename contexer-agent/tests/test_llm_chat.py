@@ -40,10 +40,14 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(socket, "getaddrinfo", refuse)
 
 
+AZURE_ENDPOINT = "https://my-resource.services.ai.azure.com/openai/v1"
+
+
 def _config(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> ContexerConfig:
-    """Every provider has a key."""
+    """Every provider has a key, and Azure has its endpoint."""
     for spec in PROVIDERS:
         monkeypatch.setenv(spec.key_env, f"key-for-{spec.id}")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", AZURE_ENDPOINT)
     return ContexerConfig(
         openrouter_api_key="key-for-openrouter",
         anthropic_api_key="key-for-anthropic",
@@ -73,7 +77,8 @@ def test_a_model_is_built_for_every_catalog_provider_without_a_network_call(
     else:
         assert isinstance(model, ChatOpenAI)
         assert model.model_name == "some-model"
-        assert model.openai_api_base == (spec.base_url or "https://gateway.example/v1")
+        expected = {"custom": "https://gateway.example/v1", "azure": AZURE_ENDPOINT}
+        assert model.openai_api_base == (spec.base_url or expected[provider])
         assert model.openai_api_key.get_secret_value() == f"key-for-{provider}"  # type: ignore[union-attr]
     # Tools can be bound to it, which is all an agent needs.
     assert model.bind_tools([_add_numbers_schema()]) is not None
@@ -207,6 +212,74 @@ async def test_the_default_openrouter_model_keeps_its_free_fallback_and_openai_u
     assert body["max_completion_tokens"] == 300 and "max_tokens" not in body
 
 
+# -- Azure AI Foundry ------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "pasted",
+    [
+        "https://my-resource.services.ai.azure.com/openai/v1",
+        "https://my-resource.services.ai.azure.com/openai/v1/",
+        "https://my-resource.services.ai.azure.com/openai/v1/responses",  # the URL the portal shows for one API
+        "https://my-resource.services.ai.azure.com/openai/v1/chat/completions",
+        "https://my-resource.services.ai.azure.com",
+        "https://my-resource.services.ai.azure.com/",
+    ],
+)
+def test_an_azure_endpoint_is_accepted_however_it_was_pasted(pasted: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(monkeypatch)
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", pasted)
+    choice = resolve_model("azure", "gpt-deployment", config)
+    assert choice.base_url == AZURE_ENDPOINT
+    assert (choice.model, choice.api_key) == ("gpt-deployment", "key-for-azure")
+
+
+async def test_azure_is_sent_max_completion_tokens_on_chat_completions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Azure's current models refuse max_tokens (seen live on 2026-11-17)."""
+    client, requests = recorded(httpx.Response(200, json=_TOOL_CALL_REPLY), httpx.Response(200, json=_FINAL_REPLY))
+    model = chat_model("azure", "gpt-deployment", config=_config(monkeypatch), max_tokens=900, http_async_client=client)
+
+    assert await check_tool_calling(model) == "The sum is 42."
+
+    body = json.loads(requests[0].content)
+    assert str(requests[0].url) == f"{AZURE_ENDPOINT}/chat/completions"
+    assert requests[0].headers["authorization"] == "Bearer key-for-azure"
+    assert body["model"] == "gpt-deployment"
+    assert body["max_completion_tokens"] == 900 and "max_tokens" not in body
+
+
+async def test_an_azure_endpoint_given_to_the_custom_provider_is_treated_as_azure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(
+        monkeypatch,
+        compiler_provider="custom",
+        llm_model="gpt-deployment",
+        llm_base_url="https://my-resource.services.ai.azure.com/openai/v1/responses",
+    )
+    client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY))
+    await chat_model("custom", config=config, max_tokens=300, http_async_client=client).ainvoke("hello")
+
+    body = json.loads(requests[0].content)
+    assert str(requests[0].url) == f"{AZURE_ENDPOINT}/chat/completions"
+    assert body["max_completion_tokens"] == 300 and "max_tokens" not in body
+
+
+def test_azure_without_an_endpoint_names_the_variable_to_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(monkeypatch)
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT")
+    with pytest.raises(ValueError, match="AZURE_OPENAI_ENDPOINT"):
+        chat_model("azure", "gpt-deployment", config=config)
+
+
+def test_the_drafting_client_gets_the_same_azure_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(monkeypatch)
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://my-resource.services.ai.azure.com/openai/v1/responses")
+    drafting = create_llm_provider(config, "azure", "gpt-deployment")
+    assert drafting._base_url == AZURE_ENDPOINT  # type: ignore[attr-defined]
+    assert drafting.validate_configuration() == (True, None)
+
+
 # -- models that cannot call tools --------------------------------------------
 
 
@@ -279,7 +352,12 @@ def test_doctor_reports_tool_calling_for_the_model_in_use(monkeypatch: pytest.Mo
 
 # -- live: one real tool call per provider, only when asked for ----------------
 
-_LIVE = [("anthropic", "ANTHROPIC_API_KEY"), ("openai", "OPENAI_API_KEY"), ("openrouter", "OPENROUTER_API_KEY")]
+_LIVE = [
+    ("anthropic", "ANTHROPIC_API_KEY"),
+    ("openai", "OPENAI_API_KEY"),
+    ("openrouter", "OPENROUTER_API_KEY"),
+    ("azure", "AZURE_OPENAI_API_KEY"),
+]
 
 
 @pytest.mark.parametrize("provider,key_env", _LIVE)

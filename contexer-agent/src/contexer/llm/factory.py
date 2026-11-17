@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from contexer.config.settings import ContexerConfig
 
 from contexer.llm.base import LLMProvider
-from contexer.llm.catalog import PROVIDERS, provider_ids, provider_spec
+from contexer.llm.catalog import PROVIDERS, normalize_endpoint, provider_ids, provider_spec
 from contexer.llm.openrouter import OpenAICompatibleProvider, OpenAIProvider, OpenRouterProvider
 
 SUPPORTED_PROVIDERS = tuple(provider_ids())
@@ -50,9 +50,10 @@ def create_llm_provider(config: ContexerConfig, provider: Optional[str] = None, 
 
         return AnthropicProvider(api_key=config.anthropic_api_key, model=model or config.anthropic_model)
     spec = provider_spec(name)  # ValueError for an unknown provider
-    base_url = base_override or spec.base_url
+    base_url = normalize_endpoint(base_override) if base_override else spec.endpoint()
     if not base_url:
-        raise ValueError(f"The '{name}' provider needs a base URL: set CONTEXER_LLM_BASE_URL or run `contexer setup`.")
+        where = f"{spec.base_url_env} or CONTEXER_LLM_BASE_URL" if spec.base_url_env else "CONTEXER_LLM_BASE_URL"
+        raise ValueError(f"The '{name}' provider needs a base URL: set {where} or run `contexer setup`.")
     return OpenAICompatibleProvider.for_spec(spec, model=model or spec.default_model, base_url=base_url)
 
 

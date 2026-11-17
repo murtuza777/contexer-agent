@@ -10,6 +10,7 @@ Endpoints were checked to exist on 2026-10-26.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -35,10 +36,17 @@ class ProviderSpec:
     # Local servers need no key.
     local: bool = False
     note: str = ""
+    # Variable that holds the endpoint, for providers where every user has their own (Azure).
+    base_url_env: str = ""
 
     def key(self) -> Optional[str]:
         value = os.environ.get(self.key_env, "").strip()
         return value or None
+
+    def endpoint(self) -> str:
+        """The provider's API root: the user's own (``base_url_env``) when there is one, else the fixed one."""
+        own = os.environ.get(self.base_url_env, "").strip() if self.base_url_env else ""
+        return normalize_endpoint(own or self.base_url)
 
     def opencode_model(self, model: str) -> Optional[str]:
         """``provider/model`` for OpenCode, or None if OpenCode does not know this provider."""
@@ -76,6 +84,14 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         default_model="gpt-5",
         opencode_id="openai",
         native_agent="codex",
+    ),
+    ProviderSpec(
+        "azure",
+        "Azure AI Foundry",
+        "AZURE_OPENAI_API_KEY",
+        "https://ai.azure.com",
+        base_url_env="AZURE_OPENAI_ENDPOINT",
+        note="your own deployment: set AZURE_OPENAI_ENDPOINT, and use the deployment name as the model",
     ),
     ProviderSpec(
         "google",
@@ -122,6 +138,29 @@ def provider_spec(provider_id: str) -> ProviderSpec:
         raise ValueError(
             f"Unknown provider '{provider_id}'. Choose one of: {', '.join(p.id for p in PROVIDERS)}"
         ) from None
+
+
+_AZURE_HOST = re.compile(r"^https://[^/]+\.azure\.com(/|$)", re.IGNORECASE)
+_API_PATH = re.compile(r"/(responses|chat/completions|models)/?$", re.IGNORECASE)
+
+
+def is_azure(url: str) -> bool:
+    """An Azure AI Foundry or Azure OpenAI endpoint, under whichever provider id it was configured."""
+    return bool(_AZURE_HOST.match(url.strip()))
+
+
+def normalize_endpoint(url: str) -> str:
+    """The API root for ``url``.
+
+    Azure's portal shows the full URL of one API (``.../openai/v1/responses``) and people paste
+    that, or only the resource (``https://name.services.ai.azure.com``). Both become
+    ``.../openai/v1``, the OpenAI-compatible root. Other URLs only lose a trailing slash.
+    """
+    url = url.strip()
+    if not is_azure(url):
+        return url.rstrip("/") if url.count("/") > 2 else url
+    root = _API_PATH.sub("", url).rstrip("/")
+    return root if root.lower().endswith("/openai/v1") else f"{root.split('/openai')[0]}/openai/v1"
 
 
 def provider_ids() -> list[str]:

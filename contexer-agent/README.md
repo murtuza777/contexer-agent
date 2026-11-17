@@ -19,7 +19,7 @@ drafting model, coding agents, OpenRouter's free requests left today and the
 project in `--dir`, and prints the fix for anything missing.
 
 **Models:** `contexer setup` saves a provider, key and models for every
-project in `~/.contexer/` (any of 14 providers: `contexer models --providers`).
+project in `~/.contexer/` (any of 15 providers: `contexer models --providers`).
 Exported variables, a project's `.env` and its `contexer.toml` take precedence.
 Without setup, set one of `ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY` or `OPENROUTER_API_KEY` in the environment or `.env` (see

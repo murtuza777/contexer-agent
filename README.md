@@ -368,7 +368,7 @@ What works today, with tests (307 passing) and CI on Linux:
   - the todo app's counting bug with `--pr`: the agent found and fixed it in
     81 s, Contexer proved 7/7 checks, and committed only `app.js` to a new
     branch and pushed it, in 91 s.
-- Bring your own key (`contexer setup`, `contexer models`) for 14 providers.
+- Bring your own key (`contexer setup`, `contexer models`) for 15 providers.
 - Contracts, approval and hashing; `verify`, `replay`, `contract`, `run`,
   `doctor` and `bench` (including `--live`).
 - Drafts that are tried on the running app before approval.

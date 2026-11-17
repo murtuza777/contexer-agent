@@ -29,7 +29,7 @@ def test_every_provider_has_a_key_variable_and_an_endpoint_or_asks_for_one() -> 
     assert len(ids) == len(set(ids))
     for spec in PROVIDERS:
         assert spec.key_env.endswith("_API_KEY")
-        assert spec.base_url.startswith("http") or spec.id == "custom"
+        assert spec.base_url.startswith("http") or spec.base_url_env or spec.id == "custom"
     assert provider_spec("Groq").id == "groq"
     with pytest.raises(ValueError, match="openrouter"):
         provider_spec("nope")

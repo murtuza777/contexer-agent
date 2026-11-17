@@ -574,6 +574,7 @@ default_model, opencode_id, native_agent, local, note)`:
 | `openrouter` | `OPENROUTER_API_KEY` | openrouter.ai/api/v1 | `nvidia/nemotron-3-ultra-550b-a55b:free` | — |
 | `anthropic` | `ANTHROPIC_API_KEY` | api.anthropic.com/v1 (Anthropic protocol) | `claude-opus-5-5` | Claude Code |
 | `openai` | `OPENAI_API_KEY` | api.openai.com/v1 | `gpt-5` | Codex |
+| `azure` | `AZURE_OPENAI_API_KEY` | your own, from `AZURE_OPENAI_ENDPOINT` (Azure AI Foundry; the model is your deployment name) | — | — |
 | `google` | `GEMINI_API_KEY` | generativelanguage.googleapis.com/v1beta/openai | — | — |
 | `groq` | `GROQ_API_KEY` | api.groq.com/openai/v1 | — | — |
 | `deepseek` | `DEEPSEEK_API_KEY` | api.deepseek.com | — | — |
@@ -613,8 +614,12 @@ models built from the same catalog:
   model instead of guessing.
 - `chat_model(provider, model)`: `ChatAnthropic` for the Anthropic protocol;
   for every other provider one class, `ChatOpenAI`, on Chat Completions with
-  the provider's base URL. Providers other than OpenAI get `max_tokens`
-  (OpenAI renamed it `max_completion_tokens`). OpenRouter keeps its
+  the provider's base URL. OpenAI and Azure get `max_completion_tokens`
+  (Azure's models refuse the old name); every other provider gets
+  `max_tokens`. An Azure endpoint is recognised by its host even under the
+  `custom` provider, and is accepted however it was pasted: the resource
+  URL or the full URL of one API (`.../openai/v1/responses`) both become
+  `.../openai/v1`. OpenRouter keeps its
   attribution headers and, for the default model, its free fallback list.
   Building a model makes no network call, and LangChain is imported only then.
 - `supports_tools(provider, model)`: True, False or None (the provider does
@@ -947,7 +952,8 @@ and prints the fix under each problem.
 
 | Variable | Used for |
 | --- | --- |
-| `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `XAI_API_KEY`, `FIREWORKS_API_KEY`, `CEREBRAS_API_KEY`, `NVIDIA_API_KEY`, `OLLAMA_API_KEY`, `CONTEXER_CUSTOM_API_KEY` | Provider keys |
+| `AZURE_OPENAI_ENDPOINT` | The endpoint of your Azure AI Foundry resource, for the `azure` provider |
+| `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `XAI_API_KEY`, `FIREWORKS_API_KEY`, `CEREBRAS_API_KEY`, `NVIDIA_API_KEY`, `OLLAMA_API_KEY`, `CONTEXER_CUSTOM_API_KEY` | Provider keys |
 | `CODEX_API_KEY` | Codex in CI |
 | `CONTEXER_LLM_PROVIDER`, `CONTEXER_LLM_MODEL`, `CONTEXER_LLM_BASE_URL` | Drafting provider, and its model and URL (paired rule) |
 | `OPENROUTER_MODEL`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, `ANTHROPIC_MODEL` | Per-provider model overrides |

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from contexer.config.settings import DEFAULT_OPENROUTER_MODEL, OPENROUTER_FREE_ROUTER, ContexerConfig, load_config
 from contexer.llm import discovery
 from contexer.llm.base import LLMAuthenticationError, LLMError, sanitize_sensitive_text
-from contexer.llm.catalog import ProviderSpec, provider_spec
+from contexer.llm.catalog import ProviderSpec, is_azure, normalize_endpoint, provider_spec
 
 if TYPE_CHECKING:
     import httpx
@@ -73,11 +73,10 @@ def resolve_model(provider: str, model: Optional[str] = None, config: Optional[C
     else:
         api_key = spec.key() or ("local" if spec.local else None)
         chosen = chosen or spec.default_model
-        base_url = base_override or spec.base_url
+        base_url = normalize_endpoint(base_override) if base_override else spec.endpoint()
         if not base_url:
-            raise ValueError(
-                f"The '{spec.id}' provider needs a base URL: set CONTEXER_LLM_BASE_URL or run `contexer setup`."
-            )
+            where = f"{spec.base_url_env} or CONTEXER_LLM_BASE_URL" if spec.base_url_env else "CONTEXER_LLM_BASE_URL"
+            raise ValueError(f"The '{spec.id}' provider needs a base URL: set {where} or run `contexer setup`.")
     if not chosen:
         raise LLMError(f"No model chosen for {spec.label}: pass one, or run `contexer setup`.")
     if not api_key or not api_key.strip():
@@ -126,8 +125,9 @@ def chat_model(
         extras["http_async_client"] = http_async_client
     if max_tokens:
         extras["max_tokens"] = max_tokens
-    # OpenAI renamed max_tokens to max_completion_tokens; the other providers still take max_tokens.
-    cls = _openai_class(native=choice.spec.id == "openai")
+    # OpenAI renamed max_tokens to max_completion_tokens, and Azure's models refuse the old name;
+    # the other providers still take max_tokens.
+    cls = _openai_class(native=choice.spec.id in ("openai", "azure") or is_azure(choice.base_url))
     return cls(
         model=choice.model,
         api_key=choice.api_key,  # type: ignore[arg-type]
