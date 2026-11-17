@@ -131,6 +131,10 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Fixed
 
+- **Security: Next.js 16.4.6** in the website and in the `guestbook-next` benchmark fixture. The website
+  was on 16.3.5, inside the range of a critical advisory and several others; its production
+  dependencies now audit clean. The fixture was on 16.4.2 (GHSA-mfr8-8qww-v76h, GHSA-vc7v-qv4w-wrv8).
+  Dependabot now watches npm in the website and both JavaScript fixtures; before, nothing did.
 - The Tester sees the email or user name of the test account again. Every
   value the sign-in typed was masked, which turned "Welcome,
   demo@example.com" into dots and hid a page that greets the member by email
