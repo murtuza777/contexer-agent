@@ -20,8 +20,11 @@ from contexer.contract.models import Contract, slugify
 CONTEXER_DIR = ".contexer"
 CONTRACTS_DIR = "contracts"
 
-# Ignore everything in .contexer/ except this file and the contracts.
-_GITIGNORE = "/*\n!/.gitignore\n!/contracts/\n"
+# Ignore everything in .contexer/ except this file and what says what the project should do:
+# the contracts, the intent and the project skills. Runs and snapshots stay local.
+_GITIGNORE = "/*\n!/.gitignore\n!/contracts/\n!/intent/\n!/skills/\n"
+# What earlier versions wrote. Replaced when found unchanged; left alone when a person edited it.
+_OLD_GITIGNORES = ("/*\n!/.gitignore\n!/contracts/\n",)
 
 
 class ContractError(Exception):
@@ -90,8 +93,8 @@ def ensure_contexer_dir(project_dir: str | Path) -> Path:
     root = Path(project_dir).resolve() / CONTEXER_DIR
     root.mkdir(parents=True, exist_ok=True)
     gitignore = root / ".gitignore"
-    if not gitignore.exists():
-        gitignore.write_text(_GITIGNORE, encoding="utf-8")
+    if not gitignore.exists() or gitignore.read_text(encoding="utf-8").replace("\r\n", "\n") in _OLD_GITIGNORES:
+        gitignore.write_text(_GITIGNORE, encoding="utf-8", newline="\n")
     return root
 
 

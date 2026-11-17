@@ -184,3 +184,26 @@ async def test_stopping_a_run_puts_the_project_back_and_keeps_the_unfinished_wor
     assert result.exit_code == 0, result.output
     assert (project / "app.js").read_text(encoding="utf-8") == GOOD_JS
     assert cli.invoke(app, ["restore", outcome.run_id, "--attempt", "7", "--dir", str(project)]).exit_code == 1
+
+
+async def test_editing_the_intent_refutes_the_run_and_restores_it(project: Path) -> None:
+    """The intent says what "done" means, like the contract: the coding agent may not rewrite it."""
+    intent = project / ".contexer" / "intent" / "todo-basics.md"
+    intent.parent.mkdir(parents=True)
+    intent.write_text("# Todo\n\n## Behaviours\n\n- Completing a task lowers the remaining count\n", encoding="utf-8")
+    original = intent.read_bytes()
+    agent = ScriptedAgent(
+        [
+            {
+                ".contexer/intent/todo-basics.md": "# Todo\n\n## Behaviours\n\n- Anything goes\n",
+                ".contexer/intent/extra.md": "# Extra\n",
+                "app.js": COUNT_BUG_JS,
+            }
+        ]
+    )
+    outcome = await _controller(project, agent).run(_contract(project))
+
+    assert outcome.terminal == "tampered"
+    assert intent.read_bytes() == original
+    assert not (intent.parent / "extra.md").exists()  # a file the agent added is removed
+    assert (project / "app.js").read_text(encoding="utf-8") == GOOD_JS

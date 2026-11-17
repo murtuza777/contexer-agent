@@ -36,6 +36,7 @@ from contexer.checkpoint import ShadowRepo
 from contexer.contract import Contract
 from contexer.contract.models import utc_now
 from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
+from contexer.intent.store import INTENT_DIR
 from contexer.controller.prompts import implement_prompt, repair_prompt
 from contexer.evidence.rundir import RunDir
 from contexer.evidence.report import write_evidence
@@ -227,7 +228,7 @@ class RunController:
                 self.on_event("agent-done", _turn_line(turn, changed))
 
                 if tampered:
-                    attempt.note = f"Agent modified approved contracts: {', '.join(tampered)} (restored)."
+                    attempt.note = f"Agent modified what defines done (contracts or intent): {', '.join(tampered)} (restored)."
                     outcome.terminal, outcome.reason = "tampered", attempt.note
                     break
                 if not turn.ok and not changed:
@@ -442,16 +443,23 @@ class RunController:
 
 
 class _ContractGuard:
-    """Hashes approved contract files and puts them back if an agent edits them."""
+    """Keeps the files that say what "done" means, and puts them back if an agent edits them.
+
+    Those are the contracts and the intent (the written goal, its corrections and its checks). An
+    agent that could rewrite either could make any work pass.
+    """
 
     def __init__(self, project: Path) -> None:
-        self.root = project / CONTEXER_DIR / CONTRACTS_DIR
+        self.base = project / CONTEXER_DIR
         self.saved = self._read()
 
     def _read(self) -> dict[str, bytes]:
-        if not self.root.is_dir():
-            return {}
-        return {p.name: p.read_bytes() for p in sorted(self.root.glob("*.json"))}
+        files: dict[str, bytes] = {}
+        for folder, pattern in ((CONTRACTS_DIR, "*.json"), (INTENT_DIR, "*")):
+            root = self.base / folder
+            if root.is_dir():
+                files.update({f"{folder}/{p.name}": p.read_bytes() for p in sorted(root.glob(pattern)) if p.is_file()})
+        return files
 
     def restore_if_changed(self) -> list[str]:
         current = self._read()
@@ -459,7 +467,7 @@ class _ContractGuard:
             name for name in set(current) | set(self.saved) if current.get(name) != self.saved.get(name)
         )
         for name in touched:
-            path = self.root / name
+            path = self.base / name
             if name in self.saved:
                 path.write_bytes(self.saved[name])
             else:
