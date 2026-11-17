@@ -52,6 +52,8 @@ class Finding(BaseModel):
     login: bool | None = None
     # What the page showed when the Tester looked.
     observed: str = ""
+    # Messages the app was showing at that moment, when the expectation failed.
+    messages: list[str] = Field(default_factory=list)
 
 
 class TesterSummary(BaseModel):
@@ -173,6 +175,7 @@ async def run_tester(
                 expectation=seen.expectation,
                 login=seen.login,
                 observed=seen.actual,
+                messages=list(seen.messages),
             )
         )
         return f"Recorded {kind} from {seen.id}. It will be replayed in a fresh browser before anyone sees it."

@@ -35,6 +35,20 @@ class ConfirmedFinding(BaseModel):
     screenshot: str | None = None
 
 
+class SetAside(BaseModel):
+    """A finding that reproduced but was judged to be the tester's doing, with the reason."""
+
+    title: str
+    reason: str
+
+
+class Explained(BaseModel):
+    """A finding that reproduced while the app was showing its own message. Not asserted as a bug."""
+
+    title: str
+    messages: list[str] = Field(default_factory=list)
+
+
 class AgentUsage(BaseModel):
     """What one of Contexer's agents used in a run."""
 
@@ -52,6 +66,11 @@ class ExplorationResult(BaseModel):
     outcome: Outcome
     bugs: list[ConfirmedFinding] = Field(default_factory=list)
     works: list[ConfirmedFinding] = Field(default_factory=list)
+    # Reproduced, but the app was showing its own message when the check failed (decided by code, no model).
+    # Listed for the person with that message; never asserted as a bug.
+    explained: list[Explained] = Field(default_factory=list)
+    # Reproduced, but set aside by the Challenger as the tester's doing. Shown with the reason, never as bugs.
+    set_aside: list[SetAside] = Field(default_factory=list)
     # Findings that did not reproduce: counted here, detailed in unconfirmed.json, never listed as results.
     unconfirmed: int = 0
     steps: int = 0
@@ -185,6 +204,27 @@ def render_test_report(result: ExplorationResult) -> str:
             _findings("Bugs", "refuted", "✗", result.bugs, "Nothing the tester reported as a bug reproduced."),
             prompt_html,
             _findings("Working behaviours", "verified", "✓", result.works, ""),
+            (
+                '<section class="card reasons"><h2>Set aside</h2><p class="muted">These reproduced, but a second '
+                "look judged them to be the tester's doing, not the app's. Check the reason; if one is a real bug, "
+                "it was wrongly set aside.</p><ul>"
+                + "".join(f"<li><strong>{_e(item.title)}</strong><br>{_e(item.reason)}</li>" for item in result.set_aside)
+                + "</ul></section>"
+                if result.set_aside
+                else ""
+            ),
+            (
+                '<section class="card reasons"><h2>Where the app said why</h2><p class="muted">These reproduced, and '
+                "the app was showing its own message at the time. That usually means the app refused something on "
+                "purpose, so they are not reported as bugs. If the message itself is wrong, it is one.</p><ul>"
+                + "".join(
+                    f"<li><strong>{_e(item.title)}</strong><br>The app showed: {_e('; '.join(item.messages))}</li>"
+                    for item in result.explained
+                )
+                + "</ul></section>"
+                if result.explained
+                else ""
+            ),
             unconfirmed_html,
             questions_html,
             summary_html,

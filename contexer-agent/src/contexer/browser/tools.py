@@ -313,10 +313,13 @@ class BrowserSession:
         else:
             outcome = await self._runner.evaluate(page, expectation, None)
         crashed = expectation.kind == "no_errors" and not outcome.passed and bool(self._page_errors)
-        observation = self.recorder.add_observation(expectation, outcome.passed, outcome.actual, crashed)
+        messages = [] if outcome.passed else await self._visible_messages(page)
+        observation = self.recorder.add_observation(expectation, outcome.passed, outcome.actual, crashed, messages)
         if outcome.passed:
             return self._mask(f"{observation.id} PASS: {outcome.description} (saw {outcome.actual})")
-        return self._mask(f"{observation.id} FAIL: expected {outcome.description}, but saw {outcome.actual}")
+        # An app that refuses something usually says why; a tester who misses that reports a bug that is not one.
+        showing = f" The page is showing: {'; '.join(messages)}" if messages else ""
+        return self._mask(f"{observation.id} FAIL: expected {outcome.description}, but saw {outcome.actual}.{showing}")
 
     async def read_errors(self) -> str:
         """Uncaught exceptions, console errors and failed network requests since the page was fresh."""
@@ -454,6 +457,19 @@ class BrowserSession:
             return await target.first.input_value(timeout=1000) == step.value
         except Exception:
             return False
+
+    async def _visible_messages(self, page: Page) -> list[str]:
+        """What the app is telling the user right now: the text of its visible alerts."""
+        try:
+            alerts = page.get_by_role("alert")
+            texts = [
+                " ".join((await alerts.nth(i).inner_text(timeout=500)).split())
+                for i in range(min(await alerts.count(), 5))
+                if await alerts.nth(i).is_visible()
+            ]
+        except Exception:
+            return []
+        return [text[:200] for text in texts if text][:3]
 
     def _on_app(self, url: str) -> bool:
         return urlparse(url).scheme in ("http", "https") and _origin(url) == self._origin

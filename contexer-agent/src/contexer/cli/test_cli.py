@@ -44,12 +44,20 @@ from contexer.cli.gate_cli import DirOption, UrlOption
 from contexer.contract import ContractStore
 from contexer.contract.models import utc_now
 from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
+from contexer.crew.challenger import challenge
 from contexer.crew.diagnoser import Failure, diagnose, fix_prompt
 from contexer.crew.intent import Question, run_intent
 from contexer.crew.tester import DEFAULT_MAX_STEPS, run_tester
 from contexer.crew.transcript import environment_secrets
 from contexer.evidence import RunDir
-from contexer.evidence.test_report import AgentUsage, ConfirmedFinding, ExplorationResult, write_test_evidence
+from contexer.evidence.test_report import (
+    AgentUsage,
+    ConfirmedFinding,
+    Explained,
+    ExplorationResult,
+    SetAside,
+    write_test_evidence,
+)
 from contexer.gate.session import DEV_SERVER_TIMEOUT_SCALE, VerificationSession
 from contexer.intent.store import IntentSpec, IntentStore, SavedCheck
 from contexer.llm.base import LLMError
@@ -448,6 +456,21 @@ class _Job:
                 artifacts_dir=self.run_dir.path / "replay",
                 timeout_scale=self.scale,
             )
+        # Decided by code, with no model: a check that failed while the app was showing its own message is not
+        # asserted as a bug. The app most likely refused on purpose and said so; a person sees it with the message.
+        result.explained = [
+            Explained(title=item.finding.title, messages=item.finding.messages) for item in report.bugs if item.finding.messages
+        ]
+        report.bugs = [item for item in report.bugs if not item.finding.messages]
+        if report.bugs:
+            # Replay shows that a bug's steps end badly, not why. A second look sets aside the ones that are the
+            # tester's doing; it can only remove, and what it removes is shown with the reason.
+            with self.console.status("[dim]Challenging the confirmed bugs...[/dim]"):
+                challenged = await challenge(report.bugs, spec.as_text(), chat, run_dir=self.run_dir.path, budget=self.budget)
+            if challenged.status != "skipped":
+                self._spent("challenger", challenged.steps, challenged.tokens_in, challenged.tokens_out, challenged.cost_usd)
+            report.bugs = challenged.standing
+            result.set_aside = [SetAside(title=item.finding.title, reason=reason) for item, reason in challenged.set_aside]
         result.bugs = [_confirmed(item) for item in report.bugs]
         result.works = [*carried_works, *[_confirmed(item) for item in report.works]]
         result.unconfirmed = len(report.unconfirmed)
@@ -747,6 +770,28 @@ def render_test_result(console: Console, result: ExplorationResult) -> None:
         term.section(console, f"{count} working behaviour{'s' if count != 1 else ''} confirmed")
         for works in result.works:
             console.print(f"  {term.mark('pass')} {escape(works.title)}")
+
+    if result.explained:
+        count = len(result.explained)
+        term.section(
+            console,
+            f"{count} finding{'s' if count != 1 else ''} where the app said why",
+            "reproduced, but the app was showing a message; not reported as bugs unless the message is wrong",
+        )
+        for explained in result.explained:
+            console.print(f"  {term.mark('open')} {escape(explained.title)}")
+            console.print(f"      [dim]the app showed: {escape('; '.join(explained.messages))}[/]")
+
+    if result.set_aside:
+        count = len(result.set_aside)
+        term.section(
+            console,
+            f"{count} finding{'s' if count != 1 else ''} set aside",
+            "reproduced, but judged to be the tester's doing; say so if one is a real bug",
+        )
+        for item in result.set_aside:
+            console.print(f"  {term.mark('open')} {escape(item.title)}")
+            console.print(f"      [dim]{escape(item.reason)}[/]")
 
     if result.questions:
         term.section(console, "Not settled by the intent", "questions for you, not bugs; answer one with --correct")

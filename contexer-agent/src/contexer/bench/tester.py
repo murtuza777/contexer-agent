@@ -61,6 +61,10 @@ class Exploration(BaseModel):
     """What an agent reports after testing one app."""
 
     findings: list[Finding] = Field(default_factory=list)
+    # Findings not reported because the app was showing its own message when the check failed.
+    explained: int = 0
+    # Findings the agent's own second look set aside before reporting.
+    set_aside: int = 0
     steps: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
@@ -147,13 +151,26 @@ class LiveTester:
 
             self.keep_dir.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(tested.transcript, self.keep_dir / f"{self.variant_label or run.run_id}.jsonl")
-        bugs = [Finding(title=f.title, check=freeze(f), detail=f.description) for f in tested.findings if f.kind == "bug"]
+        # The product shows a bug only after its Challenger has looked at it, so that is what is measured.
+        from contexer.browser.freeze import Confirmed
+        from contexer.crew.challenger import challenge
+
+        candidates = [f for f in tested.findings if f.kind == "bug"]
+        explained = [f for f in candidates if f.messages]  # the app said why: not asserted as a bug
+        reported = [
+            Confirmed(finding=f, check=freeze(f), criterion_id=f"finding-{n}")
+            for n, f in enumerate((f for f in candidates if not f.messages), 1)
+        ]
+        challenged = await challenge(reported, goal, model, run_dir=run.path)  # type: ignore[arg-type]
+        bugs = [Finding(title=c.finding.title, check=c.check, detail=c.finding.description) for c in challenged.standing]
         error = "" if tested.status == "ok" else f"the tester ended with {tested.status}: {tested.error}"
         return Exploration(
             findings=bugs,
             steps=tested.steps,
-            tokens_in=tested.tokens_in,
-            tokens_out=tested.tokens_out,
+            set_aside=len(challenged.set_aside),
+            explained=len(explained),
+            tokens_in=tested.tokens_in + challenged.tokens_in,
+            tokens_out=tested.tokens_out + challenged.tokens_out,
             cost_usd=tested.cost_usd,
             error=error,
         )
@@ -171,6 +188,9 @@ class TesterRun(BaseModel):
     name: str
     repeat: int = 0
     findings: int = 0
+    # Findings not reported as bugs: the app said why, or the agent's Challenger set them aside.
+    explained: int = 0
+    set_aside: int = 0
     # Titles, by what the replay showed.
     real: list[str] = Field(default_factory=list)
     # Correct and benign variants only: a reproduced finding on code that has no bug.
@@ -293,6 +313,8 @@ async def _run_variant(agent: TesterAgent, goal: str, variant: Variant, repeat: 
         return run
 
     run.findings = len(exploration.findings)
+    run.set_aside = exploration.set_aside
+    run.explained = exploration.explained
     run.steps = exploration.steps
     run.tokens_in, run.tokens_out = exploration.tokens_in, exploration.tokens_out
     run.cost_usd = exploration.cost_usd

@@ -29,6 +29,8 @@ class Observation(BaseModel):
     # A failed `no_errors` with an uncaught exception behind it. A console line alone (a request the
     # server refused) is not a crash.
     crashed: bool = False
+    # Messages the app was showing (role=alert) when the expectation failed: often the reason.
+    messages: list[str] = Field(default_factory=list)
 
 
 class Recorder:
@@ -45,7 +47,12 @@ class Recorder:
         self.steps.append(step)
 
     def add_observation(
-        self, expectation: Expectation, passed: bool, actual: str, crashed: bool = False
+        self,
+        expectation: Expectation,
+        passed: bool,
+        actual: str,
+        crashed: bool = False,
+        messages: list[str] | None = None,
     ) -> Observation:
         observation = Observation(
             id=f"e{len(self.observations) + 1}",
@@ -56,6 +63,7 @@ class Recorder:
             login=self.login,
             reliable=not self.tainted,
             crashed=crashed,
+            messages=list(messages or []),
         )
         self.observations.append(observation)
         return observation

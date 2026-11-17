@@ -100,7 +100,12 @@ class AgentScript(BaseChatModel):
     seen: dict[str, list[list[BaseMessage]]] = Field(default_factory=dict)
     model_name: str = "scripted-model"
 
-    _AGENTS = {"You are the Tester": "tester", "You are the Intent agent": "intent", "You are the Diagnoser": "diagnoser"}
+    _AGENTS = {
+        "You are the Tester": "tester",
+        "You are the Intent agent": "intent",
+        "You are the Diagnoser": "diagnoser",
+        "You are the Challenger": "challenger",
+    }
 
     def __init__(self, **queues: Any) -> None:
         super().__init__(queues={name: list(replies) for name, replies in queues.items()})
@@ -133,6 +138,8 @@ class AgentScript(BaseChatModel):
             reply = submit(behaviours=[])
         elif agent == "diagnoser":
             reply = submit()
+        elif agent == "challenger":
+            reply = submit(verdicts=[])
         else:
             raise AssertionError(f"AgentScript received an unexpected {agent} call")
         if isinstance(reply, BaseException):

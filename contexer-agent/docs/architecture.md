@@ -727,6 +727,23 @@ flowchart LR
   codes: `no_bugs` 0, `bugs` 1, `could_not_test` 2 (no model, or the model
   failed before any bug was confirmed), `error` 3 (the app did not start,
   sign-in failed, Chromium missing), 130 after Ctrl+C.
+- **When the app said why.** A failed `expect` records the page's visible
+  `role=alert` messages. A bug whose observation has such a message is not
+  asserted as a bug: the app most likely refused something on purpose and
+  said so. This is decided by code, with no model; the finding is listed
+  with the message (`explained` in `result.json`) for the person to judge,
+  and it is not challenged, diagnosed or saved as a check. It was added
+  after two model-judgement layers (the Tester seeing the message, then the
+  Challenger) each let the same false alarm through on a held-out app.
+- **Challenger** (`crew/challenger.py`). Replay proves that a finding's steps
+  end with its expectation not holding; it cannot tell whose fault that is.
+  After replay, one model call reviews the confirmed bugs against the
+  intent, the steps and what the app was showing (a failed `expect` records
+  the page's visible `role=alert` messages). A finding is set aside only
+  with a `tester_error` verdict and a reason; a verdict on a finding that
+  does not exist, any other verdict, a model error or a spent budget leave
+  every finding standing. Set-aside findings are printed and stored in
+  `result.json` (`set_aside`), not saved as checks, and not diagnosed.
 - **Intent** (`intent/store.py`, `crew/intent.py`). A feature's intent is a
   Markdown file a person can edit: the goal, the behaviours derived from it,
   dated corrections, and assumptions taken without asking. `as_text()` is
@@ -782,7 +799,7 @@ wants (`tests/test_guardrails.py`). The plan is in
 
 | A steered agent tries to | What stops it |
 | --- | --- |
-| Report a bug that is not there | `browser/freeze.py`: a finding that does not reproduce on replay is never shown |
+| Report a bug that is not there | `browser/freeze.py`: a finding that does not reproduce on replay is never shown. `crew/challenger.py`: a second look at each confirmed bug can set it aside as the tester's doing (the steps skipped a condition the intent states, or the app said why it refused); it can only remove, needs a reason, and what it removes is listed with that reason |
 | Spend without limit | `crew/budget.py`: one `Budget` per run, shared by every agent, checked before each model call (`[limits] tokens`, `--max-tokens`, default 1,500,000). At most 25 tool calls run from one reply, and the same call four times in a row is refused |
 | Leave the app and act elsewhere | `browser/tools.py`: `goto` to another origin is refused; an action that leaves the origin is undone, not recorded, and marks the recording unreliable; pop-ups are closed |
 | Click and type on a live site | `contexer test --url` to a host that is not this machine or a private network needs `--allow-remote` |
@@ -804,6 +821,7 @@ less likely, and nothing depends on it.
 | --- | --- | --- |
 | Intent | none (only `submit`) | No. Code writes the intent file from its answer |
 | Tester | `snapshot`, `click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`, `goto`, `read_errors`, `screenshot`, `expect`, `reset`, `record_finding` | Only the app under test, through its own UI, on its own origin. `screenshot` writes a JPEG into the run folder |
+| Challenger | none (only `submit`) | No. It can only set a confirmed bug aside, with a reason |
 | Diagnoser | `read_file`, `grep` | No. Both are read-only and confined |
 
 Only the external coding agent edits the project. A new tool for an agent

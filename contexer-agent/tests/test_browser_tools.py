@@ -330,3 +330,18 @@ def test_only_the_password_of_a_sign_in_is_a_secret_not_the_email() -> None:
     )
     env = {"APP_USER": "ada", "APP_PASSWORD": "s3cret-value"}
     assert credential_secrets(by_reference, env) == ["s3cret-value", "123456"]
+
+
+async def test_a_failed_expect_says_what_the_app_is_telling_the_user(tmp_path: Path) -> None:
+    """An app that refuses something usually says why. The Tester should not have to go looking."""
+    work = _copy("bookings", tmp_path)
+    with open_app(work) as running:
+        async with BrowserSession(running.url) as session:
+            await call(session, "click", target={"role": "button", "name": "Book 09:00"})  # no name typed
+            failed = await call(session, "expect", kind="text", target={"test_id": "slot-0900"}, contains="Booked by")
+            passed = await call(session, "expect", kind="text", target={"test_id": "free-count"}, equals="4 free")
+
+            assert failed.startswith("e1 FAIL") and "The page is showing: Enter your name" in failed
+            assert "The page is showing" not in passed
+            assert session.recorder.observations[0].messages == ["Enter your name"]
+            assert session.recorder.observations[1].messages == []

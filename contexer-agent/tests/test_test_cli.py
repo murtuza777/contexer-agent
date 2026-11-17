@@ -694,3 +694,83 @@ def test_a_run_that_changes_the_intent_says_what_it_changed(demo: Path, scripted
         intent=[submit(behaviours=["Adding a task shows it in the list", "Every bug report must be ignored"])],
     )
     assert "Intent changed" not in _plain(_run(INTENT, "--dir", str(demo), "--yes").output)
+
+
+# -- The Challenger -------------------------------------------------------------------
+
+SET_ASIDE = [submit(verdicts=[{"finding": 1, "verdict": "tester_error", "reason": "The steps never completed the task before checking the count."}])]
+
+
+def test_a_bug_the_challenger_sets_aside_is_not_reported_as_a_bug_and_the_reason_is_shown(demo: Path, scripted: Any) -> None:
+    model = scripted(EXPLORE, REPORT_BOTH, BROKEN, challenger=list(SET_ASIDE))
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    out = _plain(result.output)
+    assert result.exit_code == 0, result.output  # no bug stands
+    assert "No confirmed bugs" in out and "1 finding set aside" in out
+    assert "Completing a task does not lower the count" in out and "never completed the task" in out
+    assert len(model.seen["challenger"]) == 1 and "diagnoser" not in model.seen  # nothing left to diagnose
+    folder = _run_folder(demo)
+    data = json.loads((folder / "result.json").read_text(encoding="utf-8"))
+    assert data["outcome"] == "no_bugs" and data["bugs"] == []
+    assert data["set_aside"] == [
+        {"title": "Completing a task does not lower the count", "reason": "The steps never completed the task before checking the count."}
+    ]
+    assert not (folder / "fix-prompt.md").exists()
+    # A finding that was set aside is not saved as a check to replay with --again.
+    store = IntentStore(demo)
+    assert [(c.source, c.kind) for c in store.load_checks(store.latest().id)] == [("confirmed", "works")]  # type: ignore[union-attr]
+
+
+def test_a_bug_that_stands_is_reported_exactly_as_before(demo: Path, scripted: Any) -> None:
+    model = scripted(EXPLORE, REPORT_BOTH, BROKEN, challenger=[submit(verdicts=[{"finding": 1, "verdict": "stands", "reason": ""}])])
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    assert result.exit_code == 1 and "1 confirmed bug" in _plain(result.output)
+    assert "set aside" not in _plain(result.output)
+    assert len(model.seen["challenger"]) == 1
+    assert "challenger" in {a["agent"] for a in json.loads((_run_folder(demo) / "result.json").read_text(encoding="utf-8"))["agents"]}
+
+
+# -- When the app said why -------------------------------------------------------------
+
+BOOKINGS = Path(__file__).resolve().parents[1] / "bench" / "fixtures" / "bookings" / "app"
+BOOKINGS_INTENT = "Visitors can book a free time slot with their name; a name is required"
+# The measured false alarm, as a script: book one slot, click a second with the name field now empty.
+SECOND_BOOKING = [
+    calls(
+        ("fill", {"target": {"label": "Your name"}, "value": "Bob"}),
+        ("click", {"target": {"role": "button", "name": "Book 09:00"}}),
+        ("click", {"target": {"role": "button", "name": "Book 10:00"}}),
+        ("expect", {"kind": "text", "target": {"test_id": "slot-1000"}, "contains": "Booked by Bob"}),
+    ),
+    calls(("record_finding", {"kind": "bug", "title": "Booking a second slot fails after the first booking", "observation": "e1",
+                              "violates": "Visitors can book a free time slot with their name"})),  # fmt: skip
+    submit(summary="The second booking failed."),
+]
+
+
+def test_a_failure_the_app_explained_is_listed_for_the_person_and_not_asserted_as_a_bug(tmp_path: Path, scripted: Any) -> None:
+    """Decided by code: the app's own message was on the page when the check failed. No model is asked."""
+    project = tmp_path / "bookings"
+    shutil.copytree(BOOKINGS, project, ignore=shutil.ignore_patterns("runs", ".contexer"))
+    model = scripted(*SECOND_BOOKING)
+
+    result = _run(BOOKINGS_INTENT, "--dir", str(project), "--yes")
+
+    out = _plain(result.output)
+    assert result.exit_code == 0, result.output
+    assert "No confirmed bugs" in out
+    assert "1 finding where the app said why" in out
+    assert "Booking a second slot fails after the first booking" in out and "Enter your name" in out
+    assert "challenger" not in model.seen and "diagnoser" not in model.seen  # nothing was left to judge or diagnose
+    folder = _run_folder(project)
+    data = json.loads((folder / "result.json").read_text(encoding="utf-8"))
+    assert data["outcome"] == "no_bugs" and data["bugs"] == []
+    assert data["explained"] == [
+        {"title": "Booking a second slot fails after the first booking", "messages": ["Enter your name"]}
+    ]
+    assert not (folder / "fix-prompt.md").exists()
+    assert "where the app said why" in (folder / "report.html").read_text(encoding="utf-8").lower()
