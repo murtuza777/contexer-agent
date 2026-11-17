@@ -259,7 +259,7 @@ class _Workspace:
                 if child.name in _KEPT:
                     continue
                 if child.is_dir():
-                    shutil.rmtree(child)
+                    _remove_tree(child)
                 else:
                     child.unlink()
         shutil.copytree(self.source, self.path, ignore=_IGNORED, dirs_exist_ok=True)
@@ -276,6 +276,24 @@ class _Workspace:
 
     def __exit__(self, *exc: object) -> None:
         self._tmp.cleanup()
+
+
+def _remove_tree(path: Path, attempts: int = 5) -> None:
+    """Remove a folder of the last variant, even when a dev server that just stopped is still writing to it.
+
+    A stopped Next.js process can go on writing its cache for a moment, and removal then fails with
+    "directory not empty". Try again a few times; what still cannot be removed is build output that the
+    next start overwrites.
+    """
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except OSError:
+            if attempt == attempts - 1:
+                shutil.rmtree(path, ignore_errors=True)
+                return
+            time.sleep(0.3)
 
 
 async def _compile_live(
