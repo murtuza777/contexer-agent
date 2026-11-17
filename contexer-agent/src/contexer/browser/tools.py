@@ -318,7 +318,8 @@ class BrowserSession:
             return f"Error: the app did not load again: {_short(exc)}"
         self.recorder.start_over(login=False if signed_out else None)
         who = "signed out" if signed_out else ("signed in" if self.storage_state is not None else "a new visitor")
-        return f"ok: a fresh page at the start of the app, {who}. Earlier steps no longer apply."
+        # The page comes with the answer: a model that has to ask for it spends a step on every reset.
+        return f"ok: a fresh page at the start of the app, {who}. Earlier steps no longer apply.\n{await self.snapshot()}"
 
     def tools(self) -> list[BaseTool]:
         """The tools, in the order a model is shown them."""
@@ -372,7 +373,7 @@ class BrowserSession:
             make(read_errors, "read_errors", "List uncaught exceptions, console errors and failed network requests since the page was fresh.", _NoArgs),
             make(screenshot, "screenshot", "Save a picture of the page for the report.", _NoArgs),
             make(expect, "expect", "Check one thing about the page right now and get PASS or FAIL with what was actually there. The result has an id (e1, e2, ...) that a finding refers to.", _Expect),
-            make(reset, "reset", "Start again from a fresh page with the app's data reset. Do this before testing a new behaviour, so its steps start from a known state.", _Reset),
+            make(reset, "reset", "Start again from a fresh page with the app's data reset. Do this before testing a new behaviour, so its steps start from a known state. It returns the fresh page, so no snapshot is needed after it.", _Reset),
         ]  # fmt: skip
 
     # -- helpers --------------------------------------------------------------

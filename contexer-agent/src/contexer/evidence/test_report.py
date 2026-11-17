@@ -52,6 +52,8 @@ class ExplorationResult(BaseModel):
     tester_status: str = ""
     tester_error: str = ""
     summary: str = ""
+    # Behaviour the intent does not settle, as the tester's questions. Not findings.
+    questions: list[str] = Field(default_factory=list)
     model: str = ""
     app_url: str = ""
     project_dir: str = ""
@@ -118,6 +120,14 @@ def render_test_report(result: ExplorationResult) -> str:
         if result.summary
         else ""
     )
+    questions_html = (
+        '<section class="card reasons"><h2>Not settled by the intent</h2><p class="muted">The tester saw these and the '
+        "intent does not say which is right. They are questions for you, not bugs.</p><ul>"
+        + "".join(f"<li>{_e(q)}</li>" for q in result.questions)
+        + "</ul></section>"
+        if result.questions
+        else ""
+    )
     body = "\n".join(
         part
         for part in (
@@ -137,6 +147,7 @@ def render_test_report(result: ExplorationResult) -> str:
             _findings("Bugs", "refuted", "✗", result.bugs, "Nothing the tester reported as a bug reproduced."),
             _findings("Working behaviours", "verified", "✓", result.works, ""),
             unconfirmed_html,
+            questions_html,
             summary_html,
             f'<footer class="card"><p class="muted">Contexer {_e(result.contexer_version)}. Every finding listed '
             "here was confirmed by replay: its recorded steps were run again in a fresh browser by code, with no "

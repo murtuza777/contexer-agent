@@ -217,6 +217,7 @@ async def _explore_and_replay(
     result.steps, result.tool_calls = tested.steps, tested.tool_calls
     result.tokens_in, result.tokens_out, result.cost_usd = tested.tokens_in, tested.tokens_out, tested.cost_usd
     result.tester_status, result.tester_error, result.summary = tested.status, tested.error, tested.summary
+    result.questions = tested.questions
 
     with console.status(f"[dim]Replaying {len(tested.findings)} finding(s) in a fresh browser...[/dim]"):
         report = await replay_findings(
@@ -292,6 +293,10 @@ def render_test_result(console: Console, result: ExplorationResult) -> None:
         term.section(console, f"{count} working behaviour{'s' if count != 1 else ''} confirmed")
         for works in result.works:
             console.print(f"  {term.mark('pass')} {escape(works.title)}")
+
+    if result.questions:
+        term.section(console, "Not settled by the intent", "questions for you, not bugs")
+        term.bullets(console, [escape(q) for q in result.questions])
 
     stopped = _STOPPED_EARLY.get(result.tester_status)
     if result.outcome == "bugs" and result.tester_status == "model_error":

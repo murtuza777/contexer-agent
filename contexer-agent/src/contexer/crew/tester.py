@@ -53,6 +53,10 @@ class TesterSummary(BaseModel):
     """The Tester's closing note. Findings are recorded with `record_finding`, not here."""
 
     summary: str = Field(description="Two or three sentences: what you covered, and anything you could not test.")
+    questions: list[str] = Field(
+        default_factory=list,
+        description="Behaviour you saw that the intent does not settle, each as one question for the person. Not bugs.",
+    )
 
 
 class _RecordFinding(BaseModel):
@@ -70,6 +74,8 @@ class TesterResult:
     status: AgentStatus
     findings: list[Finding] = field(default_factory=list)
     summary: str = ""
+    # What the Tester saw that the intent does not settle. For the person to answer; never a result.
+    questions: list[str] = field(default_factory=list)
     steps: int = 0
     tool_calls: int = 0
     tokens_in: int = 0
@@ -164,10 +170,12 @@ async def run_tester(
     task = _task(intent, await browser.snapshot(), existing_checks)
     result = await run_agent(spec, model, tools, task, run_dir=run_dir, secrets=browser.secrets)
     summary = result.output.summary if isinstance(result.output, TesterSummary) else ""
+    questions = [q.strip() for q in result.output.questions if q.strip()] if isinstance(result.output, TesterSummary) else []
     return TesterResult(
         status=result.status,
         findings=findings,
         summary=summary,
+        questions=questions,
         steps=result.steps,
         tool_calls=result.tool_calls,
         tokens_in=result.tokens_in,

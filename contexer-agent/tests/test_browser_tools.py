@@ -179,6 +179,7 @@ async def test_reset_gives_a_fresh_page_and_starts_a_new_recording(todo: Browser
     result = await call(todo, "reset")
 
     assert result.startswith("ok")
+    assert 'button "Add"' in result  # the fresh page comes with the answer
     assert todo.recorder.steps == []
     # What was observed before the reset keeps the steps that led to it.
     assert len(todo.recorder.observations[0].steps) == 2

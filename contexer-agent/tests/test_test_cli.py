@@ -76,7 +76,7 @@ def _run_folder(project: Path) -> Path:
 
 
 def test_the_seeded_bug_is_reported_as_confirmed_with_exit_code_1(demo: Path, scripted: Any) -> None:
-    scripted(EXPLORE, REPORT_BOTH, submit(summary="Completing is broken."))
+    scripted(EXPLORE, REPORT_BOTH, submit(summary="Completing is broken.", questions=["Should tasks survive a reload?"]))
 
     result = _run(INTENT, "--dir", str(demo))
 
@@ -87,9 +87,12 @@ def test_the_seeded_bug_is_reported_as_confirmed_with_exit_code_1(demo: Path, sc
     assert "1 working behaviour confirmed" in out and "Adding a task shows it in the list" in out
     assert "0 unconfirmed" in out
     assert "3 steps" in out
+    # What the intent does not settle is shown as a question, apart from the bugs.
+    assert "Not settled by the intent" in out and "Should tasks survive a reload?" in out
 
     folder = _run_folder(demo)
     data = json.loads((folder / "result.json").read_text(encoding="utf-8"))
+    assert data["questions"] == ["Should tasks survive a reload?"]
     assert data["outcome"] == "bugs" and data["intent"] == INTENT
     assert [b["title"] for b in data["bugs"]] == ["Completing a task does not lower the count"]
     assert data["bugs"][0]["severity"] == "high" and data["bugs"][0]["evidence"]

@@ -20,6 +20,14 @@ Phase 0 adds the foundations; no agent ships yet.
   `AZURE_OPENAI_ENDPOINT` and use your deployment name as the model. The
   endpoint is accepted however the portal showed it. Azure and OpenAI are
   sent `max_completion_tokens`; Azure's current models refuse `max_tokens`.
+- The Tester reports behaviour the intent does not mention (does data
+  survive a reload?) as **questions**, shown apart from the bugs. A live run
+  had reported one as a bug; only a broken stated behaviour or an outright
+  failure is a bug.
+- `reset` returns the fresh page, so the Tester does not spend a step asking
+  for it, and the Tester tests a behaviour that acts on one item of a list
+  with at least two items. With one task in the list, a delete that removes
+  the wrong task looked correct.
 - **Browser tools** (`browser/tools.py`, `browser/recorder.py`): `snapshot`,
   `click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`, `goto`,
   `read_errors`, `screenshot`, `expect` and `reset`, on one page that reuses
