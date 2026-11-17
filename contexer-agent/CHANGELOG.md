@@ -98,6 +98,17 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Fixed
 
+- The Tester sees the email or user name of the test account again. Every
+  value the sign-in typed was masked, which turned "Welcome,
+  demo@example.com" into dots and hid a page that greets the member by email
+  instead of by name. Only passwords, tokens and one-time codes are masked.
+- A bug must say which words of the intent it breaks (`violates`), and code
+  checks that the quote is in the intent; the one exception is a failed
+  `no_errors`. This closes the gap that let "I would have built it
+  differently" through as a bug.
+- `expect` accepts `count` with `equals`, which is how models write it.
+- The tester benchmark survives an agent that fails on one variant; that run
+  is reported and not scored.
 - An app started by Contexer no longer inherits the markers of an agent
   session (`AI_AGENT`, `CLAUDECODE`, `CLAUDE_CODE_*`). Started from a coding
   agent's terminal, Next.js stopped `next dev` to show an upgrade notice and

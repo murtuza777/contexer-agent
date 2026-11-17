@@ -36,7 +36,8 @@ EXPLORE = calls(
 REPORT_BOTH = calls(
     ("record_finding", {"kind": "works", "title": "Adding a task shows it in the list", "observation": "e1"}),
     ("record_finding", {"kind": "bug", "title": "Completing a task does not lower the count", "observation": "e2",
-                        "severity": "high", "description": "The count stays at 1 left."}),
+                        "severity": "high", "description": "The count stays at 1 left.",
+                        "violates": "the remaining count stays correct"}),
 )  # fmt: skip
 # On the fixed app the second expectation passes, so the honest report is two working behaviours.
 REPORT_WORKING = calls(

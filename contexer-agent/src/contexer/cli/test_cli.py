@@ -22,7 +22,7 @@ from rich.markup import escape
 from contexer import __version__
 from contexer.appserver import AppStartError, RunningApp, open_app
 from contexer.browser.freeze import Confirmed, draft_contract, freeze, replay_findings, write_unconfirmed
-from contexer.browser.tools import BrowserSession
+from contexer.browser.tools import BrowserSession, credential_secrets
 from contexer.cli import term
 from contexer.cli.gate_cli import DirOption, UrlOption
 from contexer.contract import ContractStore
@@ -32,7 +32,7 @@ from contexer.evidence import RunDir
 from contexer.evidence.test_report import ConfirmedFinding, ExplorationResult, write_test_evidence
 from contexer.gate.session import DEV_SERVER_TIMEOUT_SCALE, VerificationSession
 from contexer.llm.base import LLMError
-from contexer.verification.runner import CheckRunner, _typed_values
+from contexer.verification.runner import CheckRunner
 from contexer.verification.verifier import Verifier
 
 if TYPE_CHECKING:
@@ -196,7 +196,7 @@ async def _explore_and_replay(
     existing = [
         criterion.description for contract in store.list() if contract.status == "approved" for criterion in contract.criteria
     ]
-    credentials = _typed_values(session.auth.as_check()) if session.auth is not None else []
+    credentials = credential_secrets(session.auth.as_check()) if session.auth is not None else []
 
     browser = BrowserSession(app.url, run_dir=run.path, storage_state=state, reset=reset, timeout_scale=scale)
     try:

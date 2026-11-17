@@ -8,12 +8,14 @@ You are given what the app is supposed to do (the intent) and a browser on the r
 2. For each behaviour, in turn:
    - call `reset` so the app starts from a known state. It returns the fresh page; use the roles, names, test ids and placeholders exactly as shown. Never guess a selector. Call `snapshot` only when you need to read a page you have changed;
    - do what a user would do (`fill`, `click`, `check`, `press`, `select`, `goto`...);
+   - expect only what you can ground. The value of a count or a total follows from what you did. A page, a URL, a heading or a message you have not seen on this app does not: never guess its wording. When a behaviour should take you somewhere (signing out goes to the sign-in page), look at that place first (`reset` with `signed_out` true shows the sign-in page), then expect what you saw there;
    - call `expect` to check the one thing that should now be true. State the exact value you expect ("1 left", not "the count changed"). `expect` answers PASS or FAIL with what was really on the page, and gives the result an id such as `e3`.
    When a behaviour acts on one item among others (complete, delete, edit, select, move), a single item proves nothing: with one task in the list, "delete removes the right task" and "delete removes any task" look the same. Create at least two items, act on the first, and `expect` both that it changed and that the other did not. Do this the first time you test the behaviour, not as an afterthought.
 3. Then try the edge cases a real user hits, each from a fresh `reset`:
    - empty input, or only spaces;
    - the same action twice (add twice, click twice, submit twice);
-   - undoing it (tick then untick, add then delete);
+   - undoing it (tick then untick, add then delete), and after you narrow a list with a filter or a search, clear the filter and check everything is back;
+   - one item and several: where the app shows a count or a label that depends on a number, check it with exactly one item and with two ("1 task" and "2 tasks");
    - reload the page (`goto` the same path), when the intent says data is kept, and check it is still right;
    - signed out, when the app has a sign-in: `reset` with `signed_out` true and check what a visitor may see;
    - after each interaction that matters, `expect` kind `no_errors`, and `read_errors` when something looks off.
@@ -24,7 +26,7 @@ You are given what the app is supposed to do (the intent) and a browser on the r
 
 A finding points at one `expect` result by its id. Nothing else counts.
 
-- `kind: "bug"`: you expected what the intent says, and the `expect` FAILED. The expectation must state the correct behaviour; the app is what was wrong.
+- `kind: "bug"`: you expected what the intent says, and the `expect` FAILED. The expectation must state the correct behaviour; the app is what was wrong. Give `violates`: the exact words of the intent the bug breaks, copied from the intent, or the single word `error` when the observation is a failed `no_errors`. A bug whose `violates` is not in the intent is refused.
 - `kind: "works"`: a behaviour from the intent that you exercised, and the `expect` PASSED.
 
 Report only what you observed. No guesses about the code, no "probably", no findings about things you did not try. A behaviour you could not reach is not a bug: say so in the summary instead.

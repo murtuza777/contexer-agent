@@ -15,6 +15,7 @@ one in a fresh browser, and only what reproduces is shown to anyone.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from pathlib import Path
 from typing import Literal, Optional, Sequence
 
@@ -63,6 +64,12 @@ class _RecordFinding(BaseModel):
     kind: FindingKind = Field(description='"bug": the expect FAILED. "works": the expect PASSED.')
     title: str = Field(description="One line a person can act on, e.g. 'Completing a task does not lower the count'.")
     observation: str = Field(description="The id of the expect result that shows it, e.g. 'e3'.")
+    violates: str = Field(
+        "",
+        description="For a bug: the exact words of the intent it breaks, copied from the intent. "
+        "Or the single word 'error' when the app threw an exception or logged a console error (the observation "
+        "must be a failed no_errors).",
+    )
     description: str = Field("", description="What you did and what you saw, in a sentence or two.")
     severity: Severity = Field("medium", description="high, medium or low.")
 
@@ -110,7 +117,12 @@ async def run_tester(
     reported: dict[str, str] = {}
 
     def record_finding(
-        kind: FindingKind, title: str, observation: str, description: str = "", severity: Severity = "medium"
+        kind: FindingKind,
+        title: str,
+        observation: str,
+        violates: str = "",
+        description: str = "",
+        severity: Severity = "medium",
     ) -> str:
         wanted = observation.strip().lower()
         if not wanted:
@@ -129,6 +141,10 @@ async def run_tester(
                 f"Error: {seen.id} passed, so it does not show a bug. Record it as works, or run an expect that "
                 "states the correct behaviour and fails."
             )
+        if kind == "bug":
+            problem = _not_grounded(violates, intent, seen.expectation.kind)
+            if problem:
+                return problem
         if kind == "works" and not seen.passed:
             return f"Error: {seen.id} failed, so it does not show that this works. Record it as a bug if the app is wrong."
         if seen.id in reported:
@@ -184,6 +200,34 @@ async def run_tester(
         duration_seconds=result.duration_seconds,
         error=result.error,
         transcript=result.transcript,
+    )
+
+
+def _words(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _not_grounded(violates: str, intent: str, expectation_kind: str) -> str:
+    """Why a bug is refused, or '' when it rests on the intent or on an outright error.
+
+    A bug is the app not doing what the intent states, or the app throwing. Code checks the first by
+    finding the quoted words in the intent, and the second by the kind of observation.
+    """
+    quote = _words(violates)
+    if not quote:
+        return (
+            "Error: a bug needs `violates`: the exact words of the intent it breaks, or 'error' when the app "
+            "threw an exception or logged a console error."
+        )
+    if quote == "error":
+        if expectation_kind == "no_errors":
+            return ""
+        return "Error: violates='error' is for a failed no_errors expectation. Point at that observation, or quote the intent."
+    if len(quote) >= 6 and quote in _words(intent):
+        return ""
+    return (
+        f"Error: '{violates.strip()}' is not in the intent. Copy the exact words of the intent this breaks. If the "
+        "intent does not say it, it is not a bug: leave it out and put it in `questions` when you submit."
     )
 
 

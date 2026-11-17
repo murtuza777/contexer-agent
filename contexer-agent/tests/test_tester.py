@@ -35,6 +35,8 @@ ADD_AND_COMPLETE = calls(
 
 
 def _finding(kind: str, observation: str, title: str, **extra: Any) -> tuple[str, dict[str, Any]]:
+    if kind == "bug":  # a bug says which words of the intent it breaks
+        extra.setdefault("violates", "the remaining count stays correct")
     return ("record_finding", {"kind": kind, "title": title, "observation": observation, **extra})
 
 
@@ -130,6 +132,9 @@ def test_the_prompt_makes_the_tester_hard_to_satisfy_and_shows_graded_examples()
     for example in ("example 1", "example 2", "example 3", "too vague"):
         assert example in lowered
     assert "record_finding" in prompt and "expect" in prompt
+    # A bug quotes the intent; expectations come from what was seen, never from a guess.
+    assert "violates" in prompt and "never guess" in lowered
+    assert "one item and several" in lowered and "clear the filter" in lowered
     # Acting on one item of a list is tested with two, or it proves nothing.
     assert "at least two items" in lowered
     # What the intent does not mention is a question for the person, not a bug.
@@ -252,3 +257,36 @@ async def test_a_finding_cannot_be_built_on_a_recording_that_a_failed_step_made_
     assert refused.startswith("Error:") and "reset" in refused
     assert [f.title for f in result.findings] == ["The count ignores completed tasks"]
     assert len(result.findings[0].steps) == 3  # from the clean second recording
+
+
+async def test_a_bug_must_quote_the_intent_it_breaks_or_be_an_outright_error(browsers: Any, tmp_path: Path) -> None:
+    """The guard against "I would have built it differently": code checks the quote against the intent."""
+    browser = await browsers("complete-throws")
+    model = ScriptedChatModel(
+        calls(
+            ("fill", {"target": INPUT, "value": "Buy milk"}),
+            ("click", {"target": ADD}),
+            ("check", {"target": {"role": "checkbox", "name": "Complete Buy milk"}}),
+            ("expect", {"kind": "text", "target": COUNT, "equals": "0 left"}),  # e1 fails
+            ("expect", {"kind": "no_errors"}),  # e2 fails: the app throws
+        ),
+        calls(
+            _finding("bug", "e1", "No quote at all", violates=""),
+            _finding("bug", "e1", "Tasks should be sorted by date", violates="tasks are sorted by date"),
+            _finding("bug", "e1", "Claimed as an error", violates="error"),  # e1 is not an error observation
+        ),
+        calls(
+            _finding("bug", "e1", "The count is wrong after completing", violates="The remaining  COUNT stays correct."),
+            _finding("bug", "e2", "Completing a task throws", violates="error"),
+        ),
+        submit(summary="Done."),
+    )
+
+    result = await run_tester(INTENT, model, browser, run_dir=tmp_path / "run")
+
+    refusals = [m.content for m in model.seen[2] if isinstance(m, ToolMessage)][-3:]
+    assert all(r.startswith("Error:") for r in refusals)
+    assert "violates" in refusals[0]
+    assert "not in the intent" in refusals[1] and "questions" in refusals[1]
+    assert "no_errors" in refusals[2]
+    assert [f.title for f in result.findings] == ["The count is wrong after completing", "Completing a task throws"]

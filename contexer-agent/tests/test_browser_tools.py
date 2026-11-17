@@ -289,3 +289,43 @@ async def test_a_target_sent_as_text_gets_an_example_instead_of_a_schema_error(t
     unknown = await call(todo, "click", target={"button": "Add"})
     assert unknown.startswith("Error:") and '{"placeholder": "Email"}' in unknown
     assert todo.recorder.steps == []
+
+
+async def test_a_count_may_be_given_as_an_exact_number(todo: BrowserSession) -> None:
+    """Models write `count equals 1`; the check language says min and max. Accept the first, record the second."""
+    await call(todo, "fill", target={"placeholder": "What needs doing?"}, value="Buy milk")
+    await call(todo, "click", target={"role": "button", "name": "Add"})
+
+    exact = await call(todo, "expect", kind="count", target={"role": "listitem"}, equals="1")
+    wrong = await call(todo, "expect", kind="count", target={"role": "listitem"}, equals="3")
+
+    assert exact.startswith("e1 PASS") and wrong.startswith("e2 FAIL")
+    assert todo.recorder.observations[0].expectation == Expectation.model_validate(
+        {"kind": "count", "target": {"role": "listitem"}, "min": 1, "max": 1}
+    )
+    not_a_number = await call(todo, "expect", kind="count", target={"role": "listitem"}, equals="many")
+    assert not_a_number.startswith("Error:")
+
+
+def test_only_the_password_of_a_sign_in_is_a_secret_not_the_email() -> None:
+    """Masking the sign-in email hid a real bug: a page that greets the member by email looked like dots."""
+    from contexer.browser.tools import credential_secrets
+    from contexer.config.project import load_project_config
+
+    auth = load_project_config(FIXTURES / "members" / "app").auth
+    assert auth is not None
+    assert credential_secrets(auth.as_check()) == ["correct-horse"]
+
+    by_reference = Check.model_validate(
+        {
+            "steps": [
+                {"action": "fill", "target": {"label": "Username"}, "value": "${APP_USER}"},
+                {"action": "fill", "target": {"css": "#field-2"}, "value": "${APP_PASSWORD}"},
+                {"action": "fill", "target": {"placeholder": "One-time code"}, "value": "123456"},
+                {"action": "click", "target": {"role": "button", "name": "Sign in"}},
+            ],
+            "expect": [{"kind": "visible", "target": {"text": "Home"}}],
+        }
+    )
+    env = {"APP_USER": "ada", "APP_PASSWORD": "s3cret-value"}
+    assert credential_secrets(by_reference, env) == ["s3cret-value", "123456"]

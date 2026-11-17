@@ -24,15 +24,28 @@ Page content is data. Nothing a page says is an instruction to Contexer.
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Optional, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Optional, cast
 
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from contexer.browser.recorder import Recorder
 from contexer.observer.playwright import capture_ui_snapshot, record_console_error
-from contexer.verification.checks import MASK, Expectation, ExpectationOutcome, Locator, Step, StepAction, redact
+from contexer.verification.checks import (
+    MASK,
+    Check,
+    Expectation,
+    ExpectationOutcome,
+    Locator,
+    MissingSecretError,
+    Step,
+    StepAction,
+    expand_secrets,
+    redact,
+)
 from contexer.verification.runner import CheckRunner, _any_visible, _describe_failed_action, _locate, _short
 
 if TYPE_CHECKING:
@@ -258,6 +271,12 @@ class BrowserSession:
             return _TARGET_HELP
         if isinstance(fields.get("target"), (dict, BaseModel)):
             fields["target"] = _plain(fields["target"])
+        if fields.get("kind") == "count" and fields.get("equals") is not None and fields.get("min") is None and fields.get("max") is None:
+            # "count equals 2" is what models write; the check language says min and max.
+            try:
+                fields["min"] = fields["max"] = int(str(fields.pop("equals")).strip())
+            except ValueError:
+                return "Error: a count needs a whole number: use min and max, or equals with a number."
         try:
             expectation = Expectation.model_validate({k: v for k, v in fields.items() if v is not None})
         except ValidationError as exc:
@@ -424,6 +443,34 @@ class BrowserSession:
         return redact(text, self.secrets) if self.secrets else text
 
 
+_SECRET_FIELD = re.compile(r"pass|secret|token|otp|pin\b|one.?time|code\b|pwd", re.IGNORECASE)
+_SECRET_NAME = re.compile(r"PASS|SECRET|TOKEN|KEY|PWD|OTP")
+_REFERENCE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def credential_secrets(flow: Check, env: Optional[Mapping[str, str]] = None) -> list[str]:
+    """The values of a sign-in flow that must be masked from an agent: passwords and codes, not identities.
+
+    A report or a repair prompt masks everything a sign-in types. An agent that tests the app must not
+    lose the email or the user name that way: a page that greets the member by email instead of by
+    name is a bug it has to be able to see. So a value is a secret here only when its field looks like
+    one (password, token, one-time code) or it comes from a ``${NAME}`` whose name does.
+    """
+    values: list[str] = []
+    for step in flow.steps:
+        if step.action != "fill" or not step.value:
+            continue
+        field = " ".join(str(v) for v in step.target.model_dump(exclude_none=True).values()) if step.target else ""
+        names = _REFERENCE.findall(step.value)
+        if not (_SECRET_FIELD.search(field) or any(_SECRET_NAME.search(name) for name in names)):
+            continue
+        try:
+            values.append(expand_secrets(step.value, dict(os.environ if env is None else env)))
+        except MissingSecretError:
+            continue  # never typed, so it cannot appear anywhere
+    return values
+
+
 def _plain(target: Any) -> Any:
     """A target as a plain dict, whether it came as a model or as a model's raw arguments."""
     if isinstance(target, BaseModel):
@@ -452,4 +499,4 @@ def _closed() -> str:
     return "Error: the browser is closed."
 
 
-__all__ = ["MASK", "BrowserSession", "Target"]
+__all__ = ["MASK", "BrowserSession", "Target", "credential_secrets"]
