@@ -36,6 +36,7 @@ from contexer.checkpoint import ShadowRepo
 from contexer.contract import Contract
 from contexer.contract.models import utc_now
 from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
+from contexer.config.project import CONFIG_FILE
 from contexer.intent.store import INTENT_DIR
 from contexer.controller.prompts import implement_prompt, repair_prompt
 from contexer.evidence.rundir import RunDir
@@ -228,7 +229,7 @@ class RunController:
                 self.on_event("agent-done", _turn_line(turn, changed))
 
                 if tampered:
-                    attempt.note = f"Agent modified what defines done (contracts or intent): {', '.join(tampered)} (restored)."
+                    attempt.note = f"Agent modified what defines done (contracts, intent or contexer.toml): {', '.join(tampered)} (restored)."
                     outcome.terminal, outcome.reason = "tampered", attempt.note
                     break
                 if not turn.ok and not changed:
@@ -445,20 +446,26 @@ class RunController:
 class _ContractGuard:
     """Keeps the files that say what "done" means, and puts them back if an agent edits them.
 
-    Those are the contracts and the intent (the written goal, its corrections and its checks). An
-    agent that could rewrite either could make any work pass.
+    Those are the contracts, the intent (the written goal, its corrections and its checks) and
+    ``contexer.toml``. An agent that could rewrite the first two could make any work pass; one that
+    could write ``contexer.toml`` could choose the command Contexer runs to start or reset the app.
     """
 
     def __init__(self, project: Path) -> None:
-        self.base = project / CONTEXER_DIR
+        self.base = project
         self.saved = self._read()
 
     def _read(self) -> dict[str, bytes]:
         files: dict[str, bytes] = {}
         for folder, pattern in ((CONTRACTS_DIR, "*.json"), (INTENT_DIR, "*")):
-            root = self.base / folder
+            root = self.base / CONTEXER_DIR / folder
             if root.is_dir():
-                files.update({f"{folder}/{p.name}": p.read_bytes() for p in sorted(root.glob(pattern)) if p.is_file()})
+                files.update(
+                    {f"{CONTEXER_DIR}/{folder}/{p.name}": p.read_bytes() for p in sorted(root.glob(pattern)) if p.is_file()}
+                )
+        config = self.base / CONFIG_FILE
+        if config.is_file():
+            files[CONFIG_FILE] = config.read_bytes()
         return files
 
     def restore_if_changed(self) -> list[str]:
