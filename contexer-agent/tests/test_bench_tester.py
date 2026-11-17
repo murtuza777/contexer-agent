@@ -105,15 +105,17 @@ async def test_the_agent_is_given_the_goal_and_never_the_contract(tmp_path: Path
     assert agent.saw_contract == [False, False]
 
 
-async def test_a_wrong_expectation_is_a_false_alarm_everywhere_and_never_a_found_bug(tmp_path: Path) -> None:
+async def test_a_wrong_expectation_is_a_false_alarm_on_correct_code_and_rejected_on_a_bug(tmp_path: Path) -> None:
     report = await run_tester_bench(_mini_fixture(tmp_path), ScriptedTester(WRONG))
 
     [score] = report.apps
     # It "reproduces" on the buggy app too, but the correct app fails it as well: the agent is wrong.
     assert (score.bugs, score.found) == (1, 0)
-    assert (score.false_alarms, score.false_alarm_runs, score.clean_runs) == (2, 1, 1)
+    # On correct code it is a false alarm. On the bug it is rejected: the two are counted apart,
+    # because the second is often the right bug described with the wrong words.
+    assert (score.false_alarms, score.false_alarm_runs, score.clean_runs, score.rejected) == (1, 1, 1, 1)
     bug_run = next(r for r in report.runs if r.kind == "bug")
-    assert bug_run.found is False and bug_run.false_alarms == [WRONG.title]
+    assert bug_run.found is False and bug_run.rejected == [WRONG.title] and bug_run.false_alarms == []
 
 
 async def test_a_claim_that_does_not_reproduce_is_unconfirmed(tmp_path: Path) -> None:
@@ -144,8 +146,8 @@ async def test_the_results_page_states_the_numbers(tmp_path: Path) -> None:
     page = results_markdown(report)
 
     assert "# Tester benchmark: `scripted`" in page
-    assert "| todo | 1 | 1 | 0 | 0 / 1 | 1 | 8 | 0 / 0 | $0.02 |" in page
-    assert "| **total** | 1 | 1 | 0 | 0 / 1 | 1 | 8 | 0 / 0 | $0.02 |" in page
+    assert "| todo | 1 | 1 | 0 | 0 / 1 | 0 | 1 | 8 | 0 / 0 | $0.02 |" in page
+    assert "| **total** | 1 | 1 | 0 | 0 / 1 | 0 | 1 | 8 | 0 / 0 | $0.02 |" in page
 
 
 def test_the_command_runs_the_suite_with_the_stub_agent_and_writes_the_results(tmp_path: Path) -> None:
@@ -162,7 +164,7 @@ def test_the_command_runs_the_suite_with_the_stub_agent_and_writes_the_results(t
     assert "0 of 1 seeded bugs found" in result.output and "0 false alarms" in result.output
     assert '"agent": "stub"' in out.read_text(encoding="utf-8")
     page = (bench / "tester-results" / "stub.md").read_text(encoding="utf-8")
-    assert "| **total** | 1 | 0 | 0 | 0 / 1 | 0 | 0 | 0 / 0 | not reported |" in page
+    assert "| **total** | 1 | 0 | 0 | 0 / 1 | 0 | 0 | 0 | 0 / 0 | not reported |" in page
     assert "Not found: `todo/count-ignores-done`." in page
 
 

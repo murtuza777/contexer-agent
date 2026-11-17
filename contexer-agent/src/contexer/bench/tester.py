@@ -12,10 +12,12 @@ the findings are worth, by replaying them in a fresh browser:
   dropped and counted, never treated as a bug;
 * on a seeded bug, a reproduced finding is replayed once more on the correct
   app. Only a check that passes there counts: the bug is **found**. A check
-  the correct app also fails is a **false alarm**, because the agent's
-  expectation is wrong, not the app;
+  the correct app also fails is **rejected**: the expectation is wrong, so it
+  proves nothing. Live runs showed this is usually the right bug described
+  with guessed wording (a URL or a message the agent never saw), which is why
+  it is counted apart from a false alarm;
 * on the correct app and the benign variants, every reproduced finding is a
-  **false alarm**.
+  **false alarm**: the agent reported a bug in code that has none.
 
 The agent's word is never the score. The stub agent reports nothing, so the
 suite runs without a model and must score 0 found, 0 false alarms.
@@ -172,7 +174,10 @@ class TesterRun(BaseModel):
     findings: int = 0
     # Titles, by what the replay showed.
     real: list[str] = Field(default_factory=list)
+    # Correct and benign variants only: a reproduced finding on code that has no bug.
     false_alarms: list[str] = Field(default_factory=list)
+    # Bug variants only: reproduced on the bug, but the correct app fails the same check.
+    rejected: list[str] = Field(default_factory=list)
     unconfirmed: list[str] = Field(default_factory=list)
     # Bug variants only: a finding reproduced on the bug and passed on the correct app.
     found: Optional[bool] = None
@@ -191,8 +196,10 @@ class TesterScore(BaseModel):
     found: int = 0
     missed_bugs: list[str] = Field(default_factory=list)
     clean_runs: int = 0
-    # Reproduced findings that are not real bugs, on any variant.
+    # Reproduced findings on correct or benign code.
     false_alarms: int = 0
+    # Findings on a bug variant whose check the correct app fails too.
+    rejected: int = 0
     # Runs on correct or benign code with at least one false alarm.
     false_alarm_runs: int = 0
     unconfirmed: int = 0
@@ -219,7 +226,7 @@ class TesterBenchReport(BaseModel):
     def totals(self) -> TesterScore:
         total = TesterScore(app="total")
         for score in self.apps:
-            for key in ("bugs", "found", "clean_runs", "false_alarms", "false_alarm_runs", "unconfirmed", "errors", "steps", "tokens_in", "tokens_out", "stopped_early"):
+            for key in ("bugs", "found", "clean_runs", "false_alarms", "false_alarm_runs", "rejected", "unconfirmed", "errors", "steps", "tokens_in", "tokens_out", "stopped_early"):
                 setattr(total, key, getattr(total, key) + getattr(score, key))
             total.missed_bugs.extend(f"{score.app}/{bug}" for bug in score.missed_bugs)
             if score.cost_usd is not None:
@@ -310,7 +317,7 @@ async def _run_variant(agent: TesterAgent, goal: str, variant: Variant, repeat: 
             if verdict == "verified":
                 run.real.append(finding.title)
             elif verdict == "refuted":
-                run.false_alarms.append(finding.title)
+                run.rejected.append(finding.title)
             else:
                 run.unconfirmed.append(finding.title)
         run.found = bool(run.real)
@@ -361,6 +368,7 @@ def _score(score: TesterScore, run: TesterRun) -> None:
         score.errors += 1
         return
     score.false_alarms += len(run.false_alarms)
+    score.rejected += len(run.rejected)
     score.unconfirmed += len(run.unconfirmed)
     if run.kind == "bug":
         score.bugs += 1
@@ -387,18 +395,19 @@ def results_markdown(report: TesterBenchReport) -> str:
         "",
         "The agent gets each app's goal in words and the running app, never the contract. A bug is **found** only when",
         "the agent's finding fails on the buggy app and passes on the correct one, both replayed by code. A **false",
-        "alarm** is a finding that fails on correct code. **Unconfirmed** findings did not reproduce and were dropped.",
+        "alarm** is a finding reported on correct or benign code. **Rejected** is a finding on a seeded bug whose check",
+        "the correct app fails too, so it does not count. **Unconfirmed** findings did not reproduce and were dropped.",
         "Method: [README.md](../README.md#the-tester-suite).",
         "",
-        "| App | Seeded bugs | Found | False alarms | Clean runs with a false alarm | Unconfirmed | Steps | Tokens in / out | Cost |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| App | Seeded bugs | Found | False alarms | Clean runs with a false alarm | Rejected | Unconfirmed | Steps | Tokens in / out | Cost |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for score in [*report.apps, total]:
         name = "**total**" if score is total else score.app
         cost = f"${score.cost_usd:.2f}" if score.cost_usd is not None else "not reported"
         lines.append(
             f"| {name} | {score.bugs} | {score.found} | {score.false_alarms} | "
-            f"{score.false_alarm_runs} / {score.clean_runs} | {score.unconfirmed} | {score.steps} | "
+            f"{score.false_alarm_runs} / {score.clean_runs} | {score.rejected} | {score.unconfirmed} | {score.steps} | "
             f"{score.tokens_in:,} / {score.tokens_out:,} | {cost} |"
         )
     if total.missed_bugs:

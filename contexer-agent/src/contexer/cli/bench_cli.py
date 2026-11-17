@@ -137,7 +137,7 @@ def _bench_tester(
     report = asyncio.run(run_tester_bench(root, tester, repeats=repeats, only=only or None, on_run=progress))
 
     table = Table(title="Tester benchmark", show_lines=False)
-    for column in ("App", "Bugs", "Found", "False alarms", "Unconfirmed", "Steps", "Tokens in/out", "Cost"):
+    for column in ("App", "Bugs", "Found", "False alarms", "Rejected", "Unconfirmed", "Steps", "Tokens in/out", "Cost"):
         table.add_column(column, justify="right" if column != "App" else "left")
     totals = report.totals()
     for score in [*report.apps, totals]:
@@ -146,6 +146,7 @@ def _bench_tester(
             str(score.bugs),
             str(score.found),
             str(score.false_alarms),
+            str(score.rejected),
             str(score.unconfirmed),
             str(score.steps),
             f"{score.tokens_in:,} / {score.tokens_out:,}",
@@ -154,7 +155,7 @@ def _bench_tester(
     console.print()
     console.print(table)
     console.print(
-        f"{totals.found} of {totals.bugs} seeded bugs found · {totals.false_alarms} false alarms · "
+        f"{totals.found} of {totals.bugs} seeded bugs found · {totals.false_alarms} false alarms · {totals.rejected} rejected · "
         f"{totals.unconfirmed} unconfirmed · [dim]{report.duration_seconds:.0f}s[/]"
     )
     if totals.errors:
@@ -187,8 +188,8 @@ def _tester_line(run: object) -> str:
     else:
         mark = "[red]false alarm[/]" if run.false_alarms else "[green]clean[/]"
     detail = f"{run.findings} finding(s)"
-    if run.false_alarms and run.kind == "bug":
-        detail += f", {len(run.false_alarms)} false alarm(s)"
+    if run.rejected:
+        detail += f", {len(run.rejected)} rejected"
     if run.unconfirmed:
         detail += f", {len(run.unconfirmed)} unconfirmed"
     return f"  {mark} {escape(label)} [dim]{detail} · {run.steps} steps · {run.duration_seconds:.1f}s[/]"

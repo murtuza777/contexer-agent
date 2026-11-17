@@ -1013,8 +1013,9 @@ and a working copy that holds no contract, and returns `Finding`s, each with
 a `Check` stating the behaviour it expected. `_replay` runs those checks
 through `VerificationSession` like any contract. A finding refuted on the app
 under test has reproduced; on a bug variant it is replayed once more on the
-correct app and counts as **found** only if it passes there. Refuted on
-correct or benign code is a **false alarm**; anything that did not reproduce
+correct app and counts as **found** only if it passes there. Refuted there too, it is
+**rejected** (the expectation is wrong). A finding refuted on correct or
+benign code is a **false alarm**; anything that did not reproduce
 is **unconfirmed**. Steps and reported cost are summed per app. The `stub`
 agent returns no findings, so the suite runs with no model; `tester` is the
 Tester agent on the configured model, reporting the bugs it recorded. The command

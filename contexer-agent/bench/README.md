@@ -56,7 +56,8 @@ project's sign-in and reset and no model:
 | Replay | Result | Meaning |
 | --- | --- | --- |
 | Fails on the seeded bug, passes on the correct app | **Found** | A real bug, reproduced |
-| Fails on correct or benign code (also when it was reported on a bug) | **False alarm** | The agent's expectation is wrong, not the app |
+| Reported on correct or benign code, and fails there | **False alarm** | The agent reported a bug in code that has none. The target is 0 |
+| Reported on a seeded bug, but the correct app fails the check too | **Rejected** | The expectation is wrong, so it proves nothing and does not count as found. Often the right bug with guessed wording |
 | Passes, or cannot run, on the app the agent tested | **Unconfirmed** | Did not reproduce: dropped and counted |
 
 Also reported per app: the agent's steps and its cost when the provider
