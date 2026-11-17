@@ -57,6 +57,8 @@ class Exploration(BaseModel):
 
     findings: list[Finding] = Field(default_factory=list)
     steps: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
     cost_usd: Optional[float] = None
     # Why the agent stopped early, if it did (a limit, a model error).
     error: str = ""
@@ -93,6 +95,11 @@ class LiveTester:
     def __init__(self, model: Optional[object] = None, max_steps: Optional[int] = None) -> None:
         self.model = model
         self.max_steps = max_steps
+        # The model that answered, for the results page.
+        self.model_label = ""
+        # Where to keep each run's transcript (the working copy is deleted), and what to call it.
+        self.keep_dir: Optional[Path] = None
+        self.variant_label = ""
 
     async def explore(self, goal: str, app: RunningApp, project_dir: Path) -> Exploration:
         from contexer.browser.freeze import freeze
@@ -102,7 +109,11 @@ class LiveTester:
         from contexer.gate.session import DEV_SERVER_TIMEOUT_SCALE
         from contexer.verification.runner import _typed_values
 
+        from contexer.llm.chat import describe_model
+
         model = self.model or build_model(project_dir)
+        self.model = model  # one model for the whole suite
+        self.model_label = describe_model(model)
         run = RunDir.create(project_dir)
         session = VerificationSession(project_dir, run, verifier=Verifier(llm_provider=None, runner=CheckRunner()))
         state = await session.signed_in_state(app)
@@ -124,9 +135,21 @@ class LiveTester:
                 max_steps=self.max_steps or DEFAULT_MAX_STEPS,
                 secrets=_typed_values(session.auth.as_check()) if session.auth is not None else [],
             )
+        if self.keep_dir is not None and tested.transcript is not None and tested.transcript.is_file():
+            import shutil
+
+            self.keep_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(tested.transcript, self.keep_dir / f"{self.variant_label or run.run_id}.jsonl")
         bugs = [Finding(title=f.title, check=freeze(f), detail=f.description) for f in tested.findings if f.kind == "bug"]
         error = "" if tested.status == "ok" else f"the tester ended with {tested.status}: {tested.error}"
-        return Exploration(findings=bugs, steps=tested.steps, cost_usd=tested.cost_usd, error=error)
+        return Exploration(
+            findings=bugs,
+            steps=tested.steps,
+            tokens_in=tested.tokens_in,
+            tokens_out=tested.tokens_out,
+            cost_usd=tested.cost_usd,
+            error=error,
+        )
 
 
 # Agents `--agent` can name.
@@ -148,6 +171,8 @@ class TesterRun(BaseModel):
     # Bug variants only: a finding reproduced on the bug and passed on the correct app.
     found: Optional[bool] = None
     steps: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
     cost_usd: Optional[float] = None
     duration_seconds: float = 0.0
     # The app did not start, or the agent stopped early.
@@ -167,12 +192,18 @@ class TesterScore(BaseModel):
     unconfirmed: int = 0
     # Runs where the app did not start: not scored.
     errors: int = 0
+    # Runs where the agent stopped early (a limit or a model error); they are still scored.
+    stopped_early: int = 0
     steps: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
     cost_usd: Optional[float] = None
 
 
 class TesterBenchReport(BaseModel):
     agent: str
+    # The model the agent ran on, when it has one.
+    model: str = ""
     started_at: str
     duration_seconds: float = 0.0
     repeats: int
@@ -182,7 +213,7 @@ class TesterBenchReport(BaseModel):
     def totals(self) -> TesterScore:
         total = TesterScore(app="total")
         for score in self.apps:
-            for key in ("bugs", "found", "clean_runs", "false_alarms", "false_alarm_runs", "unconfirmed", "errors", "steps"):
+            for key in ("bugs", "found", "clean_runs", "false_alarms", "false_alarm_runs", "unconfirmed", "errors", "steps", "tokens_in", "tokens_out", "stopped_early"):
                 setattr(total, key, getattr(total, key) + getattr(score, key))
             total.missed_bugs.extend(f"{score.app}/{bug}" for bug in score.missed_bugs)
             if score.cost_usd is not None:
@@ -217,6 +248,7 @@ async def run_tester_bench(
                 if on_run:
                     on_run(run)
     report.duration_seconds = time.monotonic() - started
+    report.model = str(getattr(agent, "model_label", "") or "")
     return report
 
 
@@ -232,6 +264,8 @@ async def _run_variant(agent: TesterAgent, goal: str, variant: Variant, repeat: 
     if variant.kind == "bug":
         run.found = False
     work = workspace.materialise(variant.overlay)
+    if hasattr(agent, "variant_label"):
+        agent.variant_label = f"{variant.app}-{variant.kind}-{variant.name}-{repeat + 1}"  # type: ignore[attr-defined]
     try:
         with open_app(work, log_path=RunDir.create(work).server_log) as running:
             exploration = await agent.explore(goal, running, work)
@@ -243,6 +277,7 @@ async def _run_variant(agent: TesterAgent, goal: str, variant: Variant, repeat: 
 
     run.findings = len(exploration.findings)
     run.steps = exploration.steps
+    run.tokens_in, run.tokens_out = exploration.tokens_in, exploration.tokens_out
     run.cost_usd = exploration.cost_usd
     run.error = exploration.error
     reproduced = [f for f, verdict in zip(exploration.findings, replayed) if verdict == "refuted"]
@@ -302,6 +337,10 @@ async def _replay(work: Path, running: RunningApp, goal: str, findings: list[Fin
 
 def _score(score: TesterScore, run: TesterRun) -> None:
     score.steps += run.steps
+    score.tokens_in += run.tokens_in
+    score.tokens_out += run.tokens_out
+    if run.error.startswith("the tester ended"):
+        score.stopped_early += 1
     if run.cost_usd is not None:
         score.cost_usd = (score.cost_usd or 0.0) + run.cost_usd
     if run.error.startswith("the app did not start"):
@@ -328,23 +367,30 @@ def results_markdown(report: TesterBenchReport) -> str:
         "",
         f"`contexer bench --suite tester --agent {report.agent}`"
         + (f" --repeats {report.repeats}" if report.repeats != 1 else "")
-        + f", {report.started_at[:10]} ({report.duration_seconds:.0f} s). Written by the command; do not edit.",
+        + f", {report.started_at[:10]} ({report.duration_seconds:.0f} s)"
+        + (f", {report.model}" if report.model else "")
+        + ". Written by the command; do not edit.",
         "",
         "The agent gets each app's goal in words and the running app, never the contract. A bug is **found** only when",
         "the agent's finding fails on the buggy app and passes on the correct one, both replayed by code. A **false",
         "alarm** is a finding that fails on correct code. **Unconfirmed** findings did not reproduce and were dropped.",
         "Method: [README.md](../README.md#the-tester-suite).",
         "",
-        "| App | Seeded bugs | Found | False alarms | Clean runs with a false alarm | Unconfirmed | Steps | Cost |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| App | Seeded bugs | Found | False alarms | Clean runs with a false alarm | Unconfirmed | Steps | Tokens in / out | Cost |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for score in [*report.apps, total]:
         name = "**total**" if score is total else score.app
         cost = f"${score.cost_usd:.2f}" if score.cost_usd is not None else "not reported"
         lines.append(
             f"| {name} | {score.bugs} | {score.found} | {score.false_alarms} | "
-            f"{score.false_alarm_runs} / {score.clean_runs} | {score.unconfirmed} | {score.steps} | {cost} |"
+            f"{score.false_alarm_runs} / {score.clean_runs} | {score.unconfirmed} | {score.steps} | "
+            f"{score.tokens_in:,} / {score.tokens_out:,} | {cost} |"
         )
+    if total.missed_bugs:
+        lines += ["", "Not found: " + ", ".join(f"`{bug}`" for bug in total.missed_bugs) + "."]
+    if total.stopped_early:
+        lines += ["", f"In {total.stopped_early} run(s) the agent stopped early (a step or time limit, or a model error); what it had recorded was still scored."]
     if total.errors:
         lines += ["", f"{total.errors} run(s) were not scored because the app did not start."]
     if report.agent == "stub":

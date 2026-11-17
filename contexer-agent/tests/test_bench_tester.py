@@ -144,8 +144,8 @@ async def test_the_results_page_states_the_numbers(tmp_path: Path) -> None:
     page = results_markdown(report)
 
     assert "# Tester benchmark: `scripted`" in page
-    assert "| todo | 1 | 1 | 0 | 0 / 1 | 1 | 8 | $0.02 |" in page
-    assert "| **total** | 1 | 1 | 0 | 0 / 1 | 1 | 8 | $0.02 |" in page
+    assert "| todo | 1 | 1 | 0 | 0 / 1 | 1 | 8 | 0 / 0 | $0.02 |" in page
+    assert "| **total** | 1 | 1 | 0 | 0 / 1 | 1 | 8 | 0 / 0 | $0.02 |" in page
 
 
 def test_the_command_runs_the_suite_with_the_stub_agent_and_writes_the_results(tmp_path: Path) -> None:
@@ -162,7 +162,8 @@ def test_the_command_runs_the_suite_with_the_stub_agent_and_writes_the_results(t
     assert "0 of 1 seeded bugs found" in result.output and "0 false alarms" in result.output
     assert '"agent": "stub"' in out.read_text(encoding="utf-8")
     page = (bench / "tester-results" / "stub.md").read_text(encoding="utf-8")
-    assert "| **total** | 1 | 0 | 0 | 0 / 1 | 0 | 0 | not reported |" in page
+    assert "| **total** | 1 | 0 | 0 | 0 / 1 | 0 | 0 | 0 / 0 | not reported |" in page
+    assert "Not found: `todo/count-ignores-done`." in page
 
 
 def test_the_command_refuses_an_agent_it_does_not_have_and_a_mix_of_suites(tmp_path: Path) -> None:
@@ -198,10 +199,17 @@ async def test_the_tester_agent_is_measured_through_the_same_replays(tmp_path: P
         ]
 
     model = ScriptedChatModel(*script(), *script())  # the correct app, then the bug
-    report = await run_tester_bench(_mini_fixture(tmp_path), LiveTester(model=model))
+    tester = LiveTester(model=model)
+    tester.keep_dir = tmp_path / "transcripts"
+    report = await run_tester_bench(_mini_fixture(tmp_path / "fixtures"), tester)
 
     [score] = report.apps
     assert (score.bugs, score.found, score.false_alarms, score.unconfirmed) == (1, 1, 0, 0)
     assert score.steps == 6
+    assert (score.tokens_in, score.tokens_out) == (60, 30)
+    assert report.model == "model 'scripted-model'"
     bug_run = next(r for r in report.runs if r.kind == "bug")
     assert bug_run.real == ["The count ignores completed tasks"] and bug_run.error == ""
+    # The transcripts outlive the working copy, so a miss can be diagnosed.
+    kept = sorted(p.name for p in (tmp_path / "transcripts").iterdir())
+    assert kept == ["todo-bug-count-ignores-done-1.jsonl", "todo-good-good-1.jsonl"]

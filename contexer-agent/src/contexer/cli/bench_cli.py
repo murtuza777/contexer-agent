@@ -33,6 +33,7 @@ def bench(
         "gate", "--suite", help="gate: replay each app's contract. tester: an agent explores each app from its goal."
     ),
     agent: str = typer.Option("stub", "--agent", help="The agent the tester suite measures (stub: reports nothing)."),
+    steps: Optional[int] = typer.Option(None, "--steps", min=1, help="Tester suite: the most model calls per app variant."),
 ) -> None:
     """Run the seeded-bug benchmark against every fixture app."""
     console = Console()
@@ -48,7 +49,7 @@ def bench(
     if suite == "tester":
         if live:
             raise typer.BadParameter("--live belongs to the gate suite; the tester suite takes --agent")
-        _bench_tester(console, root, repeats or 1, app, out, agent)
+        _bench_tester(console, root, repeats or 1, app, out, agent, steps)
         return
     repeats = repeats or 3
 
@@ -113,7 +114,9 @@ def render_bench(console: Console, report: BenchReport) -> None:
     console.print(f"[dim]{report.duration_seconds:.0f}s[/]")
 
 
-def _bench_tester(console: Console, root: Path, repeats: int, only: list[str], out: Optional[Path], agent: str) -> None:
+def _bench_tester(
+    console: Console, root: Path, repeats: int, only: list[str], out: Optional[Path], agent: str, steps: Optional[int]
+) -> None:
     from contexer.bench.tester import TESTER_AGENTS, TesterRun, results_markdown, run_tester_bench
 
     if agent not in TESTER_AGENTS:
@@ -125,10 +128,16 @@ def _bench_tester(console: Console, root: Path, repeats: int, only: list[str], o
         console.print(_tester_line(run))
 
     term.header(console, "bench", f"{term.path(root)} · tester suite · agent {agent} · {repeats} repeat(s)")
-    report = asyncio.run(run_tester_bench(root, TESTER_AGENTS[agent](), repeats=repeats, only=only or None, on_run=progress))
+    tester = TESTER_AGENTS[agent]()
+    if steps is not None and hasattr(tester, "max_steps"):
+        tester.max_steps = steps  # type: ignore[attr-defined]
+    if out is not None and hasattr(tester, "keep_dir"):
+        # The agent's transcripts, next to the report: they say why a bug was missed.
+        tester.keep_dir = out.parent / f"{out.stem}-transcripts"  # type: ignore[attr-defined]
+    report = asyncio.run(run_tester_bench(root, tester, repeats=repeats, only=only or None, on_run=progress))
 
     table = Table(title="Tester benchmark", show_lines=False)
-    for column in ("App", "Bugs", "Found", "False alarms", "Unconfirmed", "Steps", "Cost"):
+    for column in ("App", "Bugs", "Found", "False alarms", "Unconfirmed", "Steps", "Tokens in/out", "Cost"):
         table.add_column(column, justify="right" if column != "App" else "left")
     totals = report.totals()
     for score in [*report.apps, totals]:
@@ -139,6 +148,7 @@ def _bench_tester(console: Console, root: Path, repeats: int, only: list[str], o
             str(score.false_alarms),
             str(score.unconfirmed),
             str(score.steps),
+            f"{score.tokens_in:,} / {score.tokens_out:,}",
             f"${score.cost_usd:.2f}" if score.cost_usd is not None else "—",
         )
     console.print()
