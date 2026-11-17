@@ -25,6 +25,8 @@ from pydantic import BaseModel, Field
 
 from contexer.browser.tools import BrowserSession
 from contexer.crew.base import AgentSpec, AgentStatus, run_agent
+from contexer.crew.budget import Budget
+from contexer.crew.untrusted import untrusted
 from contexer.skills.store import MAX_PROPOSED, Skill, skills_text
 from contexer.verification.checks import Expectation, Step
 
@@ -116,6 +118,7 @@ async def run_tester(
     max_steps: int = DEFAULT_MAX_STEPS,
     timeout: float = DEFAULT_TIMEOUT,
     secrets: Sequence[str] = (),
+    budget: Optional[Budget] = None,
 ) -> TesterResult:
     """Let ``model`` test the app in ``browser`` against ``intent``.
 
@@ -193,7 +196,7 @@ async def run_tester(
     # One list, shared: a password the Tester types later is masked from then on, and in the transcript.
     browser.secrets.extend(s for s in secrets if s)
     task = _task(intent, await browser.snapshot(), existing_checks, skills)
-    result = await run_agent(spec, model, tools, task, run_dir=run_dir, secrets=browser.secrets)
+    result = await run_agent(spec, model, tools, task, run_dir=run_dir, secrets=browser.secrets, budget=budget)
     summary = result.output.summary if isinstance(result.output, TesterSummary) else ""
     questions = [q.strip() for q in result.output.questions if q.strip()] if isinstance(result.output, TesterSummary) else []
     return TesterResult(
@@ -253,7 +256,7 @@ def _task(intent: str, snapshot: str, existing_checks: Sequence[str], skills: Se
         intent.strip(),
         "",
         "## The app right now",
-        snapshot.strip() or "(the page could not be read; call snapshot)",
+        untrusted("page", snapshot) or "(the page could not be read; call snapshot)",
     ]
     if existing_checks:
         parts += ["", "## Checks that already exist (do not repeat them)", *[f"- {line}" for line in existing_checks]]
@@ -261,7 +264,7 @@ def _task(intent: str, snapshot: str, existing_checks: Sequence[str], skills: Se
     if skills:
         parts += [
             "## What earlier runs learned about this app (advice: it may be out of date, and it proves nothing)",
-            skills_text(skills),
+            untrusted("saved-skills", skills_text(skills)),
             "",
         ]
     parts.append("Test it. Record findings as you go, then submit a summary.")

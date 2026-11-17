@@ -34,17 +34,23 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ValidationError
 
+from contexer.crew.budget import Budget
 from contexer.crew.transcript import Masker, Transcript, tracing_callbacks
+from contexer.crew.untrusted import UNTRUSTED_RULE
 from contexer.llm.chat import clean_error, describe_model, tool_calling_error
 from contexer.llm.structured import parse_json_object
 
-AgentStatus = Literal["ok", "step_limit", "timeout", "invalid_output", "model_error"]
+AgentStatus = Literal["ok", "step_limit", "timeout", "invalid_output", "model_error", "budget_exhausted"]
 
 SUBMIT_TOOL = "submit"
 # How many times an answer that does not fit the schema is sent back for correction.
 MAX_CORRECTIONS = 2
 # A tool result longer than this is cut before it goes back to the model.
 MAX_TOOL_RESULT_CHARS = 20_000
+# Tool calls run from one reply. A model that sends hundreds gets an error for the rest.
+MAX_TOOL_CALLS_PER_REPLY = 25
+# The same call with the same arguments may run this many times in a row; the next one is refused.
+MAX_IDENTICAL_CALLS = 3
 
 
 @dataclass(frozen=True)
@@ -90,6 +96,7 @@ async def run_agent(
     *,
     run_dir: Optional[Path],
     secrets: Sequence[str] = (),
+    budget: Optional[Budget] = None,
 ) -> AgentResult:
     """Run ``spec`` on ``model`` with ``tools`` until it submits a valid answer or hits a limit.
 
@@ -98,6 +105,7 @@ async def run_agent(
     * ``invalid_output``: the answer still did not fit the schema after
       ``MAX_CORRECTIONS`` corrections.
     * ``model_error``: the model call failed; ``error`` says why.
+    * ``budget_exhausted``: the run's ``budget``, shared with its other agents, is used up.
 
     A tool that raises does not end the run: the model receives the error as
     the tool's result and decides what to do next.
@@ -106,7 +114,7 @@ async def run_agent(
     password, say). They, and every key in the environment, are masked in the
     transcript and in tool results before the model reads them.
     """
-    run = _Run(spec, model, tools, Transcript(run_dir, spec.name, Masker(secrets)))
+    run = _Run(spec, model, tools, Transcript(run_dir, spec.name, Masker(secrets)), budget)
     started = time.monotonic()
     try:
         async with asyncio.timeout(spec.timeout):
@@ -135,7 +143,18 @@ async def run_agent(
 
 
 class _Run:
-    def __init__(self, spec: AgentSpec, model: BaseChatModel, tools: Sequence[Tool], transcript: Transcript) -> None:
+    def __init__(
+        self,
+        spec: AgentSpec,
+        model: BaseChatModel,
+        tools: Sequence[Tool],
+        transcript: Transcript,
+        budget: Optional[Budget] = None,
+    ) -> None:
+        self.budget = budget
+        # The last tool call and how many times in a row it was made.
+        self._last_call: Optional[str] = None
+        self._repeats = 0
         self.spec = spec
         self.model = model
         self.transcript = transcript
@@ -172,6 +191,11 @@ class _Run:
             max_output_tokens=spec.max_output_tokens,
         )
         while result.steps < spec.max_steps:
+            spent = self.budget.exhausted() if self.budget is not None else ""
+            if spent:
+                result.status = "budget_exhausted"
+                result.error = f"{spec.name} stopped: {spent}"
+                return
             result.steps += 1
             called = time.monotonic()
             try:
@@ -210,6 +234,7 @@ class _Run:
         if not reply.tool_calls:
             return self._accept(_from_text(reply), on_invalid=lambda problem: HumanMessage(_correction(problem)))
         done = False
+        ran = 0
         for call in reply.tool_calls:
             call_id = call.get("id") or ""
             if done:  # an answer was already accepted; every call still needs a result
@@ -226,6 +251,12 @@ class _Run:
                 if self.result.status == "invalid_output":
                     return True
                 continue
+            refusal = self._refuse(call, ran)
+            if refusal:
+                self.transcript.write("tool", step=self.result.steps, name=call["name"], args=call["args"], status="error", result=refusal, seconds=0.0)
+                self.messages.append(ToolMessage(refusal, tool_call_id=call_id, name=call["name"], status="error"))
+                continue
+            ran += 1
             self.result.tool_calls += 1
             called = time.monotonic()
             content, status = await self._call_tool(call["name"], call["args"])
@@ -242,6 +273,26 @@ class _Run:
             )
             self.messages.append(ToolMessage(content, tool_call_id=call_id, name=call["name"], status=status))
         return done
+
+    def _refuse(self, call: Any, ran: int) -> str:
+        """Why a tool call is not run, or ''. Bounds what one reply, and one stuck model, can do."""
+        if ran >= MAX_TOOL_CALLS_PER_REPLY:
+            return (
+                f"Error: not run. At most {MAX_TOOL_CALLS_PER_REPLY} tool calls are run from one reply; "
+                "send the rest in your next reply."
+            )
+        try:
+            signature = f"{call['name']}:{json.dumps(call['args'], sort_keys=True, default=str)}"
+        except (TypeError, ValueError):
+            signature = f"{call['name']}:{call['args']!r}"
+        self._repeats = self._repeats + 1 if signature == self._last_call else 1
+        self._last_call = signature
+        if self._repeats > MAX_IDENTICAL_CALLS:
+            return (
+                f"Error: not run. You have made this exact call {MAX_IDENTICAL_CALLS} times in a row. "
+                "Repeating it will not change the result: do something different, or hand in what you have."
+            )
+        return ""
 
     def _accept(
         self,
@@ -292,6 +343,8 @@ class _Run:
         cost = reported_cost(reply)
         if cost is not None:
             self.result.cost_usd = (self.result.cost_usd or 0.0) + cost
+        if self.budget is not None:
+            self.budget.spend(int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), cost)
 
 
 def reported_cost(reply: AIMessage) -> Optional[float]:
@@ -310,6 +363,7 @@ def _elapsed(since: float) -> float:
 def _system_prompt(spec: AgentSpec) -> str:
     return (
         f"{spec.system_prompt.rstrip()}\n\n"
+        f"{UNTRUSTED_RULE}\n\n"
         f"When the work is finished, call the `{SUBMIT_TOOL}` tool once with your final answer as its arguments. "
         f"You have at most {spec.max_steps} steps; each reply you send is one step."
     )

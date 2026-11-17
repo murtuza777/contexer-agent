@@ -112,7 +112,9 @@ async def test_the_brief_adds_the_cause_and_the_instruction_and_cannot_change_th
     assert "Deleting a task still lowers the count" in prompt and "Adding a task shows it in the list" in prompt
     # The section with the facts is identical with and without the brief.
     start, end = "## What is wrong", "## What to do"
-    assert prompt[prompt.index(start) : prompt.index("## Likely cause")] == facts_only[facts_only.index(start) : facts_only.index(end)]
+    note = "## A note on the next two sections"  # what a model wrote is announced before it appears
+    assert prompt.index(note) < prompt.index("## Likely cause")
+    assert prompt[prompt.index(start) : prompt.index(note)] == facts_only[facts_only.index(start) : facts_only.index(end)]
 
 
 def test_no_failures_means_no_prompt() -> None:

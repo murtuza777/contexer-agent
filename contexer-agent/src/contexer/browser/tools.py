@@ -12,6 +12,9 @@ Rules the tools keep:
 * a tool never raises. A target that matches nothing, an invalid argument or a
   closed browser comes back as text starting with ``Error:``, with the page's
   current snapshot where that helps;
+* the browser stays on the app under test. A ``goto`` to another origin is
+  refused, an action that leaves the origin is undone and not recorded, and
+  pop-ups are closed: a steered model cannot operate another site;
 * only actions that happened are recorded. When an action fails after it may
   have changed the page (a slow machine can time out an action that landed),
   the recording is marked unreliable until the next ``reset``, and no finding
@@ -27,6 +30,7 @@ import asyncio
 import os
 import re
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Mapping, Optional, cast
 
 from langchain_core.tools import BaseTool, StructuredTool
@@ -134,6 +138,9 @@ class BrowserSession:
         timeout_scale: float = 1.0,
     ) -> None:
         self.url = url
+        self._origin = _origin(url)
+        # The last address inside the app, to return to when an action leaves it.
+        self._home = url
         self.run_dir = Path(run_dir) if run_dir is not None else None
         self.storage_state = storage_state
         self.reset_command = reset
@@ -221,6 +228,8 @@ class BrowserSession:
         page.on("console", lambda msg: record_console_error(msg, self._console_errors))
         page.on("requestfailed", lambda request: self._note_request(request.url, request.failure or "failed"))
         page.on("response", lambda response: self._note_request(response.url, response.status))
+        # A pop-up is a page the agent cannot see or steer; one to another origin is somewhere it must not act.
+        self._context.on("page", lambda popup: asyncio.ensure_future(self._close_popup(popup)))
         self._page = page
         await page.goto(self.url, wait_until="load", timeout=self._runner.navigation_timeout * 1000)
 
@@ -238,6 +247,8 @@ class BrowserSession:
         page = self._page
         if page is None:
             return _closed()
+        if not self._on_app(page.url) and page.url != "about:blank":  # a late redirect took it elsewhere
+            return await self._brought_back(page)
         return self._mask(f"Page: {page.url}\n{await capture_ui_snapshot(page)}")
 
     async def act(self, action: StepAction, target: Any = None, value: Optional[str] = None) -> str:
@@ -251,10 +262,18 @@ class BrowserSession:
             step = Step.model_validate({"action": action, "target": _plain(target), "value": value})
         except ValidationError as exc:
             return f"Error: {_problem(exc)}. {_TARGET_EXAMPLES}"
+        if action == "goto" and not self._on_app(urljoin(self.url, step.value or "")):
+            return (
+                f"Error: '{step.value}' is outside the app under test ({self._origin_text()}). "
+                "Only the app's own paths can be opened. Nothing was done."
+            )
         try:
             await self._runner._perform(page, step, self.url)
         except Exception as exc:
-            return await self._action_failed(page, step, exc)
+            return await self._brought_back(page) or await self._action_failed(page, step, exc)
+        left = await self._brought_back(page)
+        if left:
+            return left
         if action == "fill" and step.target is not None and value and await self._is_password(page, step.target):
             self.secrets.append(value)
         self.recorder.add_step(step)
@@ -265,6 +284,8 @@ class BrowserSession:
         page = self._page
         if page is None:
             return _closed()
+        if not self._on_app(page.url) and page.url != "about:blank":
+            return await self._brought_back(page)
         if fields.get("changed") is not None:
             return "Error: `changed` compares with a value from before the steps, which a live check does not have. Use equals, contains or matches."
         if isinstance(fields.get("target"), str):
@@ -433,6 +454,50 @@ class BrowserSession:
         except Exception:
             return False
 
+    def _on_app(self, url: str) -> bool:
+        return urlparse(url).scheme in ("http", "https") and _origin(url) == self._origin
+
+    def _origin_text(self) -> str:
+        scheme, host, port = self._origin
+        return f"{scheme}://{host}:{port}"
+
+    async def _brought_back(self, page: Page) -> str:
+        """If the page has left the app, return it and say so; '' while it is still on the app.
+
+        A link, a redirect or a script can navigate anywhere. Whatever is there is not the app under
+        test, so the agent gets no chance to read or operate it.
+        """
+        try:
+            await page.wait_for_timeout(120)  # a navigation started by a script shows up a moment later
+            await page.wait_for_load_state("domcontentloaded", timeout=3000)
+        except Exception:
+            pass
+        here = page.url
+        if self._on_app(here) or here == "about:blank":
+            if self._on_app(here):
+                self._home = here
+            return ""
+        try:
+            await page.goto(self._home, wait_until="load", timeout=self._runner.navigation_timeout * 1000)
+        except Exception:
+            try:
+                await page.goto(self.url, wait_until="load", timeout=self._runner.navigation_timeout * 1000)
+            except Exception:
+                pass
+        self.recorder.tainted = True
+        return self._mask(
+            f"Error: that action left the app under test (it went to {here}). The page was brought back and the "
+            "step was not recorded. Only the app itself can be tested; call reset before you rely on what you see."
+        )
+
+    async def _close_popup(self, popup: Any) -> None:
+        if popup is self._page:
+            return
+        try:
+            await popup.close()
+        except Exception:
+            pass
+
     async def _is_password(self, page: Page, locator: Locator) -> bool:
         try:
             kind = await _locate(page, locator).first.get_attribute("type", timeout=500)
@@ -470,6 +535,17 @@ def credential_secrets(flow: Check, env: Optional[Mapping[str, str]] = None) -> 
         except MissingSecretError:
             continue  # never typed, so it cannot appear anywhere
     return values
+
+
+def _origin(url: str) -> tuple[str, str, int]:
+    """Scheme, host and port: what makes two addresses the same site."""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    return scheme, (parsed.hostname or "").lower(), port or (443 if scheme == "https" else 80)
 
 
 def _plain(target: Any) -> Any:

@@ -772,6 +772,43 @@ flowchart LR
   driver exits with the event loop and takes Chromium with it. The app's
   server is stopped by `open_app`.
 
+### Guardrails
+
+The rule is to assume the model is compromised: a page, a file or a saved
+skill can carry text written to steer it. Each guardrail is a property of
+the code and has a test in which a scripted model does what an attacker
+wants (`tests/test_guardrails.py`). The plan is in
+[agentic/hardening.md](agentic/hardening.md).
+
+| A steered agent tries to | What stops it |
+| --- | --- |
+| Report a bug that is not there | `browser/freeze.py`: a finding that does not reproduce on replay is never shown |
+| Spend without limit | `crew/budget.py`: one `Budget` per run, shared by every agent, checked before each model call (`[limits] tokens`, `--max-tokens`, default 1,500,000). At most 25 tool calls run from one reply, and the same call four times in a row is refused |
+| Leave the app and act elsewhere | `browser/tools.py`: `goto` to another origin is refused; an action that leaves the origin is undone, not recorded, and marks the recording unreliable; pop-ups are closed |
+| Click and type on a live site | `contexer test --url` to a host that is not this machine or a private network needs `--allow-remote` |
+| Change the project | No agent has a write tool (the table below, enforced by a test); a full run leaves every file outside `.contexer/` unchanged |
+| Read secrets or Contexer's files | `read_file` and `grep` refuse paths outside the project, `.contexer/`, `.git/`, dependencies and `.env` files; secrets are masked in tool results and transcripts |
+| Steer the coding agent through the fix prompt | `validated_brief`: files must exist inside the project, the cause and instruction are capped, and the prompt tells the coding agent what a model-written section may not ask for |
+| Plant instructions for later runs | Skills are capped (160 and 800 characters, 30 in the store) and `--no-skills` ignores them; the Intent agent cannot change the goal, writes at most 25 behaviours, and what it adds or rewrites is printed |
+| Redefine "done" or the command Contexer runs | The tamper guard covers `contracts/`, `intent/` and `contexer.toml` |
+
+Text from the app (page snapshots, project summaries, diffs, server logs,
+failure reports, saved skills) goes into every prompt inside
+`<untrusted source="...">`, and text that imitates the closing marker is
+neutralised (`crew/untrusted.py`). That is the soft layer: it makes steering
+less likely, and nothing depends on it.
+
+### Tool audit
+
+| Agent | Tools | Can it write? |
+| --- | --- | --- |
+| Intent | none (only `submit`) | No. Code writes the intent file from its answer |
+| Tester | `snapshot`, `click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`, `goto`, `read_errors`, `screenshot`, `expect`, `reset`, `record_finding` | Only the app under test, through its own UI, on its own origin. `screenshot` writes a JPEG into the run folder |
+| Diagnoser | `read_file`, `grep` | No. Both are read-only and confined |
+
+Only the external coding agent edits the project. A new tool for an agent
+has to be added to this table and to `test_each_agent_has_exactly_the_tools_in_the_audit_table`.
+
 ### Choosing the drafting model (`llm/factory.py`)
 
 1. `[compiler] provider` / `model` in `contexer.toml`.
@@ -993,6 +1030,8 @@ and prints the fix under each problem.
 | `[agent] max_repair_rounds` | 2 | Repair rounds after the first attempt |
 | `[agent] budget_usd` | none | Stop when the agent has spent this much |
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
+| `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
+| `[limits] cost_usd` | none | Cost limit for the same, where the provider reports prices |
 
 ### Environment variables
 
