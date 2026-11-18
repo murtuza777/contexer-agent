@@ -6,6 +6,7 @@ The coding agent is scripted here; the engines, the snapshots, the app and the b
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -150,4 +151,5 @@ def test_the_command_runs_the_repair_suite_and_writes_the_report(fixtures: Path,
 
 def test_the_repair_suite_needs_a_coding_agent(fixtures: Path) -> None:
     result = CliRunner().invoke(cli, ["bench", "--suite", "repair", "--fixtures", str(fixtures)])
-    assert result.exit_code == 2 and "--agent" in result.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)  # CI colours the usage text
+    assert result.exit_code == 2 and "--agent" in plain

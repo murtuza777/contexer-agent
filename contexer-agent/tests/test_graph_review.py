@@ -119,7 +119,8 @@ async def test_the_review_can_be_turned_off(project: Path) -> None:
 async def test_the_models_notes_are_recorded_and_never_start_a_repair(project: Path) -> None:
     opinion = {"file": "app.js", "line": 3, "severity": "high", "category": "security", "explanation": "innerHTML is fed user text."}
     model = AgentScript(reviewer=[submit(notes=[opinion])])
-    agent = RecordingAgent([{"app.js": GOOD_JS}])
+    # A real change: on a checkout without line-ending conversion GOOD_JS alone is no diff, and nothing is reviewed.
+    agent = RecordingAgent([{"app.js": GOOD_JS + "// tidied\n"}])
     outcome = await _graph(project, agent, model=model).run(contract(project))
 
     assert outcome.terminal == "succeeded" and len(agent.prompts) == 1
