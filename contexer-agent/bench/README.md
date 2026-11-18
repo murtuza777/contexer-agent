@@ -8,6 +8,7 @@ contexer bench               # replay each app's approved, hand-written contract
 contexer bench --live        # compile each app's goal with the LLM instead, then score that
 contexer bench --app notes   # one app
 contexer bench --suite tester --agent stub   # the tester suite (below)
+contexer bench --suite repair --agent opencode   # the repair suite (below)
 ```
 
 ## How it works
@@ -71,6 +72,33 @@ found and 0 false alarms: the floor, and proof that the harness works.
 configured; it costs model calls for every variant of every app.
 Each run of the whole suite writes `tester-results/<agent>.md`.
 
+## The repair suite
+
+`contexer bench --suite repair --agent NAME [--model MODEL]` measures the
+whole loop: each seeded bug is laid out with its app's approved contract and
+handed to a coding agent, once on each engine of `contexer run` (`classic`
+and `graph`). A bug counts as **fixed** only when the run ends `succeeded`,
+which is the gate's word and not the agent's.
+
+```bash
+contexer bench --suite repair --agent opencode --model azure/gpt-5.4 --repair-only --out repair.json
+contexer bench --suite repair --agent claude-code --bug todo/count-ignores-done --engine graph
+```
+
+- `--repair-only`: the first turn gives the agent the job and tells it to
+  change nothing. The checks then fail on the seeded bug and every fix is a
+  repair. Use it to compare the engines, which differ only in the repair.
+  Without it a capable model fixes most bugs in its first turn.
+- `--engine`, `--bug app/bug`, `--app`, `--limit N`, `--rounds N` narrow the run.
+- The graph engine's own agents (Triage, Diagnoser) use the model you
+  configured; with none, the rules decide.
+- It costs a coding-agent session per bug per engine. The full run on
+  gpt-5.4 took 86 minutes.
+- It is also how to measure a weaker coding model: same bugs, same checks,
+  another `--model`.
+
+Results are in [repair-results/](repair-results/).
+
 ## What the numbers mean, and don't
 
 - **Hand-written contracts** measure the runner:
@@ -90,7 +118,8 @@ Each run of the whole suite writes `tester-results/<agent>.md`.
 
 ## Results
 
-See [RESULTS.md](RESULTS.md), and [tester-results/](tester-results/) for the tester suite.
+See [RESULTS.md](RESULTS.md), [tester-results/](tester-results/) for the tester suite
+and [repair-results/](repair-results/) for the repair suite.
 
 ## Adding a fixture
 

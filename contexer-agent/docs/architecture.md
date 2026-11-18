@@ -126,7 +126,7 @@ A `contexer run "GOAL" --pr`, end to end:
 | `browser/` | A browser an agent operates: the tools (`tools.py`), the recording of what it did (`recorder.py`), and freezing findings into checks and replaying them (`freeze.py`) |
 | `config/` | Environment settings, `contexer.toml`, per-user settings in `~/.contexer` |
 | `workflow/` | Goal-to-checks compiler (`criteria.py`), repository inspector, static file server |
-| `bench/` | The seeded-bug benchmark: the gate suite (`runner.py`) and the tester suite (`tester.py`) |
+| `bench/` | The seeded-bug benchmark: the gate suite (`runner.py`), the tester suite (`tester.py`) and the repair suite (`repair.py`) |
 | `demo/` | The `contexer demo` todo app and its contract |
 | `procutil.py` | Process trees that are always stopped together |
 
@@ -1180,7 +1180,7 @@ and prints the fix under each problem.
 ## 18. Benchmark
 
 `bench/runner.py`, `contexer bench [--repeats N] [--live] [--app NAME] [--fixtures DIR] [--out
-FILE] [--suite gate|tester] [--agent NAME]` (run from `contexer-agent/`; the fixtures are not in the PyPI package).
+FILE] [--suite gate|tester|repair] [--agent NAME]` (run from `contexer-agent/`; the fixtures are not in the PyPI package).
 
 - Fixtures in `bench/fixtures/<app>/`: `app/` (the correct app with approved
   contracts in `app/.contexer/contracts/`), `bugs/<id>/` (file overlays with
@@ -1200,6 +1200,19 @@ FILE] [--suite gate|tester] [--agent NAME]` (run from `contexer-agent/`; the fix
 - `--live` compiles each app's goal with the drafting model, keeps only the
   executable checks that pass on the good app, and scores those.
 - A workspace per app keeps `node_modules` between variants.
+
+**Repair suite** (`bench/repair.py`, `contexer bench --suite repair --agent
+NAME [--model M] [--engine classic|graph] [--bug app/bug] [--limit N]
+[--rounds N] [--repair-only]`): measures the run loop. For each bug the
+workspace is laid out afresh (the good app, the bug on top), and
+`RunController` or `GraphController` runs the app's approved contract with a
+new agent session. **Fixed** means the run ended `succeeded`. `--repair-only`
+wraps the agent so its first turn carries the job and an instruction to
+change nothing, and allows one more round, so every fix is a repair. The
+report has a row per engine (fixed, attempts, minutes, cost when the agent
+reports one) and lists the bugs on which the engines differ. A run that
+raises is recorded as `error` and the benchmark goes on. Results:
+`bench/repair-results/`.
 
 **Tester suite** (`bench/tester.py`, `contexer bench --suite tester --agent
 NAME`): measures an agent that explores instead of a contract. A

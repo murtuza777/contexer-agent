@@ -7,9 +7,17 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Added
 
+- **`contexer bench --suite repair`: the two engines, measured.** Each seeded
+  bug goes to a coding agent once per engine; fixed means the gate passed.
+  `--repair-only` makes every fix a repair, `--model` picks the coding
+  model, `--engine`, `--bug`, `--limit` and `--rounds` narrow the run. With
+  OpenCode on Azure gpt-5.4 both engines fixed 46 of 46 bugs with one repair
+  each; the graph took 17% longer. The bugs were too easy for that model to
+  tell the engines apart
+  ([results](bench/repair-results/opencode-azure-gpt-5.4.md)).
 - **`contexer run --engine graph`: the closed loop as a graph** (Phase 3 of
-  the agentic harness, opt-in; `classic` stays the default until the two are
-  measured against each other). Also `CONTEXER_ENGINE=graph`.
+  the agentic harness, opt-in; `classic` is still the default). Also
+  `CONTEXER_ENGINE=graph`.
   - **Stop and continue.** `contexer run --resume RUN` continues a run that
     was stopped with Ctrl+C or whose process died, from a checkpoint in the
     run folder. The files are reset to the last snapshot first. It refuses
