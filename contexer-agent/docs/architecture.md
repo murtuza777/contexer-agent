@@ -115,11 +115,12 @@ A `contexer run "GOAL" --pr`, end to end:
 | `agents/` | `CodingAgentAdapter` and the Claude Code, Codex, OpenCode and scripted adapters |
 | `opencode/` | HTTP client and adapter for `opencode serve` |
 | `checkpoint/` | Shadow-git snapshots and restores |
-| `controller/` | The run state machine and the agent prompts |
+| `controller/` | The classic run loop (`run.py`), what both engines share (`shared.py`: scoring, failure signatures, the tamper guard, the evidence), the run's models and the agent prompts |
+| `graph/` | The run loop as a LangGraph graph that can wait for a person, stop and resume: state, nodes, routing, the compiled graph, `GraphController` |
 | `evidence/` | Run directories, `report.html`, `result.json` |
 | `github/` | Commit status and job summary, the REST client, the pull-request hand-off, the issue flow |
 | `llm/` | Provider catalog, model discovery, provider clients, structured-output parsing, chat models with tools (`chat.py`) |
-| `crew/` | Contexer's own agents: the loop (`base.py: run_agent`), transcripts, the Intent agent (`intent.py`), the Tester (`tester.py`) and the Diagnoser (`diagnoser.py`); prompts in `prompts/` |
+| `crew/` | Contexer's own agents: the loop (`base.py: run_agent`), transcripts, the Intent agent (`intent.py`), the Tester (`tester.py`), the Challenger (`challenger.py`), the Diagnoser (`diagnoser.py`) and Triage (`triage.py`); prompts in `prompts/` |
 | `intent/` | The intent store: what each feature should do, in the project (`.contexer/intent/`) |
 | `skills/` | The skills store: what Contexer learned about operating the app (`.contexer/skills/`) |
 | `browser/` | A browser an agent operates: the tools (`tools.py`), the recording of what it did (`recorder.py`), and freezing findings into checks and replaying them (`freeze.py`) |
@@ -133,7 +134,8 @@ Runtime dependencies: `typer`, `rich`, `openai` (the OpenAI-compatible
 client), `pydantic` 2, `python-dotenv`, `httpx`, `playwright` (≥1.49, for
 `Locator.aria_snapshot`), and for the agents being built on top of 0.4 (see
 [agentic/architecture.md](agentic/architecture.md)) `langchain-core`,
-`langchain-openai` and `langchain-anthropic`. Python 3.11 or newer. The
+`langchain-openai`, `langchain-anthropic`, `langgraph` and
+`langgraph-checkpoint-sqlite`. Python 3.11 or newer. The
 drafting client for Anthropic is plain `httpx`; the `anthropic` package is
 there only because `langchain-anthropic` needs it.
 
@@ -513,6 +515,92 @@ checks reference; do not start a dev server; do not install Playwright or
 browsers or write end-to-end tests; do not touch `.contexer/`; do not commit,
 push or rewrite history; no uncaught exceptions; reply with a short summary.
 
+### The graph engine (`graph/`, `contexer run --engine graph`)
+
+The same job as `RunController`, as a LangGraph graph with a checkpoint
+after every node. It is opt-in (`--engine graph` or `CONTEXER_ENGINE=graph`)
+until it is measured to repair at least as well as the classic loop.
+
+```text
+intent → approve → coder_turn → guard_snapshot → ensure_app → test → score ─ pass ─► finalize
+   ▲        │           ▲                                               │
+   │   correction       │                                            triage ── stop ──► finalize
+   └────────┴───────────┼──── correction ◄──────────────────────────────┤
+                        │                                            ask_user
+                        └────────────── diagnose ◄──────────────────────┘
+```
+
+| Node | Does | Asks a model |
+| --- | --- | --- |
+| `intent` | Starts the app and reads what the page shows, then drafts checks from the goal, or redrafts them for a correction; saves the intent and an unapproved contract | The Intent agent, when a model is configured |
+| `approve` | Waits for a person (`interrupt`) unless the contract is approved at the hash the state holds | No |
+| `coder_turn` | One turn of the coding agent; before it, the wall-clock and budget limits | No |
+| `guard_snapshot` | Restores the files that define done if the agent touched them (`tampered`), snapshots the work | No |
+| `ensure_app` | Starts or refreshes the app | No |
+| `test` | Replays every approved check in Chromium | No |
+| `score` | Scores the attempt, reverts a worse one to the best, ends the run on a pass or when no round is left | No |
+| `triage` | Chooses the next move among the legal ones | Triage, when a model is configured; otherwise the 0.4 rules |
+| `ask_user` | Waits for a person's answer to Triage's question | No |
+| `diagnose` | Writes the repair prompt from the browser's evidence; adds the Diagnoser's brief as a marked lead | The Diagnoser, when a model is configured |
+| `finalize` | Restores the best attempt, writes the evidence, settles the outcome | No |
+
+- **State and context.** `state.py: LoopState` is plain data (ids, attempts,
+  snapshot commits, the prompt, scores, decisions) and is all a later
+  process needs. The browser, dev server, coding agent, snapshot repository
+  and models are in `context.py: RunContext` and are built again on resume.
+  Each attempt's `RunResult` is also written to
+  `attempt-<n>/run-result.json`, because a resumed run needs the failures to
+  write the next repair prompt.
+- **Drafting looks at the app first.** Before the Intent agent is asked,
+  the `intent` node starts the app and passes it the page's roles, labels,
+  placeholders and test ids (`ui_snapshot`, marked as untrusted). Checks
+  drafted without it name things the app does not have, and a coding agent
+  told to make them pass renames the app to fit; a live run did exactly
+  that. When nothing runs yet the checks are drafted from the goal alone.
+  The page is read as it loads, so names that only exist after an action
+  (the label a new task's checkbox gets) are still guessed.
+- **Routing.** `routing.py` holds every edge as a pure function of the
+  state. A state with a terminal outcome goes to `finalize` from every node;
+  a move that is not one of the five goes to `finalize`.
+- **Who may say "succeeded".** Only `score`, on a gate decision of `pass`.
+  `finalize` does not trust the state: `settle()` keeps `succeeded` only when
+  `decide()` run again on the last attempt's recorded verdicts returns
+  `pass`, and otherwise ends the run as `failed_checks`.
+- **Triage** (`crew/triage.py`). `legal_moves()` is code: no repair when no
+  round or budget is left; no same-session repair after a revert; a
+  rollback only when an earlier attempt is still the best; a question only
+  when a person is at the terminal and has not been asked yet in this run.
+  The model sees only the legal moves and answers with one and a one-line
+  reason. Anything else (a move that is not legal now, a word that is not a
+  move, a model error, a spent budget) is replaced by `rule_move()`, the 0.4
+  rules, and what the model answered is kept in `rejected` and shown in the
+  report. Triage has no tools.
+- **Corrections.** A correction is text from the person about what done
+  means. It is taken at the approval prompt, at Triage's question, from
+  `--resume RUN --correct TEXT`, and from the controller's `corrections`
+  callable before each turn and after each failed attempt. It goes to the
+  Intent agent with the current checks; if the contract's hash changes it is
+  saved unapproved and `approve` waits again. Checks that did not change keep
+  the exact criterion that was approved. After a change, the next prompt
+  restates the whole job in a fresh session, and the files that are there
+  stay the fallback with a score any attempt that runs will beat.
+- **Stopping.** Ctrl+C, or leaving a prompt, stops the app, kills the
+  agent's process tree, snapshots the unfinished work as `stopped`, restores
+  the best attempt or the baseline, writes the evidence as `cancelled` and
+  exits 130, as on the classic engine.
+- **Resuming** (`GraphController.resume`, `contexer run --resume RUN`). The
+  checkpoint is `checkpoint.sqlite` in the run folder, written with
+  `durability="sync"`. Resume refuses a run with no checkpoint (a classic
+  run), reports a finished run without running anything, and refuses when a
+  file that defines done differs from the hash in the state: those files are
+  not in the snapshots, so a change made while the run was down was approved
+  by nobody. Otherwise the files as they are are kept as
+  `refs/contexer/<run>/before-resume`, the work tree is reset to the snapshot
+  the next node expects, and the graph continues; a pending question is
+  asked again.
+- **Not built.** The Tester does not explore inside the loop: `test` replays
+  approved checks only.
+
 ## 10. Snapshots
 
 `checkpoint/shadow.py: ShadowRepo` is a private git repository at
@@ -807,7 +895,8 @@ wants (`tests/test_guardrails.py`). The plan is in
 | Read secrets or Contexer's files | `read_file` and `grep` refuse paths outside the project, `.contexer/`, `.git/`, dependencies and `.env` files; secrets are masked in tool results and transcripts |
 | Steer the coding agent through the fix prompt | `validated_brief`: files must exist inside the project, the cause and instruction are capped, and the prompt tells the coding agent what a model-written section may not ask for |
 | Plant instructions for later runs | Skills are capped (160 and 800 characters, 30 in the store) and `--no-skills` ignores them; the Intent agent cannot change the goal, writes at most 25 behaviours, and what it adds or rewrites is printed |
-| Redefine "done" or the command Contexer runs | The tamper guard covers `contracts/`, `intent/` and `contexer.toml` |
+| Redefine "done" or the command Contexer runs | The tamper guard covers `contracts/`, `intent/` and `contexer.toml`. A resumed run compares those files with the hashes in its checkpoint and refuses to continue if one changed while it was stopped |
+| Declare the work done | `graph/routing.py: settle`: a run ends `succeeded` only when the gate's decision, computed again from the replayed checks, is `pass`. Triage's moves do not include one that passes a run, and a move outside the legal list is replaced by the rules |
 
 Text from the app (page snapshots, project summaries, diffs, server logs,
 failure reports, saved skills) goes into every prompt inside
@@ -822,6 +911,7 @@ less likely, and nothing depends on it.
 | Intent | none (only `submit`) | No. Code writes the intent file from its answer |
 | Tester | `snapshot`, `click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`, `goto`, `read_errors`, `screenshot`, `expect`, `reset`, `record_finding` | Only the app under test, through its own UI, on its own origin. `screenshot` writes a JPEG into the run folder |
 | Challenger | none (only `submit`) | No. It can only set a confirmed bug aside, with a reason |
+| Triage | none (only `submit`) | No. It chooses one of the moves code lists as legal; no move ends a run as succeeded |
 | Diagnoser | `read_file`, `grep` | No. Both are read-only and confined |
 
 Only the external coding agent edits the project. A new tool for an agent
@@ -880,7 +970,8 @@ result.json            the RunResult, without the page's HTML, text and base64 s
 run.json               contexer run only: the whole RunOutcome (attempts, agent turns, diff, cost)
 server.log             the dev server's output
 checks/<contract>/     per-check screenshots (and traces when kept)
-attempt-<n>/           contexer run: the same, per attempt
+attempt-<n>/           contexer run: the same, per attempt (graph engine: plus run-result.json)
+checkpoint.sqlite      contexer run --engine graph: the state after every node; what --resume reads
 agents/<name>.jsonl    one transcript per Contexer agent (crew/), secrets masked
 replay/                contexer test: a screenshot per replayed finding
 screens/               contexer test: screenshots the Tester took
@@ -1062,6 +1153,7 @@ and prints the fix under each problem.
 | `OPENROUTER_MODEL`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, `ANTHROPIC_MODEL` | Per-provider model overrides |
 | `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | OpenRouter attribution headers |
 | `CONTEXER_AGENT`, `CONTEXER_AGENT_MODEL` | Coding agent and its model (from setup) |
+| `CONTEXER_ENGINE` | `graph` or `classic` (default) for `contexer run`; `--engine` wins |
 | `OPENCODE_SERVER_URL`, `OPENCODE_MODEL_PROVIDER`, `OPENCODE_MODEL_ID` | OpenCode server and model |
 | `CONTEXER_HOME` | Where user settings live (default `~/.contexer`) |
 | `CONTEXER_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` | Pull requests, issues, commit statuses |

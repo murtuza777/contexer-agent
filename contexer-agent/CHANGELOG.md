@@ -7,6 +7,32 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Added
 
+- **`contexer run --engine graph`: the closed loop as a graph** (Phase 3 of
+  the agentic harness, opt-in; `classic` stays the default until the two are
+  measured against each other). Also `CONTEXER_ENGINE=graph`.
+  - **Stop and continue.** `contexer run --resume RUN` continues a run that
+    was stopped with Ctrl+C or whose process died, from a checkpoint in the
+    run folder. The files are reset to the last snapshot first. It refuses
+    when a contract, the intent or `contexer.toml` changed while the run was
+    stopped.
+  - **Approval inside the run.** With a model configured, the Intent agent
+    drafts the checks and the run waits: `y`, `n`, or type what to change.
+    A typed correction redrafts the checks and asks again;
+    `--resume RUN --correct "..."` does the same for a stopped run. Changed
+    checks are never built against until they are approved.
+  - **Triage.** After an attempt that does not pass, a model chooses the
+    next move (repair in the same session, a fresh approach, roll back to
+    the best attempt, ask you, stop) among the moves code lists as legal.
+    An answer outside that list falls back to the 0.4 rules. No move can end
+    a run as succeeded: only the gate's pass does, and it is checked again
+    when the run ends.
+  - **The Diagnoser in the loop.** The repair prompt still carries what the
+    browser saw; the Diagnoser's likely cause is added as a marked lead.
+  - The report and `run.json` list each Triage decision and who made it, the
+    intent, and what each of Contexer's agents used.
+  - With no model configured for Contexer's own agents the graph applies
+    the 0.4 rules; every controller test runs on both engines.
+- New dependencies: `langgraph` and `langgraph-checkpoint-sqlite`.
 - **Guardrails**, built on one rule: assume the model is compromised. A
   page, a file or a saved skill can carry text written to steer it, so each
   guardrail is a property of the code, tested with a scripted model that
