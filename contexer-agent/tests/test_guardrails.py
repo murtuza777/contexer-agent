@@ -27,6 +27,7 @@ from contexer.crew.challenger import challenge
 from contexer.crew.diagnoser import MAX_CAUSE_CHARS, Failure, RepairBrief, diagnose, fix_prompt, validated_brief
 from contexer.crew.intent import MAX_BEHAVIOUR_CHARS, MAX_BEHAVIOURS, run_intent
 from contexer.crew.tester import Finding, run_tester
+from contexer.crew.triage import AttemptView, Situation, triage
 from contexer.crew.untrusted import untrusted
 from contexer.skills.store import MAX_BODY_CHARS, MAX_SKILLS, Skill, SkillError, SkillStore
 from contexer.verification.checks import Check, CheckResult, ExpectationOutcome
@@ -336,6 +337,9 @@ async def test_each_agent_has_exactly_the_tools_in_the_audit_table(tmp_path: Pat
     browser_tools = ["snapshot", "click", "fill", "press", "select", "check", "uncheck", "hover", "goto",
                      "read_errors", "screenshot", "expect", "reset"]  # fmt: skip
     assert intent.bound_tools == ["submit"] and challenger.bound_tools == ["submit"]
+    triager = ScriptedChatModel(submit(move="stop", reason="x"))
+    await triage(Situation(attempts=[AttemptView(n=1, outcome="fail", score=1)], rounds_left=1), triager)
+    assert triager.bound_tools == ["submit"]
     assert tester.bound_tools == [*browser_tools, "record_finding", "submit"]
     assert diagnoser.bound_tools == ["read_file", "grep", "submit"]
     assert _fingerprint(work) == before  # and none of them wrote a file
