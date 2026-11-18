@@ -190,6 +190,14 @@ async def test_many_rounds_do_not_hit_the_graph_step_limit(project: Path) -> Non
     assert outcome.terminal == "failed_checks" and len(outcome.attempts) == 5
 
 
+async def test_a_contract_that_is_not_saved_in_the_project_is_used_as_given(project: Path) -> None:
+    """Like the classic engine: the caller hands over an approved contract; where it is kept is the caller's business."""
+    given = contract(project)
+    (project / ".contexer" / "contracts" / f"{CONTRACT_ID}.json").unlink()
+    outcome = await _graph(project, RecordingAgent([{"app.js": GOOD_JS}])).run(given)
+    assert outcome.terminal == "succeeded", outcome.reason
+
+
 # -- triage with a model -----------------------------------------------------------------------------
 
 

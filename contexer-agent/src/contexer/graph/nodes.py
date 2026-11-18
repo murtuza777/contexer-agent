@@ -62,7 +62,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
     async def intent(state: LoopState) -> dict[str, Any]:
         correction = (state.get("correction") or "").strip()
         contract_id = state.get("contract_id") or ""
-        existing = ctx.store.load(contract_id) if contract_id and ctx.store.exists(contract_id) else None
+        existing = _stored_contract(ctx, contract_id)
         if existing is not None and not correction:
             return {}  # a contract was given; nothing to draft
         if ctx.model is None:
@@ -128,7 +128,9 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
     # -- approve: a person says these checks are what done means ---------------------------
 
     async def approve(state: LoopState) -> dict[str, Any]:
-        contract = ctx.store.load(state["contract_id"])
+        contract = _stored_contract(ctx, state["contract_id"])
+        if contract is None:
+            return {"terminal": "needs_human", "reason": f"Contract '{state['contract_id']}' is not in the project any more."}
         restate = state.get("restate") or ""
         if contract.status == "approved" and contract.content_hash() == state.get("approved_hash"):
             ctx.contract = contract
@@ -561,6 +563,19 @@ async def _ui_snapshot(ctx: RunContext) -> str:
         ctx.event("app", f"The app could not be read before drafting: {exc}")
         return ""
     return seen.ui_snapshot
+
+
+def _stored_contract(ctx: RunContext, contract_id: str) -> Contract | None:
+    """The contract as the project has it; or, when it was handed to the run and never saved there, that one.
+
+    The classic engine takes a contract as an object and never reads it back. A caller that keeps its
+    contracts elsewhere (the benchmark does) must get the same from this engine.
+    """
+    if contract_id and ctx.store.exists(contract_id):
+        return ctx.store.load(contract_id)
+    if ctx.contract is not None and ctx.contract.id == contract_id:
+        return ctx.contract
+    return None
 
 
 def _contract(ctx: RunContext) -> Contract:
