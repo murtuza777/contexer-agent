@@ -1,0 +1,11 @@
+{
+  "goal": "Deleting a user returns 204",
+  "planted": {
+    "file": "src/admin.js",
+    "categories": [
+      "security",
+      "logic"
+    ],
+    "scan": false
+  }
+}

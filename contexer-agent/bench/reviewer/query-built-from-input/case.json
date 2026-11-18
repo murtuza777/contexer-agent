@@ -1,0 +1,10 @@
+{
+  "goal": "Search finds products by part of their name",
+  "planted": {
+    "file": "src/search.js",
+    "categories": [
+      "security"
+    ],
+    "scan": false
+  }
+}

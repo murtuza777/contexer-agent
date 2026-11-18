@@ -50,8 +50,8 @@ def bench(
 ) -> None:
     """Run the seeded-bug benchmark against every fixture app."""
     console = Console()
-    if suite not in ("gate", "tester", "repair"):
-        raise typer.BadParameter(f"unknown suite '{suite}': choose gate, tester or repair", param_hint="--suite")
+    if suite not in ("gate", "tester", "repair", "reviewer"):
+        raise typer.BadParameter(f"unknown suite '{suite}': choose gate, tester, repair or reviewer", param_hint="--suite")
     root = fixtures or _default_fixtures()
     if not root.is_dir():
         raise typer.BadParameter(
@@ -59,6 +59,9 @@ def bench(
             "https://github.com/murtuza777/contexer-agent and run it from contexer-agent/, or pass --fixtures"
         )
 
+    if suite == "reviewer":
+        _bench_reviewer(console, root, app, out, agent)
+        return
     if suite == "repair":
         _bench_repair(console, root, app, out, agent, model, engine, bug, limit, rounds, repair_only)
         return
@@ -188,6 +191,51 @@ def _bench_tester(
         console.print(f"[dim]Results written to {escape(term.path(page))}[/]")
     # A measurement, not a gate: it fails only when it could not measure.
     raise typer.Exit(code=1 if totals.errors else 0)
+
+
+def _bench_reviewer(console: Console, root: Path, only: list[str], out: Path | None, agent: str) -> None:
+    from contexer.bench.reviewer import CaseRun, results_markdown, run_reviewer_bench
+    from contexer.cli import run_cli
+    from contexer.config.project import load_project_env
+    from contexer.llm.chat import describe_model
+
+    if agent not in ("scan", "reviewer"):
+        raise typer.BadParameter("the reviewer suite takes --agent scan (no model) or --agent reviewer", param_hint="--agent")
+    cases = root.parent / "reviewer"
+    model = None
+    if agent == "reviewer":
+        load_project_env(Path.cwd())
+        model = run_cli.crew_model(Path.cwd())
+        if model is None:
+            raise typer.BadParameter("--agent reviewer needs a model: run `contexer setup`, or use --agent scan", param_hint="--agent")
+
+    def progress(run: CaseRun) -> None:
+        if run.planted:
+            mark = f"[green]flagged[/] [dim]by {run.flagged_by}[/]" if run.flagged else "[red]not flagged[/]"
+        else:
+            mark = f"[red]{run.false_high} false high[/]" if run.false_high else "[green]quiet[/]"
+        console.print(f"  {mark} {escape(run.name)} [dim]{len(run.notes)} note(s) {run.seconds:.0f}s[/]")
+
+    term.header(console, "bench", f"{term.path(cases)} · reviewer suite · {agent}")
+    try:
+        report = asyncio.run(run_reviewer_bench(cases, model, only=only or None, on_case=progress))
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    report.model = describe_model(model) if model is not None else ""
+    console.print()
+    console.print(
+        f"Planted issues flagged: [bold]{report.flagged}/{report.planted}[/] · clean diffs with a false high-severity note: "
+        f"[bold]{report.clean_with_high}/{report.clean}[/]"
+    )
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        out.with_suffix(".md").write_text(results_markdown(report), encoding="utf-8", newline=chr(10))
+        console.print(f"[dim]Report written to {escape(str(out))} and {escape(str(out.with_suffix('.md')))}[/]")
+    if not only:  # a run of the whole suite is the published result
+        page = root.parent / "reviewer-results" / f"{agent}.md"
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text(results_markdown(report), encoding="utf-8", newline=chr(10))
 
 
 def _bench_repair(

@@ -1,0 +1,10 @@
+{
+  "goal": "Orders load from the orders service",
+  "planted": {
+    "file": "src/api.js",
+    "categories": [
+      "security"
+    ],
+    "scan": true
+  }
+}

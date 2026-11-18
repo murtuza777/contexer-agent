@@ -1,0 +1,10 @@
+{
+  "goal": "Adding an item that is already in the cart raises its quantity",
+  "planted": {
+    "file": "tests/cart.test.js",
+    "categories": [
+      "tests"
+    ],
+    "scan": true
+  }
+}

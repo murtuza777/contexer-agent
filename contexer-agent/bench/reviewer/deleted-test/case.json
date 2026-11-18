@@ -1,0 +1,10 @@
+{
+  "goal": "The cart total includes quantity",
+  "planted": {
+    "file": "tests/cart.test.js",
+    "categories": [
+      "tests"
+    ],
+    "scan": true
+  }
+}

@@ -1,0 +1,3 @@
+.cart { display: grid; gap: 12px; }
+.cart-total { font-weight: 600; }
+.cart-empty { color: #666; }
