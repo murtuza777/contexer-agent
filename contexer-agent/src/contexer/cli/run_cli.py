@@ -8,7 +8,7 @@ import shutil
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import typer
 from rich.console import Console
@@ -28,12 +28,14 @@ from contexer.cli.gate_cli import (
 )
 from contexer.config.project import AgentSettings, ProjectConfigError, load_project_config, load_project_env
 from contexer.contract import Contract, ContractError, ContractStore
-from contexer.controller import RunController, RunOutcome, RunSettings
+from contexer.controller import Engine, RunController, RunOutcome, RunSettings
+from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
 from contexer.evidence import RunDir
 from contexer.gate import RunResult
 from contexer.gate.session import VerificationSession
 from contexer.github.api import GitHubClient, GitHubError, github_token
 from contexer.github.handoff import Handoff, HandoffError, HandoffPlan, hand_off, plan_handoff
+from contexer.graph import GraphController, ResumeError
 from contexer.llm import discovery
 from contexer.workflow.criteria import GoalAnalyzer
 
@@ -54,10 +56,22 @@ def run(
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
     pr: bool = typer.Option(False, "--pr", help="Commit the result to a new branch and open a pull request with the evidence."),
     issue: int | None = typer.Option(None, "--issue", min=1, help="Take the goal from this GitHub issue; the pull request closes it."),
+    engine: str | None = typer.Option(
+        None, "--engine", help="graph (can wait for you, stop and resume) or classic (default). Also CONTEXER_ENGINE."
+    ),
+    resume: str | None = typer.Option(None, "--resume", metavar="RUN", help="Continue a stopped run of the graph engine."),
+    correct: str | None = typer.Option(None, "--correct", help="With --resume: a correction to what done means, applied first."),
 ) -> None:
     """Turn a goal into approved checks, have a coding agent build it, prove it, and repair until it passes."""
-    if sum((bool(goal), bool(contract_id), issue is not None)) != 1:
-        raise typer.BadParameter("give a GOAL, --contract ID or --issue N")
+    if sum((bool(goal), bool(contract_id), issue is not None, bool(resume))) != 1:
+        raise typer.BadParameter("give a GOAL, --contract ID, --issue N or --resume RUN")
+    chosen = choose_engine(engine)
+    if resume:
+        if engine is not None and chosen != "graph":
+            raise typer.BadParameter("--resume continues a run of the graph engine; drop --engine classic")
+        chosen = "graph"
+    elif correct:
+        raise typer.BadParameter("--correct goes with --resume RUN: it corrects a run that was stopped")
     console = Console()
     project = project_dir.resolve()
     unsafe = unsafe_work_tree(project)
@@ -81,6 +95,54 @@ def run(
         agent = create_agent(*choose_agent(config.agent, agent_name, model))
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    if chosen == "graph":
+        settings = RunSettings(
+            max_repair_rounds=rounds if rounds is not None else config.agent.max_repair_rounds,
+            budget_usd=budget if budget is not None else config.agent.budget_usd,
+            turn_timeout=config.agent.turn_timeout,
+            judged_policy=config.gate.judged,
+            replay_others=not no_replay,
+        )
+        crew_budget = Budget(max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=config.limits.cost_usd)
+        model_for_crew = crew_model(project)
+        draft_id = None
+        contract = None
+        graph_preview: RunResult | None = None
+        graph_analyzer: GoalAnalyzer | None = None
+        if issue is not None:
+            goal, draft_id = issue_goal(console, handoff_plan, issue, store)
+        if contract_id:
+            try:
+                contract = store.load(contract_id)
+            except ContractError as exc:
+                raise typer.BadParameter(str(exc)) from exc
+        elif goal and model_for_crew is None:
+            # No model for the Intent agent: the checks are drafted the 0.4 way, and approved before the run.
+            drafting = compiler_llm(project)
+            check_free_quota(console, drafting, agent, yes)
+            contract, graph_preview, graph_analyzer = _draft(console, project, store, goal, url, drafting, draft_id)
+        if contract is not None and contract.status != "approved":
+            contract = _approve(console, store, contract, yes, graph_preview, graph_analyzer)
+        outcome = execute_graph(
+            console,
+            project,
+            agent,
+            store,
+            settings,
+            url,
+            model=model_for_crew,
+            budget=crew_budget,
+            yes=yes,
+            contract=contract,
+            goal=goal,
+            contract_id=draft_id,
+            resume=resume,
+            correction=correct,
+        )
+        final = store.load(outcome.contract_id) if outcome.contract_id and store.exists(outcome.contract_id) else None
+        _finish(console, outcome, final, handoff_plan, pr, issue, open_report)
+        return
+
     draft_id: str | None = None
     if issue is not None:
         goal, draft_id = issue_goal(console, handoff_plan, issue, store)
@@ -108,9 +170,22 @@ def run(
         replay_others=not no_replay,
     )
     outcome = execute_run(console, project, agent, contract, store, settings, url)
+    _finish(console, outcome, contract, handoff_plan, pr, issue, open_report)
+
+
+def _finish(
+    console: Console,
+    outcome: RunOutcome,
+    contract: Contract | None,
+    handoff_plan: HandoffPlan | None,
+    pr: bool,
+    issue: int | None,
+    open_report: bool,
+) -> None:
+    """Hand the result off if asked, print it, and exit with the outcome's code."""
     handoff: Handoff | None = None
     handoff_error: str | None = None
-    if handoff_plan is not None and outcome.terminal not in ("tampered", "cancelled"):
+    if handoff_plan is not None and contract is not None and outcome.terminal not in ("tampered", "cancelled"):
         with console.status("[dim]Committing the work to a branch and opening a pull request...[/dim]"):
             try:
                 handoff = hand_off(handoff_plan, outcome, contract, issue=issue)
@@ -122,33 +197,39 @@ def run(
     raise typer.Exit(code=outcome.exit_code)
 
 
-def execute_run(
-    console: Console,
-    project: Path,
-    agent: CodingAgentAdapter,
-    contract: Contract,
-    store: ContractStore,
-    settings: RunSettings,
-    url: str | None = None,
-    on_progress: Callable[[str, str], None] | None = None,
-) -> RunOutcome:
-    """Drive the agent to the approved contract, printing progress; Ctrl+C ends in a "cancelled" outcome."""
-    others = [c for c in store.list() if c.id != contract.id and c.status == "approved"] if settings.replay_others else []
+ENGINES: tuple[str, ...] = get_args(Engine)
+
+
+def choose_engine(flag: str | None) -> Engine:
+    """--engine, then CONTEXER_ENGINE, then classic. The graph becomes the default once it is measured to be as good."""
+    name = (flag or os.environ.get("CONTEXER_ENGINE") or "classic").strip().lower()
+    if name not in ENGINES:
+        source = "--engine" if flag else "CONTEXER_ENGINE"
+        raise typer.BadParameter(f"{source} is '{name}'; choose graph or classic")
+    return name  # type: ignore[return-value]
+
+
+def crew_model(project: Path) -> Any:
+    """The model for Contexer's own agents (Intent, Triage, Diagnoser), or None when none is configured or usable."""
+    from contexer.cli.test_cli import build_model
+    from contexer.llm.base import LLMError
+
+    try:
+        return build_model(project)
+    except (LLMError, ValueError):
+        return None
+
+
+def _limits_line(agent: CodingAgentAdapter, settings: RunSettings) -> str:
     limits = f"up to {settings.max_repair_rounds} repair round(s)"
     if settings.budget_usd:
         # Codex reports tokens, not cost: the round and time limits bound its runs instead.
         limits += " · no spending limit (Codex reports no cost)" if agent.name == "codex" else f" · budget ${settings.budget_usd:.2f}"
-    term.header(console, "run", contract.goal.splitlines()[0] if contract.goal else contract.id)
-    term.fields(
-        console,
-        [
-            ("Agent", escape(agent.describe())),
-            ("Limits", limits),
-            ("Replays", f"{len(others)} other approved contract(s)" if others else ""),
-        ],
-    )
+    return limits
 
-    activity = term.Activity(console)
+
+def _progress(console: Console, activity: term.Activity, on_progress: Callable[[str, str], None] | None = None) -> Callable[[str, str], None]:
+    """Print a run's events as they happen."""
     tool_calls = 0
 
     def on_event(kind: str, message: str) -> None:
@@ -163,6 +244,10 @@ def execute_run(
             console.print(f"{term.mark('info')} [bold]{text}[/]")
             tool_calls = 0
             activity.start("Agent working")
+        elif kind == "phase-quiet":  # one of Contexer's own agents is thinking
+            activity.stop()
+            console.print(f"  [dim]{text}[/]")
+            activity.start(message)
         elif kind == "agent":
             tool_calls += 1
             console.print(f"    [dim]{text}[/]")
@@ -175,11 +260,158 @@ def execute_run(
             mark, style = next((v for k, v in _VERDICT.items() if f": {k}:" in message), ("open", "yellow"))
             console.print(f"  {term.mark(mark)} [{style}]{text}[/]")
         elif kind in ("revert", "strategy"):
+            activity.stop()
             console.print(f"  {term.mark('warn')} {text}")
+        elif kind == "approved":
+            console.print(f"{term.mark('pass')} {text}")
         else:  # the app starting or restarting
             console.print(f"  [dim]{text}[/]")
         if on_progress is not None:
             on_progress(kind, message)
+
+    return on_event
+
+
+def _asker(console: Console, activity: term.Activity, yes: bool) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """How a run on the graph engine puts its questions to the person at the terminal."""
+
+    def ask(request: dict[str, Any]) -> dict[str, Any]:
+        activity.stop()
+        if request.get("kind") == "approve":
+            title = "The checks changed" if request.get("changed") else "Checks drafted from the goal"
+            term.section(console, title, "what will count as done")
+            for line in request.get("checks", []):
+                console.print(f"  {escape(str(line))}")
+            assumptions = [str(a) for a in request.get("assumptions", [])]
+            if assumptions:
+                console.print()
+                console.print("  [dim]Assumed without asking:[/]")
+                term.bullets(console, [escape(a) for a in assumptions], indent=4)
+            console.print()
+            if yes:
+                return {"approve": True}
+            typed = typer.prompt(
+                "Approve these checks as the definition of done? [y/n, or type what to change]", default="n", show_default=False
+            ).strip()
+            if typed.lower() in ("y", "yes"):
+                return {"approve": True}
+            if typed.lower() in ("n", "no", ""):
+                return {"approve": False}
+            return {"correction": typed}
+        attempt = request.get("attempt")
+        term.section(console, f"A question after attempt {attempt}", "the run is waiting for you")
+        console.print(f"  {escape(str(request.get('question') or 'How should this continue?'))}")
+        failing = [str(f) for f in request.get("failing", [])]
+        if failing:
+            console.print(f"  [dim]Failing: {escape(', '.join(failing))}[/]")
+        console.print()
+        typed = typer.prompt("Your answer (Enter lets the run decide, `stop` ends it)", default="", show_default=False).strip()
+        if typed.lower() == "stop":
+            return {"stop": True}
+        return {"answer": typed}
+
+    return ask
+
+
+def execute_graph(
+    console: Console,
+    project: Path,
+    agent: CodingAgentAdapter,
+    store: ContractStore,
+    settings: RunSettings,
+    url: str | None = None,
+    *,
+    model: Any = None,
+    budget: Budget | None = None,
+    yes: bool = False,
+    contract: Contract | None = None,
+    goal: str | None = None,
+    contract_id: str | None = None,
+    resume: str | None = None,
+    correction: str | None = None,
+) -> RunOutcome:
+    """A run on the graph engine: it can wait for an approval or an answer, be stopped, and be resumed."""
+    from contexer.cli.test_cli import is_interactive
+    from contexer.llm.chat import describe_model
+
+    others = [c for c in store.list() if c.status == "approved"] if settings.replay_others else []
+    subject = f"Resuming {resume}" if resume else (contract.goal if contract is not None else goal or "")
+    term.header(console, "run", subject.splitlines()[0] if subject else "")
+    decides = (
+        f"{escape(describe_model(model))} [dim](Intent, Triage, Diagnoser)[/]"
+        if model is not None
+        else "the rules decide [dim](no model is configured for Contexer's own agents; `contexer setup` adds one)[/]"
+    )
+    term.fields(
+        console,
+        [
+            ("Agent", escape(agent.describe())),
+            ("Engine", "graph"),
+            ("Decisions", decides),
+            ("Limits", _limits_line(agent, settings)),
+        ],
+    )
+    activity = term.Activity(console)
+    controller = GraphController(
+        project,
+        agent,
+        settings,
+        url=url,
+        on_event=_progress(console, activity),
+        model=model,
+        ask=_asker(console, activity, yes),
+        # Triage may stop to ask only when a person is at the terminal; an approval is always asked for.
+        can_ask=not yes and is_interactive(),
+        budget=budget,
+    )
+    try:
+        if resume:
+            outcome = asyncio.run(controller.resume(resume, correction=correction))
+        elif contract is not None:
+            outcome = asyncio.run(controller.run(contract, others))
+        else:
+            outcome = asyncio.run(controller.run_goal(goal or "", others=others, contract_id=contract_id))
+    except ResumeError as exc:
+        activity.stop()
+        term.note(console, "fail", f"[red]Cannot resume:[/] {escape(str(exc))}")
+        raise typer.Exit(code=2) from None
+    except (KeyboardInterrupt, typer.Abort, asyncio.CancelledError):
+        activity.stop()
+        if controller.last_outcome is None:  # stopped before the first snapshot
+            term.note(console, "warn", "Stopped. Nothing was changed.")
+            raise typer.Exit(code=130) from None
+        outcome = controller.last_outcome
+    finally:
+        activity.stop()
+        agent.close()
+    return outcome
+
+
+def execute_run(
+    console: Console,
+    project: Path,
+    agent: CodingAgentAdapter,
+    contract: Contract,
+    store: ContractStore,
+    settings: RunSettings,
+    url: str | None = None,
+    on_progress: Callable[[str, str], None] | None = None,
+) -> RunOutcome:
+    """Drive the agent to the approved contract, printing progress; Ctrl+C ends in a "cancelled" outcome."""
+    others = [c for c in store.list() if c.id != contract.id and c.status == "approved"] if settings.replay_others else []
+    limits = _limits_line(agent, settings)
+    term.header(console, "run", contract.goal.splitlines()[0] if contract.goal else contract.id)
+    term.fields(
+        console,
+        [
+            ("Agent", escape(agent.describe())),
+            ("Limits", limits),
+            ("Replays", f"{len(others)} other approved contract(s)" if others else ""),
+        ],
+    )
+
+    activity = term.Activity(console)
+    on_event = _progress(console, activity, on_progress)
 
     controller = RunController(project, agent, settings, url=url, on_event=on_event)
     try:
