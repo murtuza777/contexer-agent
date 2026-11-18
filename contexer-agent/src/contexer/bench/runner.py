@@ -200,7 +200,7 @@ async def run_bench(
             score.valid = False
             score.invalid_reason = "no approved contracts" if not app.contracts else f"not approved: {unapproved}"
             continue
-        with _Workspace(app) as workspace:
+        with Workspace(app) as workspace:
             if live_llm is not None:
                 try:
                     compiled, stats = await _compile_live(app, live_llm, workspace)
@@ -241,7 +241,7 @@ async def run_bench(
     return report
 
 
-class _Workspace:
+class Workspace:
     """A working copy of one fixture app, reused by all of its variants.
 
     Each variant starts from the good files plus its overlay; installed
@@ -271,10 +271,13 @@ class _Workspace:
                     shutil.copyfile(src, dest)
         return self.path
 
-    def __enter__(self) -> _Workspace:
+    def __enter__(self) -> Workspace:
         return self
 
     def __exit__(self, *exc: object) -> None:
+        self.close()
+
+    def close(self) -> None:
         self._tmp.cleanup()
 
 
@@ -297,7 +300,7 @@ def _remove_tree(path: Path, attempts: int = 5) -> None:
 
 
 async def _compile_live(
-    app: FixtureApp, llm: LLMProvider, workspace: _Workspace
+    app: FixtureApp, llm: LLMProvider, workspace: Workspace
 ) -> tuple[Contract | None, CompileStats]:
     """Compile the app's goal with the model, then keep only checks that pass on the good app."""
     started = time.monotonic()
@@ -334,7 +337,7 @@ async def _compile_live(
     return pruned, stats
 
 
-async def _run_variant(app: FixtureApp, variant: Variant, repeat: int, workspace: _Workspace) -> VariantRun:
+async def _run_variant(app: FixtureApp, variant: Variant, repeat: int, workspace: Workspace) -> VariantRun:
     started = time.monotonic()
     work = workspace.materialise(variant.overlay)
     run_dir = RunDir.create(work)

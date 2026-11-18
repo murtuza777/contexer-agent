@@ -1,8 +1,9 @@
 """``contexer bench``: measure catch rate and false-failure rate on seeded bugs.
 
-Two suites share the fixtures: ``gate`` replays each app's approved contract
+Three suites share the fixtures: ``gate`` replays each app's approved contract
 (the default), ``tester`` lets an agent explore each app from its goal and
-replays what it reports.
+replays what it reports, and ``repair`` has a coding agent fix each seeded bug
+on each engine of ``contexer run``.
 """
 
 from __future__ import annotations
@@ -29,15 +30,28 @@ def bench(
     out: Path | None = typer.Option(None, "--out", help="Write the full report as JSON."),
     live: bool = typer.Option(False, "--live", help="Score contracts the LLM compiles from each goal instead."),
     suite: str = typer.Option(
-        "gate", "--suite", help="gate: replay each app's contract. tester: an agent explores each app from its goal."
+        "gate",
+        "--suite",
+        help="gate: replay each app's contract. tester: an agent explores each app from its goal. "
+        "repair: a coding agent fixes each seeded bug on each engine.",
     ),
-    agent: str = typer.Option("stub", "--agent", help="The agent the tester suite measures (stub: reports nothing)."),
+    agent: str = typer.Option(
+        "stub", "--agent", help="tester suite: the agent it measures (stub: reports nothing). repair suite: the coding agent."
+    ),
+    model: str | None = typer.Option(None, "--model", help="Repair suite: the coding agent's model."),
+    engine: list[str] = typer.Option([], "--engine", help="Repair suite: classic and/or graph (default: both)."),
+    bug: list[str] = typer.Option([], "--bug", help="Repair suite: only these bugs, as app/bug (repeatable)."),
+    limit: int | None = typer.Option(None, "--limit", min=1, help="Repair suite: only the first N bugs."),
+    rounds: int = typer.Option(2, "--rounds", min=0, help="Repair suite: repair rounds per bug."),
+    repair_only: bool = typer.Option(
+        False, "--repair-only", help="Repair suite: the first turn changes nothing, so every fix is a repair."
+    ),
     steps: int | None = typer.Option(None, "--steps", min=1, help="Tester suite: the most model calls per app variant."),
 ) -> None:
     """Run the seeded-bug benchmark against every fixture app."""
     console = Console()
-    if suite not in ("gate", "tester"):
-        raise typer.BadParameter(f"unknown suite '{suite}': choose gate or tester", param_hint="--suite")
+    if suite not in ("gate", "tester", "repair"):
+        raise typer.BadParameter(f"unknown suite '{suite}': choose gate, tester or repair", param_hint="--suite")
     root = fixtures or _default_fixtures()
     if not root.is_dir():
         raise typer.BadParameter(
@@ -45,6 +59,9 @@ def bench(
             "https://github.com/murtuza777/contexer-agent and run it from contexer-agent/, or pass --fixtures"
         )
 
+    if suite == "repair":
+        _bench_repair(console, root, app, out, agent, model, engine, bug, limit, rounds, repair_only)
+        return
     if suite == "tester":
         if live:
             raise typer.BadParameter("--live belongs to the gate suite; the tester suite takes --agent")
@@ -171,6 +188,89 @@ def _bench_tester(
         console.print(f"[dim]Results written to {escape(term.path(page))}[/]")
     # A measurement, not a gate: it fails only when it could not measure.
     raise typer.Exit(code=1 if totals.errors else 0)
+
+
+def _bench_repair(
+    console: Console,
+    root: Path,
+    only: list[str],
+    out: Path | None,
+    agent: str,
+    model: str | None,
+    engines: list[str],
+    bugs: list[str],
+    limit: int | None,
+    rounds: int,
+    repair_only: bool,
+) -> None:
+    from contexer.agents import create_agent
+    from contexer.bench.repair import ENGINES, RepairRun, results_markdown, run_repair_bench
+    from contexer.cli import run_cli
+    from contexer.config.project import load_project_env
+    from contexer.llm.chat import describe_model
+
+    if agent == "stub":
+        raise typer.BadParameter("the repair suite needs a coding agent: --agent claude-code, codex or opencode", param_hint="--agent")
+    try:
+        create_agent(agent, model).close()  # refuse a name or a turns file that cannot work before anything runs
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--agent") from exc
+    load_project_env(Path.cwd())
+    crew = run_cli.crew_model(Path.cwd())
+
+    def progress(run: RepairRun) -> None:
+        mark = "[green]fixed[/]" if run.fixed else f"[red]{escape(run.terminal)}[/]"
+        cost = f" ${run.cost_usd:.2f}" if run.cost_usd else ""
+        moves = f" [dim]({escape(', '.join(run.moves))})[/]" if run.moves else ""
+        console.print(
+            f"  {mark} {escape(run.app)}/{escape(run.bug)} [dim]on[/] {run.engine} · {run.attempts} attempt(s){moves} "
+            f"[dim]{run.duration_seconds:.0f}s{cost}[/]"
+        )
+
+    chosen = engines or list(ENGINES)
+    mode = "repair only" if repair_only else "from the first turn"
+    term.header(console, "bench", f"{term.path(root)} · repair suite · {agent} · {' and '.join(chosen)} · {mode}")
+    try:
+        report = asyncio.run(
+            run_repair_bench(
+                root,
+                lambda: create_agent(agent, model),
+                engines=chosen,
+                only=only or None,
+                bugs=bugs or None,
+                limit=limit,
+                rounds=rounds,
+                repair_only=repair_only,
+                model=crew,
+                on_run=progress,
+            )
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    report.agent = f"{agent} ({model})" if model else agent
+    report.crew_model = describe_model(crew) if crew is not None else ""
+
+    table = Table(title="Repair benchmark", show_lines=False)
+    for column in ("Engine", "Bugs", "Fixed", "First try", "After a repair", "Attempts", "Minutes", "Agent cost"):
+        table.add_column(column, justify="right" if column != "Engine" else "left")
+    for score in report.scores:
+        table.add_row(
+            score.engine,
+            str(score.bugs),
+            str(score.fixed),
+            str(score.first_try),
+            str(score.after_repair),
+            str(score.attempts),
+            f"{score.seconds / 60:.1f}",
+            f"${score.cost_usd:.2f}" if score.cost_usd else "—",
+        )
+    console.print()
+    console.print(table)
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        out.with_suffix(".md").write_text(results_markdown(report), encoding="utf-8")
+        console.print(f"[dim]Report written to {escape(str(out))} and {escape(str(out.with_suffix('.md')))}[/]")
 
 
 def _tester_line(run: object) -> str:

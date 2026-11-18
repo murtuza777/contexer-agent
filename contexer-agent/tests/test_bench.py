@@ -169,7 +169,7 @@ def test_a_folder_a_stopped_dev_server_is_still_writing_to_does_not_end_the_benc
             raise OSError(39, "Directory not empty", str(path))
         real_rmtree(path, *args, **kwargs)
 
-    with runner._Workspace(app) as workspace:
+    with runner.Workspace(app) as workspace:
         work = workspace.materialise()
         (work / ".next" / "dev" / "cache").mkdir(parents=True)
         (work / ".next" / "dev" / "cache" / "x").write_text("busy", encoding="utf-8")
