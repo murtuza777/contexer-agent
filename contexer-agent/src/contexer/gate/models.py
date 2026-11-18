@@ -75,6 +75,26 @@ class AttemptRow(BaseModel):
     cost_usd: float | None = None
 
 
+class TriageRow(BaseModel):
+    """One decision about what to do after an attempt that did not pass (graph engine)."""
+
+    attempt: int
+    move: str
+    reason: str = ""
+    source: str = "rules"  # "model" or "rules"
+    rejected: str = ""  # what a model answered when that answer was not used
+
+
+class AgentRow(BaseModel):
+    """What one of Contexer's own agents used in the run."""
+
+    agent: str
+    steps: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float | None = None
+
+
 class AgentRunSummary(BaseModel):
     """How a coding agent was driven to the state that was verified."""
 
@@ -85,6 +105,11 @@ class AgentRunSummary(BaseModel):
     attempts: list[AttemptRow] = Field(default_factory=list)
     cost_usd: float = 0.0
     diff: str = ""
+    engine: str = "classic"
+    triage: list[TriageRow] = Field(default_factory=list)
+    agents: list[AgentRow] = Field(default_factory=list)
+    intent_id: str = ""
+    corrections: list[str] = Field(default_factory=list)
 
 
 class RunResult(BaseModel):

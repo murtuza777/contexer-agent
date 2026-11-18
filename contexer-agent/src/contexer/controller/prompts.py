@@ -96,6 +96,23 @@ def repair_prompt(
     return "\n\n".join(parts)
 
 
+def failure_report(result: RunResult) -> str:
+    """The checks that did not pass, with what the browser saw. It quotes the app, so callers treat it as untrusted."""
+    return "\n\n".join(_bundle(cid, r) for cid, r in _failing(result))
+
+
+def restated_prompt(contract: Contract, others: list[Contract], correction: str) -> str:
+    """The whole job again, after the person changed what done means in the middle of a run."""
+    return "\n\n".join(
+        [
+            f"The person you are working for corrected the goal while you were working on it:\n{correction.strip()}",
+            implement_prompt(contract, None, others),
+            "The project already holds earlier work on this goal. Keep what still fits, and change what the "
+            "correction and the checks above require.",
+        ]
+    )
+
+
 def _results(verification: VerificationResult | None) -> list[CriterionResult]:
     return verification.criteria_results if verification is not None else []
 

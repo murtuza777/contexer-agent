@@ -60,6 +60,7 @@ The same groups as `contexer --help`:
 | `contexer test --again` | Replays the checks the last run saved, with no model; explores further only when they pass |
 | `contexer test --correct "..."` | Records what you meant ("deleting should ask first") in the intent and tests again |
 | `contexer run "GOAL"` / `--contract ID` | Approve the checklist, drive the coding agent, prove, repair, and keep the best attempt |
+| `contexer run ... --engine graph` | The same loop on the engine that can wait for you, be stopped and continue: `contexer run --resume RUN`, with `--correct "..."` to change what done means first. Opt-in |
 | `contexer run ... --pr` / `--issue N` | End in a pull request with the evidence; with `--issue` the goal comes from the issue and the PR closes it |
 | `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
 | `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |

@@ -1,0 +1,92 @@
+"""What a run is configured with and what it reports. Shared by both engines."""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from contexer import __version__
+from contexer.agents.base import AgentTurn
+from contexer.crew.triage import TriageDecision
+from contexer.evidence.test_report import AgentUsage
+from contexer.gate.models import JudgedPolicy, RunResult
+
+TerminalState = Literal[
+    "succeeded",
+    "failed_checks",
+    "needs_human",
+    "budget_exhausted",
+    "timed_out",
+    "tampered",
+    "agent_error",
+    "app_error",
+    "cancelled",
+]
+
+Engine = Literal["classic", "graph"]
+
+
+class RunSettings(BaseModel):
+    max_repair_rounds: int = 2
+    budget_usd: float | None = None
+    turn_timeout: float = 900.0
+    wall_clock: float = 3600.0
+    judged_policy: JudgedPolicy = "advisory"
+    replay_others: bool = True
+
+
+class Attempt(BaseModel):
+    n: int
+    kind: Literal["implement", "repair"]
+    fresh_session: bool
+    agent: AgentTurn
+    snapshot: str
+    changed_files: list[str] = Field(default_factory=list)
+    outcome: str
+    verified: int = 0
+    refuted: int = 0
+    unverified: int = 0
+    score: int
+    signatures: list[str] = Field(default_factory=list)
+    reverted_to: int | None = None
+    note: str = ""
+    result_dir: str = ""
+
+
+class RunOutcome(BaseModel):
+    run_id: str
+    contract_id: str
+    agent: str
+    terminal: TerminalState
+    reason: str = ""
+    attempts: list[Attempt] = Field(default_factory=list)
+    best_attempt: int | None = None
+    final: RunResult | None = None
+    cost_usd: float = 0.0
+    duration_seconds: float = 0.0
+    started_at: str = ""
+    diff: str = ""
+    changed_files: list[str] = Field(default_factory=list)  # project-relative, baseline → what was left
+    run_dir: str = ""
+    contexer_version: str = __version__
+    # Which loop drove the run, and what only the graph engine records.
+    engine: Engine = "classic"
+    triage: list[TriageDecision] = Field(default_factory=list)
+    agents: list[AgentUsage] = Field(default_factory=list)  # Contexer's own agents: Intent, Triage, Diagnoser
+    intent_id: str = ""
+    corrections: list[str] = Field(default_factory=list)
+
+    @property
+    def exit_code(self) -> int:
+        return {
+            "succeeded": 0,
+            "failed_checks": 1,
+            "needs_human": 2,
+            "tampered": 2,
+            "budget_exhausted": 2,
+            "timed_out": 2,
+            "agent_error": 3,
+            "app_error": 3,
+            "cancelled": 130,  # the shell's code for Ctrl+C
+        }[self.terminal]

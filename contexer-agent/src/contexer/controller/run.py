@@ -21,107 +21,37 @@ the project as it was), keeping the unfinished work as a snapshot.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
-
-from contexer import __version__
-from contexer.agents.base import AgentTurn, CodingAgentAdapter
+from contexer.agents.base import CodingAgentAdapter
 from contexer.appserver import AppStartError, RunningApp, open_app
 from contexer.checkpoint import ShadowRepo
-from contexer.config.project import CONFIG_FILE
 from contexer.contract import Contract
 from contexer.contract.models import utc_now
-from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
+from contexer.controller.models import Attempt, RunOutcome, RunSettings
 from contexer.controller.prompts import implement_prompt, repair_prompt
-from contexer.evidence.report import write_evidence
+from contexer.controller.shared import (
+    DEPENDENCY_FILES,
+    ContractGuard,
+    check_count,
+    score,
+    sig_label,
+    signatures,
+    turn_line,
+    write_run_evidence,
+)
 from contexer.evidence.rundir import RunDir
-from contexer.gate.models import AgentRunSummary, AttemptRow, GateDecision, JudgedPolicy, RunResult
+from contexer.gate.models import GateDecision, RunResult
 from contexer.gate.session import VerificationSession
-from contexer.intent.store import INTENT_DIR
 from contexer.verification.runner import CheckRunner
 from contexer.verification.verifier import Verifier
 from contexer.workflow.inspector import RepositoryInspector
 
-TerminalState = Literal[
-    "succeeded",
-    "failed_checks",
-    "needs_human",
-    "budget_exhausted",
-    "timed_out",
-    "tampered",
-    "agent_error",
-    "app_error",
-    "cancelled",
-]
-
-_DEPENDENCY_FILES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"}
-
 EventFn = Callable[[str, str], None]  # (kind, message)
-
-
-class RunSettings(BaseModel):
-    max_repair_rounds: int = 2
-    budget_usd: float | None = None
-    turn_timeout: float = 900.0
-    wall_clock: float = 3600.0
-    judged_policy: JudgedPolicy = "advisory"
-    replay_others: bool = True
-
-
-class Attempt(BaseModel):
-    n: int
-    kind: Literal["implement", "repair"]
-    fresh_session: bool
-    agent: AgentTurn
-    snapshot: str
-    changed_files: list[str] = Field(default_factory=list)
-    outcome: str
-    verified: int = 0
-    refuted: int = 0
-    unverified: int = 0
-    score: int
-    signatures: list[str] = Field(default_factory=list)
-    reverted_to: int | None = None
-    note: str = ""
-    result_dir: str = ""
-
-
-class RunOutcome(BaseModel):
-    run_id: str
-    contract_id: str
-    agent: str
-    terminal: TerminalState
-    reason: str = ""
-    attempts: list[Attempt] = Field(default_factory=list)
-    best_attempt: int | None = None
-    final: RunResult | None = None
-    cost_usd: float = 0.0
-    duration_seconds: float = 0.0
-    started_at: str = ""
-    diff: str = ""
-    changed_files: list[str] = Field(default_factory=list)  # project-relative, baseline → what was left
-    run_dir: str = ""
-    contexer_version: str = __version__
-
-    @property
-    def exit_code(self) -> int:
-        return {
-            "succeeded": 0,
-            "failed_checks": 1,
-            "needs_human": 2,
-            "tampered": 2,
-            "budget_exhausted": 2,
-            "timed_out": 2,
-            "agent_error": 3,
-            "app_error": 3,
-            "cancelled": 130,  # the shell's code for Ctrl+C
-        }[self.terminal]
 
 
 class RunController:
@@ -155,7 +85,7 @@ class RunController:
         run = RunDir.create(self.project)
         shadow = ShadowRepo(self.project)
         baseline = shadow.snapshot(f"{run.run_id}/0", "baseline")
-        guard = _ContractGuard(self.project)
+        guard = ContractGuard(self.project)
         repo = RepositoryInspector().inspect(self.project)
 
         outcome = RunOutcome(
@@ -227,7 +157,7 @@ class RunController:
                     score=-(10**6),
                 )
                 outcome.attempts.append(attempt)
-                self.on_event("agent-done", _turn_line(turn, changed))
+                self.on_event("agent-done", turn_line(turn, changed))
 
                 if tampered:
                     attempt.note = f"Agent modified what defines done (contracts, intent or contexer.toml): {', '.join(tampered)} (restored)."
@@ -252,7 +182,7 @@ class RunController:
                                 on_status=lambda m: self.on_event("app", m),
                             )
                         )
-                    elif app.server is not None and _DEPENDENCY_FILES & {Path(p).name for p in changed}:
+                    elif app.server is not None and DEPENDENCY_FILES & {Path(p).name for p in changed}:
                         self.on_event("app", "Dependencies changed; reinstalling and restarting the dev server")
                         app.url = app.server.restart(install=True)
                     else:
@@ -268,7 +198,7 @@ class RunController:
                 attempt_dir.path.mkdir(parents=True, exist_ok=True)
                 attempt.result_dir = str(attempt_dir.path)
                 if app_error is None and app is not None:
-                    self.on_event("phase", f"Attempt {n}: proving {_check_count([contract, *others])} checks in Chromium")
+                    self.on_event("phase", f"Attempt {n}: proving {check_count([contract, *others])} checks in Chromium")
                     session = VerificationSession(
                         self.project, attempt_dir, verifier=Verifier(llm_provider=None, runner=self.runner)
                     )
@@ -287,9 +217,9 @@ class RunController:
                     result.decision.refuted,
                     result.decision.unverified,
                 )
-                attempt.score = _score(result, contract.id)
-                signatures = _signatures(result)
-                attempt.signatures = sorted(signatures)
+                attempt.score = score(result, contract.id)
+                sigs = signatures(result)
+                attempt.signatures = sorted(sigs)
                 self.on_event("verdict", f"Attempt {n}: {result.decision.headline()}")
 
                 if result.decision.outcome == "pass":
@@ -307,7 +237,7 @@ class RunController:
                     reverted_from = best
                     attempt.note = f"Scored lower than attempt {best}; reverted to it."
                     self.on_event("revert", attempt.note)
-                    if app is not None and app.server is not None and _DEPENDENCY_FILES & {
+                    if app is not None and app.server is not None and DEPENDENCY_FILES & {
                         Path(p).name for p in shadow.changed_paths(snapshots[n], snapshots[best])
                     }:
                         try:
@@ -325,8 +255,8 @@ class RunController:
                     )
                     break
 
-                repeated_sigs = signatures & last_signatures
-                repeated = sorted({_sig_label(s) for s in repeated_sigs})
+                repeated_sigs = sigs & last_signatures
+                repeated = sorted({sig_label(s) for s in repeated_sigs})
                 fresh = bool(repeated_sigs) or reverted_from is not None
                 if repeated:
                     self.on_event("strategy", f"Same failure again ({', '.join(repeated)}); next repair starts a fresh session")
@@ -339,7 +269,7 @@ class RunController:
                     fresh_session=fresh,
                     others=others,
                 )
-                last_signatures = signatures
+                last_signatures = sigs
 
         # Leave the project in the best state that was reached — and never in a
         # state worse than the one Contexer found: with no usable attempt, the
@@ -360,7 +290,7 @@ class RunController:
         outcome.diff = shadow.diff(baseline, end_snapshot)
         outcome.changed_files = shadow.changed_paths(baseline, end_snapshot)
         outcome.duration_seconds = time.monotonic() - started
-        self._write_evidence(outcome, run, contract)
+        write_run_evidence(self.project, outcome, run)
         self.last_outcome = outcome
         return outcome
 
@@ -390,142 +320,6 @@ class RunController:
         outcome.diff = shadow.diff(snapshots[0], snapshots[target])
         outcome.changed_files = shadow.changed_paths(snapshots[0], snapshots[target])
         outcome.duration_seconds = time.monotonic() - started
-        self._write_evidence(outcome, run, contract)
+        write_run_evidence(self.project, outcome, run)
         self.last_outcome = outcome
 
-    def _write_evidence(self, outcome: RunOutcome, run: RunDir, contract: Contract) -> None:
-        """``run.json`` (the whole outcome) and a report for the state the run left behind."""
-        summary = AgentRunSummary(
-            agent=outcome.agent,
-            terminal=outcome.terminal,
-            reason=outcome.reason,
-            best_attempt=outcome.best_attempt,
-            cost_usd=outcome.cost_usd,
-            diff=outcome.diff,
-            attempts=[
-                AttemptRow(
-                    n=a.n,
-                    kind=a.kind,
-                    fresh_session=a.fresh_session,
-                    agent_status=a.agent.status,
-                    agent_summary=a.agent.summary[:1500],
-                    agent_error=a.agent.error,
-                    changed_files=a.changed_files,
-                    outcome=a.outcome,
-                    verified=a.verified,
-                    refuted=a.refuted,
-                    unverified=a.unverified,
-                    note=a.note,
-                    duration_seconds=a.agent.duration_seconds,
-                    cost_usd=a.agent.cost_usd,
-                )
-                for a in outcome.attempts
-            ],
-        )
-        if outcome.final is not None:
-            report = outcome.final.model_copy(
-                update={"run_id": run.run_id, "run_dir": str(run.path), "agent_run": summary}
-            )
-        else:
-            decision = GateDecision(outcome="error", reasons=[outcome.reason or outcome.terminal])
-            report = RunResult(
-                run_id=run.run_id,
-                project_dir=str(self.project),
-                started_at=outcome.started_at,
-                decision=decision,
-                contracts=[],
-                contexer_version=__version__,
-                run_dir=str(run.path),
-                error=outcome.reason,
-                agent_run=summary,
-            )
-        report.duration_seconds = outcome.duration_seconds
-        write_evidence(report, run)
-        (run.path / "run.json").write_text(outcome.model_dump_json(indent=2, exclude={"final"}), encoding="utf-8")
-
-
-class _ContractGuard:
-    """Keeps the files that say what "done" means, and puts them back if an agent edits them.
-
-    Those are the contracts, the intent (the written goal, its corrections and its checks) and
-    ``contexer.toml``. An agent that could rewrite the first two could make any work pass; one that
-    could write ``contexer.toml`` could choose the command Contexer runs to start or reset the app.
-    """
-
-    def __init__(self, project: Path) -> None:
-        self.base = project
-        self.saved = self._read()
-
-    def _read(self) -> dict[str, bytes]:
-        files: dict[str, bytes] = {}
-        for folder, pattern in ((CONTRACTS_DIR, "*.json"), (INTENT_DIR, "*")):
-            root = self.base / CONTEXER_DIR / folder
-            if root.is_dir():
-                files.update(
-                    {f"{CONTEXER_DIR}/{folder}/{p.name}": p.read_bytes() for p in sorted(root.glob(pattern)) if p.is_file()}
-                )
-        config = self.base / CONFIG_FILE
-        if config.is_file():
-            files[CONFIG_FILE] = config.read_bytes()
-        return files
-
-    def restore_if_changed(self) -> list[str]:
-        current = self._read()
-        touched = sorted(
-            name for name in set(current) | set(self.saved) if current.get(name) != self.saved.get(name)
-        )
-        for name in touched:
-            path = self.base / name
-            if name in self.saved:
-                path.write_bytes(self.saved[name])
-            else:
-                path.unlink(missing_ok=True)
-        return touched
-
-
-def _score(result: RunResult, target_id: str) -> int:
-    """Verified target checks, minus double for every broken regression check."""
-    if result.decision.outcome == "error":
-        return -(10**6)
-    score = 0
-    for outcome in result.contracts:
-        is_target = outcome.contract.id == target_id
-        for r in outcome.verification.criteria_results if outcome.verification else []:
-            if not r.proven:
-                continue
-            if r.verdict == "verified":
-                score += 1 if is_target else 0
-            elif not is_target:
-                score -= 2
-    return score
-
-
-def _signatures(result: RunResult) -> set[str]:
-    sigs: set[str] = set()
-    for outcome in result.contracts:
-        for r in outcome.verification.criteria_results if outcome.verification else []:
-            if not r.proven or r.verdict == "verified":
-                continue
-            check = r.check_result
-            evidence = ""
-            if check is not None:
-                evidence = "|".join(f"{o.description}={o.actual}" for o in check.outcomes if not o.passed)
-                evidence += f"|{check.failed_step or ''}|{(check.page_errors or [''])[0]}"
-            digest = hashlib.sha1(f"{r.verdict}|{evidence}".encode()).hexdigest()[:10]
-            sigs.add(f"{outcome.contract.id}/{r.criterion_id}#{digest}")
-    return sigs
-
-
-def _sig_label(signature: str) -> str:
-    return signature.split("#", 1)[0]
-
-
-def _check_count(contracts: list[Contract]) -> int:
-    return sum(1 for c in contracts for crit in c.criteria if crit.check)
-
-
-def _turn_line(turn: AgentTurn, changed: list[str]) -> str:
-    cost = f", ${turn.cost_usd:.2f}" if turn.cost_usd else ""
-    files = f"{len(changed)} file(s) changed" if changed else "no file changes"
-    status = "done" if turn.ok else f"{turn.status}: {turn.error or ''}".strip()
-    return f"Agent {status} — {files} ({turn.duration_seconds:.0f}s{cost})"

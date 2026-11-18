@@ -121,7 +121,7 @@ A hosted version would add Postgres. Nothing in Phases 0–5 needs a server.
 | --- | --- | --- |
 | Agent loop (Phases 0–2) | Our own small loop, `run_agent` | One agent with tools needs no graph. OpenClaw and Hermes Agent are built the same way |
 | Model calls with tools, any provider | LangChain chat models built from our provider catalog | Our `llm/` layer has no tool calling |
-| Pause for the user, resume (Phase 3) | LangGraph, decided in ticket T3.1 | `interrupt` and checkpoints fit a loop that must wait for a person. Not added before it is needed |
+| Pause for the user, resume (Phase 3) | LangGraph with its SQLite checkpointer, adopted in ticket T3.1 | `interrupt` and checkpoints fit a loop that must wait for a person. The spike result is below |
 | Browser | Playwright in-process, our own tools | Reuses sign-in state and traces; actions can freeze into checks |
 | Tracing | JSONL transcript per agent in the run folder; Langfuse optional | Off by default, self-hostable |
 | Evals | The seeded-bug benchmark (7 apps, 40 bugs, benign variants) | Measures what the Tester must do |
@@ -130,6 +130,21 @@ A hosted version would add Postgres. Nothing in Phases 0–5 needs a server.
 Versions, from the T0.2 spike on 2026-11-15: `langchain-core` 1.8.1,
 `langchain-openai` 1.8.0 and `langchain-anthropic` 1.7.10 are the floors in
 `pyproject.toml`, each capped below 2.0.
+
+**The T3.1 spike, 2026-11-18.** A three-node graph (draft, an `approve`
+node that calls `interrupt`, a `work` node that loops) on `langgraph` 1.2.22
+with `langgraph-checkpoint-sqlite` 3.1.3, run as three separate processes
+on Windows 11 and Python 3.14: the first ran to the interrupt and exited;
+the second answered it from the checkpoint file and was cancelled in the
+middle of `work`; the third continued from the node that was cut off and
+finished with the full state. Pause, resume and cancel all worked, so
+LangGraph was adopted and neither package pulled `langchain-core` above its
+floor. The same three things are now tests of the real loop
+(`tests/test_graph_resume.py`, one of which kills the process outright) and
+run on Linux in CI. Two settings matter and are not the defaults: the
+checkpoint is written with `durability="sync"`, so it is on disk before the
+next node starts, and the step limit is raised from 25, which a run with
+two repair rounds would reach.
 
 ## 9. What is reused and what is replaced
 

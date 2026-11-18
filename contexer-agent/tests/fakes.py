@@ -92,7 +92,7 @@ class AgentScript(BaseChatModel):
 
     ``AgentScript(tester=[...], intent=[...], diagnoser=[...])``. The agent is told apart by the first
     words of its system prompt. An agent with no replies left gets the plainest valid answer (the Intent
-    agent adds nothing to the goal, the Diagnoser has no opinion), so a test scripts only what it is
+    agent adds nothing to the goal, the Diagnoser has no opinion, Triage repairs in the same session), so a test scripts only what it is
     about; the Tester has no default, because a Tester call nobody scripted is a bug in the test.
     """
 
@@ -105,6 +105,7 @@ class AgentScript(BaseChatModel):
         "You are the Intent agent": "intent",
         "You are the Diagnoser": "diagnoser",
         "You are the Challenger": "challenger",
+        "You are Triage": "triage",
     }
 
     def __init__(self, **queues: Any) -> None:
@@ -140,6 +141,8 @@ class AgentScript(BaseChatModel):
             reply = submit()
         elif agent == "challenger":
             reply = submit(verdicts=[])
+        elif agent == "triage":
+            reply = submit(move="repair_same_session", reason="A first failure: repair it where the work was done.")
         else:
             raise AssertionError(f"AgentScript received an unexpected {agent} call")
         if isinstance(reply, BaseException):

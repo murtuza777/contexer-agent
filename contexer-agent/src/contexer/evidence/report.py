@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from contexer.evidence.rundir import RunDir
-from contexer.gate.models import ContractOutcome, RunResult
+from contexer.gate.models import AgentRunSummary, ContractOutcome, RunResult
 from contexer.verification.models import CriterionResult
 
 _METHOD_LABELS = {"assertion": "proven", "judgment": "LLM-judged", "heuristic": "heuristic"}
@@ -268,8 +268,55 @@ def _agent_run_section(result: RunResult) -> str:
   <p><span class="{cls}"><strong>{_e(label)}</strong></span> · {_e(run.agent)}{_e(cost)}</p>
   <p class="muted">{_e(run.reason)}</p>
   {table}
+  {_loop_details(run)}
   {diff}
 </section>"""
+
+
+_MOVE_LABELS = {
+    "repair_same_session": "Repair in the same session",
+    "fresh_approach": "Fresh approach",
+    "rollback_and_retry": "Roll back to the best attempt and retry",
+    "ask_user": "Ask the user",
+    "stop": "Stop",
+}
+
+
+def _loop_details(run: AgentRunSummary) -> str:
+    """What only the graph engine records: the intent, each triage decision, and Contexer's own agents."""
+    parts: list[str] = []
+    if run.intent_id or run.corrections:
+        intent = f"Intent: <code>.contexer/intent/{_e(run.intent_id)}.md</code>" if run.intent_id else ""
+        corrections = "".join(f"<li>{_e(text)}</li>" for text in run.corrections)
+        parts.append(
+            f"<h3>Intent</h3><p class='muted'>{intent}</p>"
+            + (f"<p>Corrections given during the run:</p><ul>{corrections}</ul>" if corrections else "")
+        )
+    if run.triage:
+        rows = "".join(
+            f"<tr><td>{d.attempt}</td><td>{_e(_MOVE_LABELS.get(d.move, d.move))}</td>"
+            f"<td>{'a model' if d.source == 'model' else 'the rules'}</td><td>{_e(d.reason)}"
+            + (f"<div class='muted'>{_e(d.rejected)}</div>" if d.rejected else "")
+            + "</td></tr>"
+            for d in run.triage
+        )
+        parts.append(
+            "<h3>Triage</h3><p class='muted'>What was decided after each attempt that did not pass. A decision can "
+            "choose how to repair; it cannot make a run pass.</p>"
+            f"<table class='diff attempts'><tr><th>After attempt</th><th>Decision</th><th>Decided by</th><th>Reason</th></tr>{rows}</table>"
+        )
+    if run.agents:
+        rows = "".join(
+            f"<tr><td>{_e(a.agent)}</td><td>{a.steps}</td><td>{a.tokens_in:,} in · {a.tokens_out:,} out</td>"
+            f"<td>{f'${a.cost_usd:.4f}' if a.cost_usd is not None else '—'}</td>"
+            f"<td><code>agents/{_e(a.agent)}.jsonl</code></td></tr>"
+            for a in run.agents
+        )
+        parts.append(
+            "<h3>Contexer's agents</h3>"
+            f"<table class='diff attempts'><tr><th>Agent</th><th>Steps</th><th>Tokens</th><th>Cost</th><th>Transcript</th></tr>{rows}</table>"
+        )
+    return "\n".join(parts)
 
 
 _OUTCOME_CLASS = {"pass": "ok", "fail": "bad", "needs_action": "warn", "error": "bad"}
