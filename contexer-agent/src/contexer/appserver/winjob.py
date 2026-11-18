@@ -6,12 +6,15 @@ Terminating the first process leaves the rest holding the port, and
 with ``KILL_ON_JOB_CLOSE`` takes the whole tree down together.
 """
 
+# This module is used on Windows only (procutil imports it behind a platform check). On other
+# platforms the type checker does not know ctypes' Windows API, which is all this file uses.
+# pyright: reportAttributeAccessIssue=false
+
 from __future__ import annotations
 
 import ctypes
 import sys
 from ctypes import wintypes
-from typing import Optional
 
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
@@ -75,7 +78,7 @@ class KillOnCloseJob:
         handle = kernel32.CreateJobObjectW(None, None)
         if not handle:
             raise ctypes.WinError(ctypes.get_last_error())
-        self._handle: Optional[int] = handle
+        self._handle: int | None = handle
         info = _ExtendedLimitInformation()
         info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         ok = kernel32.SetInformationJobObject(

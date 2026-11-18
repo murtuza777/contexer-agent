@@ -22,7 +22,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from contexer.agents.base import AgentTurn, CodingAgentAdapter, ProgressFn
 from contexer.procutil import AGENT_SESSION_PREFIXES, AGENT_SESSION_VARS, ProcessTree, spawn_tree
@@ -83,10 +83,10 @@ class ClaudeCodeAgent(CodingAgentAdapter):
     def __init__(
         self,
         executable: str = "claude",
-        model: Optional[str] = None,
+        model: str | None = None,
         allowed_tools: tuple[str, ...] = DEFAULT_ALLOWED_TOOLS,
         denied_tools: tuple[str, ...] = DENIED_TOOLS,
-        extra_args: Optional[list[str]] = None,
+        extra_args: list[str] | None = None,
     ) -> None:
         self.executable = shutil.which(executable) or executable
         self.model = model
@@ -97,7 +97,7 @@ class ClaudeCodeAgent(CodingAgentAdapter):
     def describe(self) -> str:
         return f"claude-code{f' ({self.model})' if self.model else ''}"
 
-    def argv(self, session_id: Optional[str], budget_usd: Optional[float]) -> list[str]:
+    def argv(self, session_id: str | None, budget_usd: float | None) -> list[str]:
         args = [
             self.executable,
             "-p",
@@ -124,10 +124,10 @@ class ClaudeCodeAgent(CodingAgentAdapter):
         workdir: Path,
         prompt: str,
         *,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         timeout: float = 900.0,
-        budget_usd: Optional[float] = None,
-        on_progress: Optional[ProgressFn] = None,
+        budget_usd: float | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> AgentTurn:
         try:
             return await asyncio.to_thread(
@@ -143,10 +143,10 @@ class ClaudeCodeAgent(CodingAgentAdapter):
         self,
         workdir: Path,
         prompt: str,
-        session_id: Optional[str],
+        session_id: str | None,
         timeout: float,
-        budget_usd: Optional[float],
-        on_progress: Optional[ProgressFn],
+        budget_usd: float | None,
+        on_progress: ProgressFn | None,
     ) -> AgentTurn:
         started = time.monotonic()
         try:
@@ -179,15 +179,15 @@ class ClaudeCodeAgent(CodingAgentAdapter):
 
 
 class _StreamState:
-    def __init__(self, session_id: Optional[str]) -> None:
+    def __init__(self, session_id: str | None) -> None:
         self.session_id = session_id
-        self.result: Optional[dict[str, Any]] = None
+        self.result: dict[str, Any] | None = None
         self.tool_calls = 0
         self.files: list[str] = []
         self.last_text = ""
         self.noise: list[str] = []
 
-    def to_turn(self, *, timed_out: bool, duration: float, returncode: Optional[int]) -> AgentTurn:
+    def to_turn(self, *, timed_out: bool, duration: float, returncode: int | None) -> AgentTurn:
         r = self.result or {}
         denials = [_denial_text(d) for d in r.get("permission_denials") or []]
         base: dict[str, Any] = dict(
@@ -214,7 +214,7 @@ class _StreamState:
         return AgentTurn(status="completed", **base)
 
 
-def _consume(tree: ProcessTree, state: _StreamState, on_progress: Optional[ProgressFn]) -> None:
+def _consume(tree: ProcessTree, state: _StreamState, on_progress: ProgressFn | None) -> None:
     stdout = tree.proc.stdout
     assert stdout is not None
     for raw in iter(stdout.readline, b""):
@@ -229,7 +229,7 @@ def _consume(tree: ProcessTree, state: _StreamState, on_progress: Optional[Progr
         _handle_event(event, state, on_progress)
 
 
-def _handle_event(event: dict[str, Any], state: _StreamState, on_progress: Optional[ProgressFn]) -> None:
+def _handle_event(event: dict[str, Any], state: _StreamState, on_progress: ProgressFn | None) -> None:
     kind = event.get("type")
     if kind == "system" and event.get("subtype") == "init":
         state.session_id = event.get("session_id") or state.session_id
@@ -273,7 +273,7 @@ def _denial_text(denial: Any) -> str:
     return str(denial)
 
 
-def _float(value: Any) -> Optional[float]:
+def _float(value: Any) -> float | None:
     try:
         return float(value) if value is not None else None
     except (TypeError, ValueError):

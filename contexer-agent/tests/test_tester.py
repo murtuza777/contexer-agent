@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Any
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -45,7 +46,7 @@ async def browsers(tmp_path: Path) -> AsyncIterator[Any]:
     """``await browsers(bug)`` gives a browser session on the todo app, with or without a seeded bug."""
     stack: list[Any] = []
 
-    async def start(bug: Optional[str] = None) -> BrowserSession:
+    async def start(bug: str | None = None) -> BrowserSession:
         work = tmp_path / f"todo-{len(stack)}"
         shutil.copytree(FIXTURES / "todo" / "app", work, ignore=shutil.ignore_patterns("runs"))
         if bug:

@@ -26,7 +26,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from contexer.agents.base import AgentTurn, CodingAgentAdapter, ProgressFn
 from contexer.agents.claude_code import agent_env
@@ -41,9 +41,9 @@ class CodexAgent(CodingAgentAdapter):
     def __init__(
         self,
         executable: str = "codex",
-        model: Optional[str] = None,
+        model: str | None = None,
         network: bool = True,
-        extra_args: Optional[list[str]] = None,
+        extra_args: list[str] | None = None,
     ) -> None:
         self.executable = shutil.which(executable) or executable
         self.model = model
@@ -53,7 +53,7 @@ class CodexAgent(CodingAgentAdapter):
     def describe(self) -> str:
         return f"codex{f' ({self.model})' if self.model else ''}"
 
-    def argv(self, workdir: Path, session_id: Optional[str]) -> list[str]:
+    def argv(self, workdir: Path, session_id: str | None) -> list[str]:
         args = [
             self.executable,
             "exec",
@@ -80,10 +80,10 @@ class CodexAgent(CodingAgentAdapter):
         workdir: Path,
         prompt: str,
         *,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         timeout: float = 900.0,
-        budget_usd: Optional[float] = None,
-        on_progress: Optional[ProgressFn] = None,
+        budget_usd: float | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> AgentTurn:
         # budget_usd is accepted for the interface; Codex reports no cost to enforce it with.
         try:
@@ -98,9 +98,9 @@ class CodexAgent(CodingAgentAdapter):
         self,
         workdir: Path,
         prompt: str,
-        session_id: Optional[str],
+        session_id: str | None,
         timeout: float,
-        on_progress: Optional[ProgressFn],
+        on_progress: ProgressFn | None,
     ) -> AgentTurn:
         started = time.monotonic()
         try:
@@ -133,18 +133,18 @@ class CodexAgent(CodingAgentAdapter):
 
 
 class _CodexStream:
-    def __init__(self, workdir: Path, session_id: Optional[str]) -> None:
+    def __init__(self, workdir: Path, session_id: str | None) -> None:
         self.workdir = workdir
         self.session_id = session_id
         self.completed = False
-        self.failure: Optional[str] = None
+        self.failure: str | None = None
         self.errors: list[str] = []
         self.tool_calls = 0
         self.files: list[str] = []
         self.last_text = ""
         self.noise: list[str] = []
 
-    def handle(self, event: dict[str, Any], on_progress: Optional[ProgressFn]) -> None:
+    def handle(self, event: dict[str, Any], on_progress: ProgressFn | None) -> None:
         kind = event.get("type")
         if kind == "thread.started":
             self.session_id = event.get("thread_id") or self.session_id
@@ -157,9 +157,9 @@ class _CodexStream:
         elif kind == "error":
             self.errors.append(str(event.get("message") or ""))
 
-    def _item(self, kind: str, item: dict[str, Any], on_progress: Optional[ProgressFn]) -> None:
+    def _item(self, kind: str, item: dict[str, Any], on_progress: ProgressFn | None) -> None:
         item_type = item.get("type")
-        progress: Optional[str] = None
+        progress: str | None = None
         if item_type == "command_execution" and kind == "item.started":
             self.tool_calls += 1
             progress = f"$ {str(item.get('command') or '')[:100]}"
@@ -187,7 +187,7 @@ class _CodexStream:
         except (ValueError, OSError):
             return path
 
-    def to_turn(self, *, timed_out: bool, duration: float, returncode: Optional[int]) -> AgentTurn:
+    def to_turn(self, *, timed_out: bool, duration: float, returncode: int | None) -> AgentTurn:
         base: dict[str, Any] = dict(
             session_id=self.session_id,
             summary=self.last_text[:4000],
@@ -205,7 +205,7 @@ class _CodexStream:
         return AgentTurn(status="failed", error=f"no result from codex ({detail[:300]})", **base)
 
 
-def _consume(tree: ProcessTree, state: _CodexStream, on_progress: Optional[ProgressFn]) -> None:
+def _consume(tree: ProcessTree, state: _CodexStream, on_progress: ProgressFn | None) -> None:
     stdout = tree.proc.stdout
     assert stdout is not None
     for raw in iter(stdout.readline, b""):

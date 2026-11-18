@@ -27,7 +27,7 @@ from __future__ import annotations
 import os
 import tomllib
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -39,15 +39,15 @@ CONFIG_FILE = "contexer.toml"
 class AppSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    start: Optional[str] = None
-    port: Optional[int] = None
+    start: str | None = None
+    port: int | None = None
     ready_path: str = "/"
     ready_timeout: float = 120.0
     install: bool = True
     env: dict[str, str] = Field(default_factory=dict)
     # Run before every check to put server-side data back (checks share the
     # app's database), e.g. "npm run db:reset". {url} and {port} are filled in.
-    reset: Optional[str] = None
+    reset: str | None = None
 
 
 class GateSettings(BaseModel):
@@ -56,13 +56,29 @@ class GateSettings(BaseModel):
     judged: Literal["advisory", "block"] = "advisory"
 
 
+class LimitSettings(BaseModel):
+    """What one run of Contexer's own agents may spend.
+
+    ```toml
+    [limits]
+    tokens = 800000     # in and out together; default 1,500,000
+    cost_usd = 2.50     # only where the provider reports prices
+    ```
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    tokens: int | None = Field(default=None, gt=0)
+    cost_usd: float | None = Field(default=None, gt=0)
+
+
 class AgentSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     name: str = "claude-code"
-    model: Optional[str] = None
+    model: str | None = None
     max_repair_rounds: int = 2
-    budget_usd: Optional[float] = None
+    budget_usd: float | None = None
     turn_timeout: float = 900.0
 
 
@@ -96,12 +112,12 @@ class CompilerSettings(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    provider: Optional[str] = None  # any id from contexer.llm.catalog (`contexer models --providers`)
-    model: Optional[str] = None
+    provider: str | None = None  # any id from contexer.llm.catalog (`contexer models --providers`)
+    model: str | None = None
 
     @field_validator("provider")
     @classmethod
-    def _known_provider(cls, value: Optional[str]) -> Optional[str]:
+    def _known_provider(cls, value: str | None) -> str | None:
         if value is None:
             return None
         from contexer.llm.catalog import provider_spec
@@ -113,10 +129,11 @@ class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     app: AppSettings = Field(default_factory=AppSettings)
-    auth: Optional[AuthSettings] = None
+    auth: AuthSettings | None = None
     compiler: CompilerSettings = Field(default_factory=CompilerSettings)
     gate: GateSettings = Field(default_factory=GateSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    limits: LimitSettings = Field(default_factory=LimitSettings)
 
 
 class ProjectConfigError(Exception):

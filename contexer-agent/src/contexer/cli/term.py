@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable, Optional
 
 from rich.console import Console, RenderableType
 from rich.live import Live
-from rich.padding import Padding
 from rich.markup import escape
+from rich.padding import Padding
 from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
@@ -126,7 +126,7 @@ class Activity:
         self.label = ""
         self.detail = ""
         self.started = 0.0
-        self._live: Optional[Live] = None
+        self._live: Live | None = None
 
     def start(self, label: str) -> None:
         self.label, self.detail, self.started = label, "", time.monotonic()

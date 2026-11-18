@@ -9,8 +9,9 @@ checks against the running app, and the diff from Contexer's own snapshots.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
@@ -27,12 +28,12 @@ class AgentTurn(BaseModel):
     """What one agent turn reported. Informational; never a verdict."""
 
     status: TurnStatus
-    session_id: Optional[str] = None
+    session_id: str | None = None
     summary: str = ""
-    error: Optional[str] = None
-    cost_usd: Optional[float] = None
+    error: str | None = None
+    cost_usd: float | None = None
     duration_seconds: float = 0.0
-    num_turns: Optional[int] = None
+    num_turns: int | None = None
     tool_calls: int = 0
     files_touched: list[str] = Field(default_factory=list)
     permission_denials: list[str] = Field(default_factory=list)
@@ -46,7 +47,7 @@ class CodingAgentAdapter(ABC):
     """Runs one turn of a coding agent in a project directory."""
 
     name: str = "agent"
-    _in_flight: "Optional[set[ProcessTree]]" = None
+    _in_flight: set[ProcessTree] | None = None
 
     @abstractmethod
     async def run_turn(
@@ -54,10 +55,10 @@ class CodingAgentAdapter(ABC):
         workdir: Path,
         prompt: str,
         *,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         timeout: float = 900.0,
-        budget_usd: Optional[float] = None,
-        on_progress: Optional[ProgressFn] = None,
+        budget_usd: float | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> AgentTurn:
         """Run ``prompt``; continue ``session_id`` if given, else start fresh."""
 
@@ -73,11 +74,11 @@ class CodingAgentAdapter(ABC):
         for tree in list(self._in_flight or ()):
             tree.kill(grace=2)
 
-    def _track(self, tree: "ProcessTree") -> None:
+    def _track(self, tree: ProcessTree) -> None:
         if self._in_flight is None:
             self._in_flight = set()
         self._in_flight.add(tree)
 
-    def _untrack(self, tree: "ProcessTree") -> None:
+    def _untrack(self, tree: ProcessTree) -> None:
         if self._in_flight is not None:
             self._in_flight.discard(tree)

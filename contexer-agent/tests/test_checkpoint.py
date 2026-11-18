@@ -82,7 +82,7 @@ def test_users_own_git_repo_is_untouched(tmp_path: Path) -> None:
     assert "?? app.js" in status_after and "A " not in status_after  # nothing staged in the user's index
     assert git("for-each-ref") == refs_before  # no refs added to the user's repo
     # Only .contexer/.gitignore is offered for commit; the snapshot repository is ignored.
-    assert [l for l in status_after.splitlines() if ".contexer" in l] == ["?? .contexer/.gitignore"]
+    assert [line for line in status_after.splitlines() if ".contexer" in line] == ["?? .contexer/.gitignore"]
     assert status_before == "?? app.js\n"
 
 

@@ -14,25 +14,24 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Optional
 
 from contexer.agents.base import AgentTurn, CodingAgentAdapter, ProgressFn
 
-FileWrites = dict[str, Optional[str]]
+FileWrites = dict[str, str | None]
 
 
 class ScriptedAgent(CodingAgentAdapter):
     name = "scripted"
 
-    def __init__(self, turns: list[FileWrites], fail_after: Optional[int] = None) -> None:
+    def __init__(self, turns: list[FileWrites], fail_after: int | None = None) -> None:
         self.turns = list(turns)
         self.prompts: list[str] = []
-        self.sessions: list[Optional[str]] = []
+        self.sessions: list[str | None] = []
         self._fail_after = fail_after
         self._session_counter = 0
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "ScriptedAgent":
+    def from_file(cls, path: str | Path) -> ScriptedAgent:
         try:
             turns = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -46,10 +45,10 @@ class ScriptedAgent(CodingAgentAdapter):
         workdir: Path,
         prompt: str,
         *,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         timeout: float = 900.0,
-        budget_usd: Optional[float] = None,
-        on_progress: Optional[ProgressFn] = None,
+        budget_usd: float | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> AgentTurn:
         started = time.monotonic()
         self.prompts.append(prompt)

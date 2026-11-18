@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 
@@ -50,7 +50,7 @@ CANNOT_RUN = _finding("bug", "Archive does nothing", [{"action": "click", "targe
                       {"kind": "visible", "target": {"text": "Archived"}})  # fmt: skip
 
 
-def _app(tmp_path: Path, bug: Optional[str] = None) -> Path:
+def _app(tmp_path: Path, bug: str | None = None) -> Path:
     work = tmp_path / "todo"
     shutil.copytree(FIXTURES / "todo" / "app", work, ignore=shutil.ignore_patterns("runs", "contracts"))
     if bug:
@@ -113,7 +113,7 @@ async def test_every_replay_must_agree_before_a_finding_is_confirmed(tmp_path: P
     """A check that passes once and fails once is flaky, which confirms nothing."""
     flips = iter([None, "the database was not reset"])
 
-    async def before_each() -> Optional[str]:
+    async def before_each() -> str | None:
         return next(flips, None)
 
     with open_app(_app(tmp_path)) as running:

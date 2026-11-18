@@ -8,8 +8,6 @@ check: the agent never has to retell what it did, and cannot misremember it.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 from contexer.verification.checks import Expectation, Step
@@ -25,12 +23,14 @@ class Observation(BaseModel):
     # What the page showed, in the runner's words: `"1 left"`, `<no matching element>`.
     actual: str = ""
     # False when the page was signed out on purpose; None follows the project.
-    login: Optional[bool] = None
+    login: bool | None = None
     # False when a step before it failed part-way, so the steps may not be what the page went through.
     reliable: bool = True
     # A failed `no_errors` with an uncaught exception behind it. A console line alone (a request the
     # server refused) is not a crash.
     crashed: bool = False
+    # Messages the app was showing (role=alert) when the expectation failed: often the reason.
+    messages: list[str] = Field(default_factory=list)
 
 
 class Recorder:
@@ -39,7 +39,7 @@ class Recorder:
     def __init__(self) -> None:
         self.steps: list[Step] = []
         self.observations: list[Observation] = []
-        self.login: Optional[bool] = None
+        self.login: bool | None = None
         # Set when an action failed after it may have changed the page; cleared by a fresh page.
         self.tainted = False
 
@@ -47,7 +47,12 @@ class Recorder:
         self.steps.append(step)
 
     def add_observation(
-        self, expectation: Expectation, passed: bool, actual: str, crashed: bool = False
+        self,
+        expectation: Expectation,
+        passed: bool,
+        actual: str,
+        crashed: bool = False,
+        messages: list[str] | None = None,
     ) -> Observation:
         observation = Observation(
             id=f"e{len(self.observations) + 1}",
@@ -58,15 +63,16 @@ class Recorder:
             login=self.login,
             reliable=not self.tainted,
             crashed=crashed,
+            messages=list(messages or []),
         )
         self.observations.append(observation)
         return observation
 
-    def observation(self, observation_id: str) -> Optional[Observation]:
+    def observation(self, observation_id: str) -> Observation | None:
         wanted = observation_id.strip().lower()
         return next((o for o in self.observations if o.id == wanted), None)
 
-    def start_over(self, login: Optional[bool] = None) -> None:
+    def start_over(self, login: bool | None = None) -> None:
         """A fresh page: later observations start from no steps. Earlier ones keep theirs."""
         self.steps = []
         self.login = login

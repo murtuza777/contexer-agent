@@ -10,8 +10,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
-from typing import Any, Literal, Optional
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -41,7 +41,7 @@ class Contract(BaseModel):
     criteria: list[AcceptanceCriterion] = Field(default_factory=list)
     source: ContractSource = "user"
     created_at: str = Field(default_factory=lambda: utc_now())
-    approval: Optional[Approval] = None
+    approval: Approval | None = None
 
     # -- identity -------------------------------------------------------------
 
@@ -114,7 +114,7 @@ def _criterion_payload(criterion: AcceptanceCriterion) -> dict[str, Any]:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 _SLUG_STOP_WORDS = {"a", "an", "the", "and", "or", "of", "to", "in", "on", "for", "with", "that", "so", "it"}

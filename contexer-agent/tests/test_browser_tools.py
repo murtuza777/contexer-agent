@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import json
 import shutil
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Any
 
 import pytest
 
@@ -28,7 +29,7 @@ TOOL_NAMES = [
 ]  # fmt: skip
 
 
-def _copy(name: str, tmp_path: Path, bug: Optional[str] = None) -> Path:
+def _copy(name: str, tmp_path: Path, bug: str | None = None) -> Path:
     work = tmp_path / name
     shutil.copytree(FIXTURES / name / "app", work, ignore=shutil.ignore_patterns("runs"))
     if bug:
@@ -192,11 +193,11 @@ async def test_reset_runs_the_projects_reset_command_and_reports_when_it_fails(t
     work = _copy("todo", tmp_path)
     ran: list[str] = []
 
-    async def reset_ok() -> Optional[str]:
+    async def reset_ok() -> str | None:
         ran.append("reset")
         return None
 
-    async def reset_broken() -> Optional[str]:
+    async def reset_broken() -> str | None:
         return "`npm run db:reset` exited with code 1"
 
     with open_app(work) as running:
@@ -329,3 +330,18 @@ def test_only_the_password_of_a_sign_in_is_a_secret_not_the_email() -> None:
     )
     env = {"APP_USER": "ada", "APP_PASSWORD": "s3cret-value"}
     assert credential_secrets(by_reference, env) == ["s3cret-value", "123456"]
+
+
+async def test_a_failed_expect_says_what_the_app_is_telling_the_user(tmp_path: Path) -> None:
+    """An app that refuses something usually says why. The Tester should not have to go looking."""
+    work = _copy("bookings", tmp_path)
+    with open_app(work) as running:
+        async with BrowserSession(running.url) as session:
+            await call(session, "click", target={"role": "button", "name": "Book 09:00"})  # no name typed
+            failed = await call(session, "expect", kind="text", target={"test_id": "slot-0900"}, contains="Booked by")
+            passed = await call(session, "expect", kind="text", target={"test_id": "free-count"}, equals="4 free")
+
+            assert failed.startswith("e1 FAIL") and "The page is showing: Enter your name" in failed
+            assert "The page is showing" not in passed
+            assert session.recorder.observations[0].messages == ["Enter your name"]
+            assert session.recorder.observations[1].messages == []

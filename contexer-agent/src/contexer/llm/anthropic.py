@@ -6,7 +6,7 @@ bugs a contract catches.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -30,12 +30,12 @@ DEFAULT_MAX_TOKENS = 16_000
 class AnthropicProvider(LLMProvider):
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         timeout: float = 300.0,
-        transport: Optional[httpx.AsyncBaseTransport] = None,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model or DEFAULT_ANTHROPIC_MODEL
@@ -52,7 +52,7 @@ class AnthropicProvider(LLMProvider):
     def model(self) -> str:
         return self._model
 
-    def validate_configuration(self) -> tuple[bool, Optional[str]]:
+    def validate_configuration(self) -> tuple[bool, str | None]:
         if not self._api_key or not self._api_key.strip():
             return (
                 False,
@@ -65,7 +65,7 @@ class AnthropicProvider(LLMProvider):
     async def generate(
         self,
         prompt: str | list[Any],
-        system_instruction: Optional[str] = None,
+        system_instruction: str | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """One Messages API call. OpenAI-only options (e.g. ``response_format``) are ignored."""

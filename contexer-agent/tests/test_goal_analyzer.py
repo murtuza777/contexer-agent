@@ -1,6 +1,7 @@
 """Tests for GoalAnalyzer ensuring dynamic, goal-specific criteria generation across distinct domains."""
 
 import pytest
+
 from contexer.workflow.criteria import GoalAnalyzer
 
 

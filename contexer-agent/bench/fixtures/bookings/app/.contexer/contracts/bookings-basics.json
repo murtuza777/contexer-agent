@@ -1,0 +1,298 @@
+{
+  "version": 1,
+  "id": "bookings-basics",
+  "goal": "Visitors can book a free time slot with their name, a booked slot cannot be booked again, a booking can be cancelled to free its slot, and the count of free slots stays correct; a name is required",
+  "summary": "Booking, re-booking, cancelling and the free count",
+  "source": "user",
+  "created_at": "2026-11-17T21:53:32Z",
+  "approval": {
+    "by": "contexer-bench",
+    "at": "2026-11-17T21:53:32Z",
+    "sha256": "86025e5a363d5174c6cca86cfc4225eed08cc05163e016af52486c1f2050ab4c"
+  },
+  "criteria": [
+    {
+      "id": "book-shows-name",
+      "description": "Booking a free slot shows it as booked under the name given, and only that slot",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Your name"
+            },
+            "value": "Ada"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Book 10:00"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "slot-1000"
+            },
+            "contains": "Booked by Ada"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "slot-1100"
+            },
+            "contains": "Free"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "slot-0900"
+            },
+            "contains": "Free"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "free-count"
+            },
+            "equals": "3 free"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "two-bookings-names",
+      "description": "Two people booking two slots are each shown under their own name",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Your name"
+            },
+            "value": "Ada"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Book 09:00"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Your name"
+            },
+            "value": "Bo"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Book 11:00"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "slot-0900"
+            },
+            "contains": "Booked by Ada"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "slot-1100"
+            },
+            "contains": "Booked by Bo"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "free-count"
+            },
+            "equals": "2 free"
+          }
+        ]
+      }
+    },
+    {
+      "id": "booked-cannot-rebook",
+      "description": "A booked slot offers Cancel and no longer offers Book",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Your name"
+            },
+            "value": "Ada"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Book 09:00"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "hidden",
+            "target": {
+              "role": "button",
+              "name": "Book 09:00"
+            }
+          },
+          {
+            "kind": "visible",
+            "target": {
+              "role": "button",
+              "name": "Cancel 09:00"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "cancel-frees-right-slot",
+      "description": "Cancelling one of two bookings frees that slot, keeps the other, and raises the free count",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "fill",
+            "target": {
+              "label": "Your name"
+            },
+            "value": "Ada"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Book 09:00"
+            }
+          },
+          {
+            "action": "fill",
+            "target": {
+              "label": "Your name"
+            },
+            "value": "Bo"
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Book 10:00"
+            }
+          },
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Cancel 10:00"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "slot-1000"
+            },
+            "contains": "Free"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "slot-0900"
+            },
+            "contains": "Booked by Ada"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "free-count"
+            },
+            "equals": "3 free"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    },
+    {
+      "id": "name-required",
+      "description": "Booking without a name shows an error and books nothing",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [
+          {
+            "action": "click",
+            "target": {
+              "role": "button",
+              "name": "Book 09:00"
+            }
+          }
+        ],
+        "expect": [
+          {
+            "kind": "visible",
+            "target": {
+              "text": "Enter your name"
+            }
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "slot-0900"
+            },
+            "contains": "Free"
+          },
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "free-count"
+            },
+            "equals": "4 free"
+          }
+        ]
+      }
+    },
+    {
+      "id": "loads-clean",
+      "description": "The app loads with four free slots and no errors",
+      "verification_method": "interactive_test",
+      "check": {
+        "steps": [],
+        "expect": [
+          {
+            "kind": "text",
+            "target": {
+              "test_id": "free-count"
+            },
+            "equals": "4 free"
+          },
+          {
+            "kind": "no_errors"
+          }
+        ]
+      }
+    }
+  ]
+}

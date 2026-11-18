@@ -13,7 +13,6 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -29,8 +28,8 @@ class OpenCodeAgent(CodingAgentAdapter):
 
     def __init__(
         self,
-        model: Optional[str] = None,
-        base_url: Optional[str] = None,
+        model: str | None = None,
+        base_url: str | None = None,
         start_server: bool = True,
     ) -> None:
         from contexer.config.settings import DEFAULT_OPENROUTER_CODING_MODEL, load_config
@@ -48,8 +47,8 @@ class OpenCodeAgent(CodingAgentAdapter):
         self.provider, self.model_id = provider, model_id
         self.base_url = (base_url or config.opencode_server_url).rstrip("/")
         self.start_server = start_server
-        self._server: Optional[ProcessTree] = None
-        self._adapter: Optional[OpenCodeAdapter] = None
+        self._server: ProcessTree | None = None
+        self._adapter: OpenCodeAdapter | None = None
 
     def describe(self) -> str:
         return f"opencode ({self.provider}/{self.model_id})"
@@ -59,10 +58,10 @@ class OpenCodeAgent(CodingAgentAdapter):
         workdir: Path,
         prompt: str,
         *,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         timeout: float = 900.0,
-        budget_usd: Optional[float] = None,
-        on_progress: Optional[ProgressFn] = None,
+        budget_usd: float | None = None,
+        on_progress: ProgressFn | None = None,
     ) -> AgentTurn:
         started = time.monotonic()
         tools = _ToolWatch(Path(workdir))
@@ -157,7 +156,7 @@ class _ToolWatch:
         self.count = 0
         self._seen: set[str] = set()
 
-    async def follow(self, adapter: OpenCodeAdapter, session_id: str, on_progress: Optional[ProgressFn]) -> None:
+    async def follow(self, adapter: OpenCodeAdapter, session_id: str, on_progress: ProgressFn | None) -> None:
         while True:
             await asyncio.sleep(self.interval)
             try:
@@ -166,7 +165,7 @@ class _ToolWatch:
                 continue
 
     async def poll(
-        self, adapter: OpenCodeAdapter, session_id: str, on_progress: Optional[ProgressFn], count: bool = True
+        self, adapter: OpenCodeAdapter, session_id: str, on_progress: ProgressFn | None, count: bool = True
     ) -> None:
         for message in await adapter.get_messages(session_id):
             for part in message.parts:

@@ -10,7 +10,7 @@ goal would be tested differently. Code keeps the rest in its own hands:
   no question is asked: the first reading is taken and recorded as an
   assumption;
 * every draft check is validated by the check language
-  (``workflow/criteria.py: _parse_check``). Invalid ones go back to the agent
+  (``workflow/criteria.py: parse_check``). Invalid ones go back to the agent
   once; what is still invalid is dropped and reported;
 * after a correction only the checks the agent names are replaced or
   removed. The others are the same objects as before, and a check a replay
@@ -19,20 +19,26 @@ goal would be tested differently. Code keeps the rest in its own hands:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field, ValidationError
 
 from contexer.contract.models import slugify
 from contexer.crew.base import AgentSpec, AgentStatus, run_agent
+from contexer.crew.budget import Budget
+from contexer.crew.untrusted import untrusted
 from contexer.intent.store import IntentSpec, SavedCheck
 from contexer.verification.checks import Check
-from contexer.workflow.criteria import CHECK_DSL_GUIDE, _parse_check
+from contexer.workflow.criteria import CHECK_DSL_GUIDE, parse_check
 
 MAX_QUESTIONS = 3
+# How much an Intent agent may write into the stored intent in one run.
+MAX_BEHAVIOURS = 25
+MAX_BEHAVIOUR_CHARS = 300
 _PROMPT = Path(__file__).resolve().parent / "prompts" / "intent.md"
 _MAX_STEPS = 4
 _TIMEOUT = 300.0
@@ -80,7 +86,7 @@ class IntentResult:
     steps: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     error: str = ""
 
 
@@ -92,13 +98,14 @@ async def run_intent(
     goal: str,
     model: BaseChatModel,
     *,
-    stored: Optional[IntentSpec] = None,
+    stored: IntentSpec | None = None,
     existing_checks: Sequence[SavedCheck] = (),
-    correction: Optional[str] = None,
+    correction: str | None = None,
     repo_summary: str = "",
     ui_snapshot: str = "",
     assume: bool = False,
-    run_dir: Optional[Path] = None,
+    run_dir: Path | None = None,
+    budget: Budget | None = None,
 ) -> IntentResult:
     """Write or update the intent for ``goal``.
 
@@ -120,14 +127,14 @@ async def run_intent(
         max_output_tokens=_MAX_OUTPUT_TOKENS,
     )
     task = _task(spec, existing, repo_summary, ui_snapshot, updating=bool(correction), assume=assume)
-    ran = await run_agent(agent, model, [], task, run_dir=run_dir)
+    ran = await run_agent(agent, model, [], task, run_dir=run_dir, budget=budget)
     result.status, result.error, result.steps = ran.status, ran.error, ran.steps
     result.tokens_in, result.tokens_out, result.cost_usd = ran.tokens_in, ran.tokens_out, ran.cost_usd
     if not isinstance(ran.output, IntentDraft):
         return result  # the correction is already in the spec; the checks are untouched
     draft = ran.output
 
-    behaviours = [line for line in (" ".join(b.split()) for b in draft.behaviours) if line]
+    behaviours = [_capped(line) for line in (" ".join(b.split()) for b in draft.behaviours) if line][:MAX_BEHAVIOURS]
     assumptions = _merged(spec.assumptions, draft.assumptions)
     questions = _real_questions(draft.questions)
     if assume:
@@ -149,7 +156,7 @@ async def run_intent(
             timeout=_TIMEOUT,
             max_output_tokens=_MAX_OUTPUT_TOKENS,
         )
-        again = await run_agent(fixing, model, [], _fix_task(invalid), run_dir=run_dir)
+        again = await run_agent(fixing, model, [], _fix_task(invalid), run_dir=run_dir, budget=budget)
         result.steps += again.steps
         result.tokens_in += again.tokens_in
         result.tokens_out += again.tokens_out
@@ -177,9 +184,9 @@ def _task(
         parts += ["", "## Checks this feature already has"]
         parts += [f"- {c.id} ({c.source}): {c.description}" for c in existing]
     if repo_summary.strip():
-        parts += ["", "## The project", repo_summary.strip()]
+        parts += ["", "## The project", untrusted("project", repo_summary)]
     if ui_snapshot.strip():
-        parts += ["", "## The app's page right now", ui_snapshot.strip()]
+        parts += ["", "## The app's page right now", untrusted("page", ui_snapshot)]
     parts.append("")
     if updating and spec.corrections:
         parts.append(
@@ -191,6 +198,10 @@ def _task(
     if assume:
         parts.append("Nobody can answer questions now: still list any real ambiguity as a question, most likely reading first.")
     return "\n".join(parts)
+
+
+def _capped(line: str) -> str:
+    return line if len(line) <= MAX_BEHAVIOUR_CHARS else line[:MAX_BEHAVIOUR_CHARS].rstrip() + "..."
 
 
 def _fix_task(invalid: list[tuple[str, dict[str, Any], str]]) -> str:
@@ -217,7 +228,7 @@ def _validated(drafts: list[DraftCheck]) -> tuple[list[SavedCheck], list[tuple[s
     invalid: list[tuple[str, dict[str, Any], str]] = []
     for draft in drafts:
         check_id = slugify(draft.id) if draft.id.strip() else slugify(draft.description)
-        check = _parse_check(check_id, draft.check)
+        check = parse_check(check_id, draft.check)
         if check is None:
             invalid.append((check_id, draft.check, _why_invalid(draft.check)))
         else:

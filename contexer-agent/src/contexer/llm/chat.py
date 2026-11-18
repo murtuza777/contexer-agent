@@ -15,8 +15,8 @@ an agent do not pay for it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Optional
+from functools import cache
+from typing import TYPE_CHECKING, Any
 
 from contexer.config.settings import DEFAULT_OPENROUTER_MODEL, OPENROUTER_FREE_ROUTER, ContexerConfig, load_config
 from contexer.llm import discovery
@@ -41,7 +41,7 @@ class ModelChoice:
 
     spec: ProviderSpec
     model: str
-    api_key: Optional[str]
+    api_key: str | None
     base_url: str
 
     @property
@@ -49,7 +49,7 @@ class ModelChoice:
         return f"{self.spec.id} model '{self.model}'"
 
 
-def resolve_model(provider: str, model: Optional[str] = None, config: Optional[ContexerConfig] = None) -> ModelChoice:
+def resolve_model(provider: str, model: str | None = None, config: ContexerConfig | None = None) -> ModelChoice:
     """Work out the model, key and endpoint for ``provider``.
 
     Model precedence: ``model``, then ``CONTEXER_LLM_MODEL`` when ``provider``
@@ -87,12 +87,12 @@ def resolve_model(provider: str, model: Optional[str] = None, config: Optional[C
 
 def chat_model(
     provider: str,
-    model: Optional[str] = None,
+    model: str | None = None,
     *,
-    config: Optional[ContexerConfig] = None,
-    max_tokens: Optional[int] = None,
+    config: ContexerConfig | None = None,
+    max_tokens: int | None = None,
     timeout: float = DEFAULT_REQUEST_TIMEOUT,
-    http_async_client: Optional[httpx.AsyncClient] = None,
+    http_async_client: httpx.AsyncClient | None = None,
 ) -> BaseChatModel:
     """A tool-calling chat model for ``provider``. Building it makes no network call.
 
@@ -104,10 +104,11 @@ def chat_model(
     if choice.spec.protocol == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(  # type: ignore[call-arg]
-            model=choice.model,
+        # `model` and `max_tokens` are the documented names; the class declares them as aliases.
+        return ChatAnthropic(
+            model=choice.model,  # pyright: ignore[reportCallIssue]
             api_key=choice.api_key,  # type: ignore[arg-type]
-            max_tokens=max_tokens or 8192,
+            max_tokens=max_tokens or 8192,  # pyright: ignore[reportCallIssue]
             timeout=timeout,
             max_retries=2,
         )
@@ -140,7 +141,7 @@ def chat_model(
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _openai_class(native: bool) -> Any:
     from langchain_openai import ChatOpenAI
 
@@ -150,7 +151,7 @@ def _openai_class(native: bool) -> Any:
     class CompatibleChatOpenAI(ChatOpenAI):
         """ChatOpenAI for another provider's OpenAI-compatible endpoint."""
 
-        def _get_request_payload(self, input_: Any, *, stop: Optional[list[str]] = None, **kwargs: Any) -> dict:
+        def _get_request_payload(self, input_: Any, *, stop: list[str] | None = None, **kwargs: Any) -> dict:
             payload = super()._get_request_payload(input_, stop=stop, **kwargs)
             if "max_completion_tokens" in payload:
                 payload["max_tokens"] = payload.pop("max_completion_tokens")
@@ -163,10 +164,10 @@ def supports_tools(
     provider: str,
     model: str,
     *,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
-    transport: Optional[httpx.BaseTransport] = None,
-) -> Optional[bool]:
+    api_key: str | None = None,
+    base_url: str | None = None,
+    transport: httpx.BaseTransport | None = None,
+) -> bool | None:
     """Whether ``model`` can call tools: True, False, or None when the provider does not say.
 
     A metadata lookup, never a model request. OpenRouter lists each model's
@@ -205,7 +206,7 @@ _NO_TOOLS_PHRASES = (
 )
 
 
-def tool_calling_error(exc: BaseException, model: Any) -> Optional[ToolCallingError]:
+def tool_calling_error(exc: BaseException, model: Any) -> ToolCallingError | None:
     """A :class:`ToolCallingError` naming the model, if ``exc`` is a provider refusing tools; else None."""
     text = str(exc).lower()
     if any(phrase in text for phrase in _NO_TOOLS_PHRASES):
@@ -247,7 +248,7 @@ async def check_tool_calling(model: BaseChatModel) -> str:
     try:
         reply = await bound.ainvoke(messages)
     except Exception as exc:
-        raise tool_calling_error(exc, model) or exc
+        raise (tool_calling_error(exc, model) or exc) from exc
     calls = reply.tool_calls if isinstance(reply, AIMessage) else []
     if not calls:
         raise ToolCallingError(_cannot_call_tools(describe_model(model)) + " It answered without calling the tool.")

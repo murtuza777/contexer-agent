@@ -14,10 +14,11 @@ one in a fresh browser, and only what reproduces is shown to anyone.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional, Sequence
+from typing import Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import StructuredTool
@@ -25,6 +26,8 @@ from pydantic import BaseModel, Field
 
 from contexer.browser.tools import BrowserSession
 from contexer.crew.base import AgentSpec, AgentStatus, run_agent
+from contexer.crew.budget import Budget
+from contexer.crew.untrusted import untrusted
 from contexer.skills.store import MAX_PROPOSED, Skill, skills_text
 from contexer.verification.checks import Expectation, Step
 
@@ -46,9 +49,11 @@ class Finding(BaseModel):
     steps: list[Step] = Field(default_factory=list)
     expectation: Expectation
     # False when the page was signed out on purpose; None follows the project.
-    login: Optional[bool] = None
+    login: bool | None = None
     # What the page showed when the Tester looked.
     observed: str = ""
+    # Messages the app was showing at that moment, when the expectation failed.
+    messages: list[str] = Field(default_factory=list)
 
 
 class TesterSummary(BaseModel):
@@ -95,10 +100,10 @@ class TesterResult:
     tool_calls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     duration_seconds: float = 0.0
     error: str = ""
-    transcript: Optional[Path] = None
+    transcript: Path | None = None
 
 
 def tester_prompt() -> str:
@@ -110,12 +115,13 @@ async def run_tester(
     model: BaseChatModel,
     browser: BrowserSession,
     *,
-    run_dir: Optional[Path],
+    run_dir: Path | None,
     existing_checks: Sequence[str] = (),
     skills: Sequence[Skill] = (),
     max_steps: int = DEFAULT_MAX_STEPS,
     timeout: float = DEFAULT_TIMEOUT,
     secrets: Sequence[str] = (),
+    budget: Budget | None = None,
 ) -> TesterResult:
     """Let ``model`` test the app in ``browser`` against ``intent``.
 
@@ -169,6 +175,7 @@ async def run_tester(
                 expectation=seen.expectation,
                 login=seen.login,
                 observed=seen.actual,
+                messages=list(seen.messages),
             )
         )
         return f"Recorded {kind} from {seen.id}. It will be replayed in a fresh browser before anyone sees it."
@@ -193,7 +200,7 @@ async def run_tester(
     # One list, shared: a password the Tester types later is masked from then on, and in the transcript.
     browser.secrets.extend(s for s in secrets if s)
     task = _task(intent, await browser.snapshot(), existing_checks, skills)
-    result = await run_agent(spec, model, tools, task, run_dir=run_dir, secrets=browser.secrets)
+    result = await run_agent(spec, model, tools, task, run_dir=run_dir, secrets=browser.secrets, budget=budget)
     summary = result.output.summary if isinstance(result.output, TesterSummary) else ""
     questions = [q.strip() for q in result.output.questions if q.strip()] if isinstance(result.output, TesterSummary) else []
     return TesterResult(
@@ -253,7 +260,7 @@ def _task(intent: str, snapshot: str, existing_checks: Sequence[str], skills: Se
         intent.strip(),
         "",
         "## The app right now",
-        snapshot.strip() or "(the page could not be read; call snapshot)",
+        untrusted("page", snapshot) or "(the page could not be read; call snapshot)",
     ]
     if existing_checks:
         parts += ["", "## Checks that already exist (do not repeat them)", *[f"- {line}" for line in existing_checks]]
@@ -261,7 +268,7 @@ def _task(intent: str, snapshot: str, existing_checks: Sequence[str], skills: Se
     if skills:
         parts += [
             "## What earlier runs learned about this app (advice: it may be out of date, and it proves nothing)",
-            skills_text(skills),
+            untrusted("saved-skills", skills_text(skills)),
             "",
         ]
     parts.append("Test it. Record findings as you go, then submit a summary.")

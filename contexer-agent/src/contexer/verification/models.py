@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from contexer.verification.checks import Check, CheckResult
@@ -26,7 +27,7 @@ class AcceptanceCriterion(BaseModel):
     id: str
     description: str
     verification_method: str = "dom_inspection"  # e.g. "dom_inspection", "visual_check", "interactive_test", "console_check"
-    check: Optional[Check] = None
+    check: Check | None = None
 
 
 class GoalAnalysis(BaseModel):
@@ -39,7 +40,7 @@ class GoalAnalysis(BaseModel):
     generated_by: Literal["llm", "rules", "user"] = "user"
     # Backward-compatible fields
     required_text: list[str] = Field(default_factory=list)
-    expected_title: Optional[str] = None
+    expected_title: str | None = None
     disallow_console_errors: bool = True
 
 
@@ -65,7 +66,7 @@ class CriterionResult(BaseModel):
     passed: bool
     evidence: str = ""
     method: VerdictMethod = "judgment"
-    check_result: Optional[CheckResult] = None
+    check_result: CheckResult | None = None
 
     @property
     def verdict(self) -> Verdict:

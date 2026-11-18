@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,8 +20,8 @@ class ContractOutcome(BaseModel):
     """One contract's verification inside a run."""
 
     contract: Contract
-    verification: Optional[VerificationResult] = None
-    error: Optional[str] = None
+    verification: VerificationResult | None = None
+    error: str | None = None
 
     @property
     def status(self) -> ContractStatus:
@@ -64,7 +64,7 @@ class AttemptRow(BaseModel):
     fresh_session: bool = False
     agent_status: str = ""
     agent_summary: str = ""
-    agent_error: Optional[str] = None
+    agent_error: str | None = None
     changed_files: list[str] = Field(default_factory=list)
     outcome: str = ""
     verified: int = 0
@@ -72,7 +72,7 @@ class AttemptRow(BaseModel):
     unverified: int = 0
     note: str = ""
     duration_seconds: float = 0.0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
 
 
 class AgentRunSummary(BaseModel):
@@ -81,7 +81,7 @@ class AgentRunSummary(BaseModel):
     agent: str
     terminal: str
     reason: str = ""
-    best_attempt: Optional[int] = None
+    best_attempt: int | None = None
     attempts: list[AttemptRow] = Field(default_factory=list)
     cost_usd: float = 0.0
     diff: str = ""
@@ -99,9 +99,9 @@ class RunResult(BaseModel):
     require_approval: bool = True
     contracts: list[ContractOutcome] = Field(default_factory=list)
     decision: GateDecision
-    load: Optional[BrowserObservation] = None
+    load: BrowserObservation | None = None
     server_log_tail: str = ""
     contexer_version: str = ""
     run_dir: str = ""
-    error: Optional[str] = None
-    agent_run: Optional[AgentRunSummary] = None
+    error: str | None = None
+    agent_run: AgentRunSummary | None = None

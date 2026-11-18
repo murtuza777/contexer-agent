@@ -17,8 +17,8 @@ environment variable (``${APP_PASSWORD}``) is fine.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from pydantic import BaseModel
 
@@ -30,6 +30,11 @@ SKILLS_DIR = "skills"
 # The most skills one run may add, and the most one run is given.
 MAX_PROPOSED = 3
 MAX_LOADED = 5
+# A skill is read by a model on every later run, so it is kept small, and the store is kept bounded:
+# a page that steers the Tester must not be able to leave a long text, or an endless number of them.
+MAX_DESCRIPTION_CHARS = 160
+MAX_BODY_CHARS = 800
+MAX_SKILLS = 30
 
 _WORD = re.compile(r"[a-z0-9]+")
 # Words that say nothing about what a skill or an intent is about.
@@ -89,12 +94,16 @@ class SkillStore:
     def save(self, skill: Skill, secrets: Sequence[str] = ()) -> Path:
         """Write the skill. Raises :class:`SkillError` for a skill with no name, no description or a secret in it."""
         name = "-".join(_WORD.findall(skill.name.lower()))[:60].strip("-")
-        description = " ".join(skill.description.split())
+        description = _capped(" ".join(skill.description.split()), MAX_DESCRIPTION_CHARS)
         if not name:
             raise SkillError("a skill needs a name")
         if not description:
             raise SkillError(f"the skill '{name}' needs a one-line description")
-        clean = Skill(name=name, description=description, body=skill.body.strip())
+        clean = Skill(name=name, description=description, body=_capped(skill.body.strip(), MAX_BODY_CHARS))
+        if not self.path_for(name).is_file() and len(self.list()) >= MAX_SKILLS:
+            raise SkillError(
+                f"the skill store is full ({MAX_SKILLS} skills). Delete the ones you do not need from {self.root}."
+            )
         text = clean.to_markdown()
         if redact(text, [s for s in secrets if s]) != text or sanitize_sensitive_text(text) != text:
             raise SkillError(
@@ -115,6 +124,10 @@ class SkillStore:
         scored = [(len(wanted & _keywords(f"{skill.name} {skill.description}")), skill) for skill in self.list()]
         best = sorted((item for item in scored if item[0] > 0), key=lambda item: (-item[0], item[1].name))[: max(0, limit)]
         return sorted((skill for _score, skill in best), key=lambda skill: skill.name)
+
+
+def _capped(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit].rstrip() + "..."
 
 
 def skills_text(skills: Sequence[Skill]) -> str:

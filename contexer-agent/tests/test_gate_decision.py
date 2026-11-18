@@ -1,6 +1,5 @@
 """Gate outcomes are fail-safe: only proven verdicts pass, anything undecided blocks."""
 
-from typing import Optional
 
 from contexer.contract import Contract
 from contexer.gate import ContractOutcome, decide
@@ -15,7 +14,7 @@ def _result(cid: str, passed: bool, method: str = "assertion", blocked: bool = F
     )
 
 
-def _outcome(results: list[CriterionResult], approved: bool = True, error: Optional[str] = None) -> ContractOutcome:
+def _outcome(results: list[CriterionResult], approved: bool = True, error: str | None = None) -> ContractOutcome:
     contract = Contract(
         id="c", goal="g", criteria=[AcceptanceCriterion(id=r.criterion_id, description="d") for r in results]
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from contexer.opencode.adapter import CodingAgent, OpenCodeAdapter

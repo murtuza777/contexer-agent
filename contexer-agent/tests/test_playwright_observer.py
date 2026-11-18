@@ -1,6 +1,7 @@
 """Tests for PlaywrightObserver."""
 
 import pytest
+
 from contexer.observer.playwright import PlaywrightObserver
 
 

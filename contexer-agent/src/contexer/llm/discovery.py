@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -24,13 +24,13 @@ class DiscoveryError(Exception):
 @dataclass
 class ModelInfo:
     id: str
-    context: Optional[int] = None
-    free: Optional[bool] = None
-    tools: Optional[bool] = None
-    created: Optional[int] = None
+    context: int | None = None
+    free: bool | None = None
+    tools: bool | None = None
+    created: int | None = None
 
 
-def _headers(spec: ProviderSpec, api_key: Optional[str]) -> dict[str, str]:
+def _headers(spec: ProviderSpec, api_key: str | None) -> dict[str, str]:
     if not api_key:
         return {}
     if spec.protocol == "anthropic":
@@ -38,7 +38,7 @@ def _headers(spec: ProviderSpec, api_key: Optional[str]) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
 
 
-def _get(url: str, spec: ProviderSpec, api_key: Optional[str], transport: Optional[httpx.BaseTransport]) -> Any:
+def _get(url: str, spec: ProviderSpec, api_key: str | None, transport: httpx.BaseTransport | None) -> Any:
     try:
         with httpx.Client(timeout=30, transport=transport) as client:
             response = client.get(url, headers=_headers(spec, api_key))
@@ -57,9 +57,9 @@ def _get(url: str, spec: ProviderSpec, api_key: Optional[str], transport: Option
 
 def list_models(
     spec: ProviderSpec,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
-    transport: Optional[httpx.BaseTransport] = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    transport: httpx.BaseTransport | None = None,
 ) -> list[ModelInfo]:
     """The provider's models, newest first when it says when they were created."""
     root = (base_url or spec.base_url).rstrip("/")
@@ -73,9 +73,9 @@ def list_models(
 
 def check_key(
     spec: ProviderSpec,
-    api_key: Optional[str],
-    base_url: Optional[str] = None,
-    transport: Optional[httpx.BaseTransport] = None,
+    api_key: str | None,
+    base_url: str | None = None,
+    transport: httpx.BaseTransport | None = None,
 ) -> None:
     """Raise :class:`DiscoveryError` unless the provider accepts ``api_key`` (local servers need none)."""
     if spec.id == "openrouter":
@@ -106,8 +106,8 @@ def is_free_model(model: str) -> bool:
 def openrouter_free_quota(
     api_key: str,
     base_url: str = "https://openrouter.ai/api/v1",
-    transport: Optional[httpx.BaseTransport] = None,
-) -> Optional[FreeQuota]:
+    transport: httpx.BaseTransport | None = None,
+) -> FreeQuota | None:
     """Free requests left today, or None when OpenRouter does not say or cannot be reached.
 
     Reading the key's status is not itself a model request.
@@ -116,6 +116,8 @@ def openrouter_free_quota(
         with httpx.Client(timeout=8, transport=transport) as client:
             response = client.get(f"{base_url.rstrip('/')}/key", headers={"Authorization": f"Bearer {api_key}"})
         counts = (response.json().get("data") or {}).get("free_model_daily_requests")
+        if not isinstance(counts, dict):
+            return None
         return FreeQuota(int(counts["used"]), int(counts["limit"]), int(counts["remaining"]))
     except (httpx.HTTPError, ValueError, AttributeError, KeyError, TypeError):
         return None
@@ -134,7 +136,7 @@ async def try_model(provider: Any) -> tuple[bool, str, float]:
 
 def _model_info(row: dict) -> ModelInfo:
     pricing = row.get("pricing") or {}
-    free: Optional[bool] = None
+    free: bool | None = None
     if pricing:
         free = str(pricing.get("prompt")) in ("0", "0.0") and str(pricing.get("completion")) in ("0", "0.0")
     elif str(row.get("id", "")).endswith(":free"):

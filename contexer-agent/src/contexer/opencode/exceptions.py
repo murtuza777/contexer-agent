@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 class OpenCodeError(Exception):
     """Base exception for all OpenCode operations."""
@@ -32,7 +30,7 @@ class OpenCodeTimeoutError(OpenCodeError):
 class OpenCodeAPIError(OpenCodeError):
     """Raised when OpenCode server returns an HTTP error."""
 
-    def __init__(self, message: str, status_code: int, response_body: Optional[str] = None) -> None:
+    def __init__(self, message: str, status_code: int, response_body: str | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.response_body = response_body
@@ -41,7 +39,7 @@ class OpenCodeAPIError(OpenCodeError):
 class OpenCodeExecutionError(OpenCodeError):
     """Raised when OpenCode execution fails during task execution."""
 
-    def __init__(self, message: str, error_name: Optional[str] = None) -> None:
+    def __init__(self, message: str, error_name: str | None = None) -> None:
         super().__init__(message)
         self.error_name = error_name
 

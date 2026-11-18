@@ -30,9 +30,10 @@ import re
 import shutil
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -59,8 +60,8 @@ class Variant:
     app: str
     kind: VariantKind
     name: str
-    overlay: Optional[Path] = None
-    expected_catcher: Optional[str] = None
+    overlay: Path | None = None
+    expected_catcher: str | None = None
 
 
 @dataclass
@@ -85,9 +86,9 @@ class VariantRun(BaseModel):
     verified: int = 0
     refuted: list[str] = Field(default_factory=list)
     unverified: list[str] = Field(default_factory=list)
-    bug_verdict: Optional[BugVerdict] = None
-    expected_catcher: Optional[str] = None
-    caught_by_expected: Optional[bool] = None
+    bug_verdict: BugVerdict | None = None
+    expected_catcher: str | None = None
+    caught_by_expected: bool | None = None
     duration_seconds: float = 0.0
     # Why the run errored (e.g. the app did not start), for diagnosis.
     error: str = ""
@@ -103,7 +104,7 @@ class CompileStats(BaseModel):
     # The model returned nothing usable and the analyzer fell back to rules.
     fallback: bool = False
     # The compiled contract as written by the model, for diagnosing bad checks.
-    contract: Optional[dict] = None
+    contract: dict | None = None
     # Why each dropped check failed on the good app.
     failures: dict[str, str] = Field(default_factory=dict)
 
@@ -112,7 +113,7 @@ class AppScore(BaseModel):
     app: str
     valid: bool = True
     invalid_reason: str = ""
-    compiled: Optional[CompileStats] = None
+    compiled: CompileStats | None = None
     clean_runs: int = 0
     false_failure_runs: int = 0
     gating_checks_on_clean_runs: int = 0
@@ -151,7 +152,7 @@ class BenchReport(BaseModel):
         return total
 
 
-def discover(fixtures_root: Path, only: Optional[list[str]] = None) -> list[FixtureApp]:
+def discover(fixtures_root: Path, only: list[str] | None = None) -> list[FixtureApp]:
     apps: list[FixtureApp] = []
     for root in sorted(p for p in fixtures_root.iterdir() if (p / "app").is_dir()):
         if only and root.name not in only:
@@ -174,10 +175,10 @@ async def run_bench(
     fixtures_root: Path,
     *,
     repeats: int = 3,
-    only: Optional[list[str]] = None,
-    on_run: Optional[Callable[[VariantRun], None]] = None,
-    live_llm: Optional[LLMProvider] = None,
-    on_compiled: Optional[Callable[[str, CompileStats], None]] = None,
+    only: list[str] | None = None,
+    on_run: Callable[[VariantRun], None] | None = None,
+    live_llm: LLMProvider | None = None,
+    on_compiled: Callable[[str, CompileStats], None] | None = None,
 ) -> BenchReport:
     """Score every fixture app.
 
@@ -252,13 +253,13 @@ class _Workspace:
         self._tmp = tempfile.TemporaryDirectory(prefix=f"contexer-bench-{app.name}-", ignore_cleanup_errors=True)
         self.path = Path(self._tmp.name) / "app"
 
-    def materialise(self, overlay: Optional[Path] = None) -> Path:
+    def materialise(self, overlay: Path | None = None) -> Path:
         if self.path.exists():
             for child in self.path.iterdir():
                 if child.name in _KEPT:
                     continue
                 if child.is_dir():
-                    shutil.rmtree(child)
+                    _remove_tree(child)
                 else:
                     child.unlink()
         shutil.copytree(self.source, self.path, ignore=_IGNORED, dirs_exist_ok=True)
@@ -277,9 +278,27 @@ class _Workspace:
         self._tmp.cleanup()
 
 
+def _remove_tree(path: Path, attempts: int = 5) -> None:
+    """Remove a folder of the last variant, even when a dev server that just stopped is still writing to it.
+
+    A stopped Next.js process can go on writing its cache for a moment, and removal then fails with
+    "directory not empty". Try again a few times; what still cannot be removed is build output that the
+    next start overwrites.
+    """
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except OSError:
+            if attempt == attempts - 1:
+                shutil.rmtree(path, ignore_errors=True)
+                return
+            time.sleep(0.3)
+
+
 async def _compile_live(
     app: FixtureApp, llm: LLMProvider, workspace: _Workspace
-) -> tuple[Optional[Contract], CompileStats]:
+) -> tuple[Contract | None, CompileStats]:
     """Compile the app's goal with the model, then keep only checks that pass on the good app."""
     started = time.monotonic()
     goal = app.contracts[0].goal
@@ -400,7 +419,7 @@ def _score(score: AppScore, run: VariantRun) -> None:
 _CATCHER = re.compile(r"caught by:\s*`([^`]+)`", re.IGNORECASE)
 
 
-def _expected_catcher(bug_md: Path) -> Optional[str]:
+def _expected_catcher(bug_md: Path) -> str | None:
     try:
         match = _CATCHER.search(bug_md.read_text(encoding="utf-8"))
     except OSError:

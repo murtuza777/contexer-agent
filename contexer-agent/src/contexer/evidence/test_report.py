@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -32,7 +32,31 @@ class ConfirmedFinding(BaseModel):
     check: list[str] = Field(default_factory=list)
     # What the replay saw.
     evidence: str = ""
-    screenshot: Optional[str] = None
+    screenshot: str | None = None
+
+
+class SetAside(BaseModel):
+    """A finding that reproduced but was judged to be the tester's doing, with the reason."""
+
+    title: str
+    reason: str
+
+
+class Explained(BaseModel):
+    """A finding that reproduced while the app was showing its own message. Not asserted as a bug."""
+
+    title: str
+    messages: list[str] = Field(default_factory=list)
+
+
+class AgentUsage(BaseModel):
+    """What one of Contexer's agents used in a run."""
+
+    agent: str
+    steps: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float | None = None
 
 
 class ExplorationResult(BaseModel):
@@ -42,13 +66,18 @@ class ExplorationResult(BaseModel):
     outcome: Outcome
     bugs: list[ConfirmedFinding] = Field(default_factory=list)
     works: list[ConfirmedFinding] = Field(default_factory=list)
+    # Reproduced, but the app was showing its own message when the check failed (decided by code, no model).
+    # Listed for the person with that message; never asserted as a bug.
+    explained: list[Explained] = Field(default_factory=list)
+    # Reproduced, but set aside by the Challenger as the tester's doing. Shown with the reason, never as bugs.
+    set_aside: list[SetAside] = Field(default_factory=list)
     # Findings that did not reproduce: counted here, detailed in unconfirmed.json, never listed as results.
     unconfirmed: int = 0
     steps: int = 0
     tool_calls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_usd: Optional[float] = None
+    cost_usd: float | None = None
     tester_status: str = ""
     tester_error: str = ""
     summary: str = ""
@@ -60,11 +89,15 @@ class ExplorationResult(BaseModel):
     run_id: str = ""
     run_dir: str = ""
     # The draft contract's id, when it was saved among the project's contracts (--save).
-    contract: Optional[str] = None
+    contract: str | None = None
+    # What each agent used; tokens_in, tokens_out and cost_usd above are their sums.
+    agents: list[AgentUsage] = Field(default_factory=list)
+    # The token budget this run had.
+    budget_tokens: int | None = None
     # The stored intent this run tested against (.contexer/intent/<id>.md).
     intent_id: str = ""
     # fix-prompt.md in the run folder, when there is something to fix.
-    fix_prompt: Optional[str] = None
+    fix_prompt: str | None = None
     # --again: how many saved checks were replayed, and how many still fail.
     replayed: int = 0
     still_failing: int = 0
@@ -171,6 +204,27 @@ def render_test_report(result: ExplorationResult) -> str:
             _findings("Bugs", "refuted", "✗", result.bugs, "Nothing the tester reported as a bug reproduced."),
             prompt_html,
             _findings("Working behaviours", "verified", "✓", result.works, ""),
+            (
+                '<section class="card reasons"><h2>Set aside</h2><p class="muted">These reproduced, but a second '
+                "look judged them to be the tester's doing, not the app's. Check the reason; if one is a real bug, "
+                "it was wrongly set aside.</p><ul>"
+                + "".join(f"<li><strong>{_e(item.title)}</strong><br>{_e(item.reason)}</li>" for item in result.set_aside)
+                + "</ul></section>"
+                if result.set_aside
+                else ""
+            ),
+            (
+                '<section class="card reasons"><h2>Where the app said why</h2><p class="muted">These reproduced, and '
+                "the app was showing its own message at the time. That usually means the app refused something on "
+                "purpose, so they are not reported as bugs. If the message itself is wrong, it is one.</p><ul>"
+                + "".join(
+                    f"<li><strong>{_e(item.title)}</strong><br>The app showed: {_e('; '.join(item.messages))}</li>"
+                    for item in result.explained
+                )
+                + "</ul></section>"
+                if result.explained
+                else ""
+            ),
             unconfirmed_html,
             questions_html,
             summary_html,

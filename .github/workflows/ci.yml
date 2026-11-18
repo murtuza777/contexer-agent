@@ -32,6 +32,12 @@ jobs:
           # the slow apt step (about 9 minutes lately) runs only if the browser cannot start.
           python -c "from playwright.sync_api import sync_playwright as s; p = s().start(); p.chromium.launch().close(); p.stop()" \
             || python -m playwright install-deps chromium
+      - name: Lint
+        run: python -m ruff check src tests
+      - name: Type check
+        # The interpreter is named so the checker resolves imports from this environment, whatever the
+        # editor settings in pyrightconfig.json say. Windows-only code is checked on Windows by hand.
+        run: python -m pyright --pythonpath "$(python -c 'import sys; print(sys.executable)')" src
       - name: Tests
         run: python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
       - name: Benchmark (catch rate and false failures)

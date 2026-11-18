@@ -6,10 +6,9 @@ providing structured, validated settings for the CLI and LLM layer.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -35,22 +34,22 @@ class ContexerConfig:
 
     # -- llm & provider ---------------------------------------------------
     llm_provider: str = "openrouter"
-    openrouter_api_key: Optional[str] = None
+    openrouter_api_key: str | None = None
     openrouter_model: str = DEFAULT_OPENROUTER_MODEL
-    openrouter_site_url: Optional[str] = None
+    openrouter_site_url: str | None = None
     openrouter_app_name: str = "Contexer"
     # Direct provider keys, used to compile goals into checks (see llm.factory).
-    anthropic_api_key: Optional[str] = None
-    anthropic_model: Optional[str] = None
-    openai_api_key: Optional[str] = None
-    openai_model: Optional[str] = None
-    openai_base_url: Optional[str] = None
+    anthropic_api_key: str | None = None
+    anthropic_model: str | None = None
+    openai_api_key: str | None = None
+    openai_model: str | None = None
+    openai_base_url: str | None = None
     # Explicit choice for compiling goals; None means "pick from available keys".
-    compiler_provider: Optional[str] = None
+    compiler_provider: str | None = None
     # Model and endpoint for whichever provider drafts (CONTEXER_LLM_MODEL /
     # CONTEXER_LLM_BASE_URL); they win over the provider-specific variables.
-    llm_model: Optional[str] = None
-    llm_base_url: Optional[str] = None
+    llm_model: str | None = None
+    llm_base_url: str | None = None
 
     # -- opencode ---------------------------------------------------------
     opencode_server_url: str = "http://127.0.0.1:4096"
@@ -58,7 +57,7 @@ class ContexerConfig:
     opencode_model_id: str = DEFAULT_OPENCODE_MODEL_ID
     # None means "not configured": static projects are served locally,
     # others get their dev server started by contexer.appserver.
-    app_url: Optional[str] = None
+    app_url: str | None = None
 
     def __repr__(self) -> str:
         """Safe representation masking sensitive credentials."""
@@ -69,7 +68,7 @@ class ContexerConfig:
         )
 
 
-def load_config(env_file: Optional[str | Path] = None) -> ContexerConfig:
+def load_config(env_file: str | Path | None = None) -> ContexerConfig:
     """Load configuration from .env file and environment variables.
 
     Priority:
@@ -97,7 +96,7 @@ def load_config(env_file: Optional[str | Path] = None) -> ContexerConfig:
 
     app_url = os.environ.get("CONTEXER_APP_URL", "").strip()
 
-    def _env(name: str) -> Optional[str]:
+    def _env(name: str) -> str | None:
         value = os.environ.get(name, "").strip()
         return value or None
 

@@ -53,6 +53,8 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "pyyaml>=6.0",
+    "ruff>=0.17,<1.0",
+    "pyright>=1.1.400",
 ]
 
 # Langfuse tracing for the agents; used only when LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set.
@@ -69,6 +71,26 @@ packages = ["src/contexer"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["bench/fixtures"]
+
+[tool.ruff.lint]
+# Errors, unused and undefined names, import order, likely bugs, and syntax the supported Pythons have
+# moved on from. Formatting is not enforced.
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # line length: long strings and prompts read better unwrapped
+    "B008",   # typer declares options as default arguments
+    "B905",   # zip() without strict=: the pairs here are built to the same length
+    "UP042",  # (str, Enum) classes predate StrEnum and are part of stored data
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
 
 [tool.pyright]
 include = ["src", "tests"]

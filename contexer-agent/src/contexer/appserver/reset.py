@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional
 from urllib.parse import urlparse
 
 from contexer.appserver.detect import shell_argv
@@ -30,9 +29,9 @@ def reset_command(template: str, url: str) -> str:
 def run_reset(
     command: str,
     cwd: Path,
-    env: Optional[dict[str, str]] = None,
+    env: dict[str, str] | None = None,
     timeout: float = RESET_TIMEOUT_SECONDS,
-) -> Optional[str]:
+) -> str | None:
     """Run the reset command; ``None`` when it succeeded, else why it did not."""
     try:
         proc = subprocess.run(

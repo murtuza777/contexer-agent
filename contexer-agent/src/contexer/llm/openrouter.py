@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from contexer.config.settings import DEFAULT_OPENROUTER_MODEL, OPENROUTER_FREE_ROUTER
 from contexer.llm.base import (
@@ -34,18 +34,18 @@ class OpenAICompatibleProvider(LLMProvider):
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        site_url: Optional[str] = None,
-        app_name: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        model: str | None = None,
+        site_url: str | None = None,
+        app_name: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model or self.default_model
         self._site_url = site_url
         self._app_name = app_name or "Contexer"
         self._base_url = base_url or self.default_base_url
-        self._client: Optional[Any] = None
+        self._client: Any | None = None
 
     @property
     def name(self) -> str:
@@ -55,7 +55,7 @@ class OpenAICompatibleProvider(LLMProvider):
     def model(self) -> str:
         return self._model
 
-    def validate_configuration(self) -> tuple[bool, Optional[str]]:
+    def validate_configuration(self) -> tuple[bool, str | None]:
         """Verify that the API key (and a model) are configured."""
         if not self._api_key or not self._api_key.strip():
             help_line = f"\nYou can get an API key at {self.key_help}" if self.key_help else ""
@@ -75,7 +75,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
     @classmethod
     def for_spec(
-        cls, spec: Any, model: Optional[str], base_url: str, api_key: Optional[str] = None
+        cls, spec: Any, model: str | None, base_url: str, api_key: str | None = None
     ) -> OpenAICompatibleProvider:
         """A provider from the BYOK catalogue (Groq, DeepSeek, Gemini, a local Ollama, your own gateway...)."""
         key = api_key or spec.key() or ("local" if spec.local else None)
@@ -106,7 +106,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
             import asyncio
 
-            current_loop: Optional[asyncio.AbstractEventLoop] = None
+            current_loop: asyncio.AbstractEventLoop | None = None
             try:
                 current_loop = asyncio.get_running_loop()
             except RuntimeError:
@@ -123,7 +123,7 @@ class OpenAICompatibleProvider(LLMProvider):
             self._client_loop = current_loop
             return self._client
         except Exception as exc:
-            raise self._wrap_error(exc)
+            raise self._wrap_error(exc) from exc
 
     def _wrap_error(self, exc: Exception) -> LLMError:
         """Map OpenAI SDK errors to sanitized Contexer LLMError subclasses."""
@@ -165,7 +165,7 @@ class OpenAICompatibleProvider(LLMProvider):
     def _prepare_messages(
         self,
         prompt: str | list[dict[str, Any]],
-        system_instruction: Optional[str] = None,
+        system_instruction: str | None = None,
     ) -> list[dict[str, Any]]:
         """Normalize prompt and system instruction into OpenAI message dicts."""
         messages: list[dict[str, Any]] = []
@@ -184,7 +184,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         continue
                     messages.append(item)
                 elif hasattr(item, "role") and hasattr(item, "content"):
-                    messages.append({"role": getattr(item, "role"), "content": getattr(item, "content")})
+                    messages.append({"role": item.role, "content": item.content})
                 else:
                     messages.append({"role": "user", "content": str(item)})
 
@@ -195,7 +195,7 @@ class OpenAICompatibleProvider(LLMProvider):
     async def generate(
         self,
         prompt: str | list[Any],
-        system_instruction: Optional[str] = None,
+        system_instruction: str | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Generate a full response."""
@@ -234,7 +234,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 usage=usage_dict,
             )
         except Exception as exc:
-            raise self._wrap_error(exc)
+            raise self._wrap_error(exc) from exc
 
 
 class OpenRouterProvider(OpenAICompatibleProvider):

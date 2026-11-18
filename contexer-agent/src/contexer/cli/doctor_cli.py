@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Literal
 import typer
 from rich.console import Console
 from rich.markup import escape
-
 from rich.padding import Padding
 from rich.table import Table
 

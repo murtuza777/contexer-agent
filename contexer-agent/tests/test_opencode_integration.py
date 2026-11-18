@@ -11,10 +11,10 @@ import shutil
 import socket
 import subprocess
 import time
-from typing import Generator
-import pytest
+from collections.abc import Generator
 
 import httpx
+import pytest
 
 from contexer.opencode.adapter import OpenCodeAdapter
 from contexer.opencode.client import OpenCodeClient

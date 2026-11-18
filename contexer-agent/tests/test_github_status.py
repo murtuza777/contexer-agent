@@ -8,7 +8,14 @@ import pytest
 
 from contexer.contract import Contract
 from contexer.gate import ContractOutcome, GateDecision, RunResult
-from contexer.github import GitHubReportError, GitHubTarget, detect_target, post_status, status_description, step_summary
+from contexer.github import (
+    GitHubReportError,
+    GitHubTarget,
+    detect_target,
+    post_status,
+    status_description,
+    step_summary,
+)
 from contexer.verification.checks import CheckResult
 from contexer.verification.models import AcceptanceCriterion, CriterionResult, VerificationResult
 

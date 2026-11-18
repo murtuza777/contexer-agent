@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,7 +26,7 @@ class OpenCodeSessionTime(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     created: int
-    updated: Optional[int] = None
+    updated: int | None = None
 
 
 class OpenCodeSession(BaseModel):
@@ -35,12 +35,12 @@ class OpenCodeSession(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str
-    slug: Optional[str] = None
-    version: Optional[str] = None
-    projectID: Optional[str] = None
-    directory: Optional[str] = None
-    title: Optional[str] = None
-    time: Optional[OpenCodeSessionTime] = None
+    slug: str | None = None
+    version: str | None = None
+    projectID: str | None = None
+    directory: str | None = None
+    title: str | None = None
+    time: OpenCodeSessionTime | None = None
 
 
 class OpenCodeSessionStatus(BaseModel):
@@ -60,7 +60,7 @@ class OpenCodeDiffItem(BaseModel):
     patch: str
     additions: int = 0
     deletions: int = 0
-    status: Optional[str] = None
+    status: str | None = None
 
 
 class OpenCodePart(BaseModel):
@@ -69,12 +69,12 @@ class OpenCodePart(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     type: str
-    text: Optional[str] = None
-    id: Optional[str] = None
-    callID: Optional[str] = None
-    tool: Optional[str] = None
-    time: Optional[dict[str, Any]] = None
-    state: Optional[dict[str, Any]] = None
+    text: str | None = None
+    id: str | None = None
+    callID: str | None = None
+    tool: str | None = None
+    time: dict[str, Any] | None = None
+    state: dict[str, Any] | None = None
 
 
 class OpenCodeMessageInfo(BaseModel):
@@ -83,12 +83,12 @@ class OpenCodeMessageInfo(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str
-    sessionID: Optional[str] = None
+    sessionID: str | None = None
     role: str
-    agent: Optional[str] = None
-    time: Optional[dict[str, Any]] = None
-    error: Optional[dict[str, Any]] = None
-    finish: Optional[str] = None
+    agent: str | None = None
+    time: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+    finish: str | None = None
 
 
 class OpenCodeMessage(BaseModel):
@@ -106,7 +106,7 @@ class OpenCodeHealth(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     healthy: bool
-    version: Optional[str] = None
+    version: str | None = None
 
 
 class OpenCodeExecutionResult(BaseModel):
@@ -118,5 +118,5 @@ class OpenCodeExecutionResult(BaseModel):
     status: ExecutionStatus
     diff: list[OpenCodeDiffItem] = Field(default_factory=list)
     response_text: str = ""
-    error: Optional[str] = None
+    error: str | None = None
     duration_seconds: float = 0.0

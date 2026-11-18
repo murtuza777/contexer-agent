@@ -19,14 +19,17 @@ what the person meant and tests again.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import shutil
 import subprocess
 import sys
 import time
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlparse
 
 import typer
 from rich.console import Console
@@ -40,12 +43,21 @@ from contexer.cli import term
 from contexer.cli.gate_cli import DirOption, UrlOption
 from contexer.contract import ContractStore
 from contexer.contract.models import utc_now
+from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
+from contexer.crew.challenger import challenge
 from contexer.crew.diagnoser import Failure, diagnose, fix_prompt
 from contexer.crew.intent import Question, run_intent
 from contexer.crew.tester import DEFAULT_MAX_STEPS, run_tester
 from contexer.crew.transcript import environment_secrets
 from contexer.evidence import RunDir
-from contexer.evidence.test_report import ConfirmedFinding, ExplorationResult, write_test_evidence
+from contexer.evidence.test_report import (
+    AgentUsage,
+    ConfirmedFinding,
+    Explained,
+    ExplorationResult,
+    SetAside,
+    write_test_evidence,
+)
 from contexer.gate.session import DEV_SERVER_TIMEOUT_SCALE, VerificationSession
 from contexer.intent.store import IntentSpec, IntentStore, SavedCheck
 from contexer.llm.base import LLMError
@@ -64,6 +76,7 @@ _STOPPED_EARLY = {
     "step_limit": "stopped at the step limit",
     "timeout": "stopped at the time limit",
     "invalid_output": "ended without a usable summary",
+    "budget_exhausted": "stopped at the token budget",
 }
 
 Mode = Literal["explore", "again"]
@@ -74,7 +87,7 @@ class NoModelError(LLMError):
     """No model is configured for the agents."""
 
 
-def build_model(project: Path, provider: Optional[str] = None, model: Optional[str] = None) -> BaseChatModel:
+def build_model(project: Path, provider: str | None = None, model: str | None = None) -> BaseChatModel:
     """The chat model the agents run on: ``--provider``/``--model``, else the project's and the user's choice.
 
     The choice follows the drafting model (``[compiler]`` in contexer.toml,
@@ -113,6 +126,24 @@ def ask_user(question: str) -> str:
     return str(typer.prompt(question, default="", show_default=False)).strip()
 
 
+_LOCAL_SUFFIXES = (".localhost", ".test", ".local", ".internal")
+
+
+def is_local_target(url: str) -> bool:
+    """Whether ``url`` is on this machine or a private network: somewhere a Tester may click freely."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme not in ("http", "https") or not host:
+        return False
+    if host == "localhost" or host.endswith(_LOCAL_SUFFIXES):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private or address.is_link_local
+
+
 def copy_to_clipboard(text: str) -> bool:
     """Put ``text`` on the system clipboard; False when no clipboard tool is there or it failed."""
     if sys.platform == "win32":
@@ -134,16 +165,23 @@ def copy_to_clipboard(text: str) -> bool:
 
 
 def test(
-    intent: Optional[str] = typer.Argument(None, help="What the app should do, in your words."),
+    intent: str | None = typer.Argument(None, help="What the app should do, in your words."),
     project_dir: Path = DirOption,
-    url: Optional[str] = UrlOption,
+    url: str | None = UrlOption,
     again: bool = typer.Option(False, "--again", help="Replay the checks the last run saved (no model); explore only if they pass."),
-    correct: Optional[str] = typer.Option(None, "--correct", help="Record what you meant, then test again with it."),
+    correct: str | None = typer.Option(None, "--correct", help="Record what you meant, then test again with it."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask questions; take the likeliest reading and record it."),
     copy: bool = typer.Option(False, "--copy", help="Put the fix prompt on the clipboard."),
+    max_tokens: int | None = typer.Option(
+        None, "--max-tokens", min=1, help="The most tokens the agents may use in this run (default: [limits] tokens, else 1,500,000)."
+    ),
+    no_skills: bool = typer.Option(False, "--no-skills", help="Neither load nor save project skills in this run."),
+    allow_remote: bool = typer.Option(
+        False, "--allow-remote", help="Test a --url that is not on this machine or a private network."
+    ),
     steps: int = typer.Option(DEFAULT_MAX_STEPS, "--steps", min=1, help="The most model calls the tester may make."),
-    model: Optional[str] = typer.Option(None, "--model", help="Model id for the agents (default: your drafting model)."),
-    provider: Optional[str] = typer.Option(None, "--provider", help="Provider for --model, e.g. anthropic, azure, openrouter."),
+    model: str | None = typer.Option(None, "--model", help="Model id for the agents (default: your drafting model)."),
+    provider: str | None = typer.Option(None, "--provider", help="Provider for --model, e.g. anthropic, azure, openrouter."),
     save: bool = typer.Option(False, "--save", help="Save the confirmed checks as a draft contract in the project."),
     json_output: bool = typer.Option(False, "--json", help="Print result.json to stdout."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
@@ -158,6 +196,24 @@ def test(
         raise typer.BadParameter("use --again or --correct, not both")
     if not intent and not again and correct is None:
         raise typer.BadParameter('say what the app should do: contexer test "users can add and complete tasks"')
+
+    if url and not allow_remote and not is_local_target(url):
+        term.note(
+            console,
+            "warn",
+            f"{escape(url)} is not on this machine or a private network. The tester clicks, types and submits "
+            "for real, so it can change or delete data there. Point it at a local or staging copy, or add "
+            "--allow-remote if this is one you may test freely.",
+        )
+        raise typer.Exit(code=2)
+    from contexer.config.project import ProjectConfigError, load_project_config
+
+    try:
+        limits = load_project_config(project).limits
+    except ProjectConfigError as exc:
+        term.note(console, "fail", f"[red]Could not test:[/] {escape(str(exc))}")
+        raise typer.Exit(code=2) from None
+    budget = Budget(max_tokens=max_tokens or limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=limits.cost_usd)
 
     store = IntentStore(project)
     stored = store.find(intent) if intent else store.latest()
@@ -200,6 +256,8 @@ def test(
                 correction=correct,
                 assume=yes or not is_interactive(),
                 stored=stored,
+                budget=budget,
+                use_skills=not no_skills,
             )
         )
     except KeyboardInterrupt:
@@ -237,14 +295,16 @@ async def run_test(
     goal: str,
     model_factory: ModelFactory,
     *,
-    url: Optional[str] = None,
+    url: str | None = None,
     steps: int = DEFAULT_MAX_STEPS,
     save: bool = False,
-    console: Optional[Console] = None,
+    console: Console | None = None,
     mode: Mode = "explore",
-    correction: Optional[str] = None,
+    correction: str | None = None,
     assume: bool = True,
-    stored: Optional[IntentSpec] = None,
+    stored: IntentSpec | None = None,
+    budget: Budget | None = None,
+    use_skills: bool = True,
 ) -> ExplorationResult:
     """Start the app, sign in, and run one ``contexer test``; the evidence is written whatever happens."""
     console = console or Console()
@@ -273,7 +333,7 @@ async def run_test(
             if session.sign_in_error is not None:
                 result.error = f"Could not sign in with the [auth] flow in contexer.toml: {session.sign_in_error}"
             else:
-                job = _Job(project, run, session, app, state, console, result)
+                job = _Job(project, run, session, app, state, console, result, budget or Budget(DEFAULT_MAX_TOKENS), use_skills)
                 await job.run(goal, model_factory, steps=steps, save=save, mode=mode, correction=correction, assume=assume, stored=stored)
     except AppStartError as exc:
         result.error = str(exc)
@@ -291,14 +351,18 @@ class _Job:
         run: RunDir,
         session: VerificationSession,
         app: RunningApp,
-        state: Optional[dict[str, Any]],
+        state: dict[str, Any] | None,
         console: Console,
         result: ExplorationResult,
+        budget: Budget,
+        use_skills: bool = True,
     ) -> None:
         self.project, self.run_dir, self.session, self.app, self.state = project, run, session, app, state
+        self.budget, self.use_skills = budget, use_skills
+        result.budget_tokens = budget.max_tokens
         self.console, self.result = console, result
         self.scale = DEV_SERVER_TIMEOUT_SCALE if app.kind == "dev" else 1.0
-        self.reset = session._reset_before_each(app) if session.reset else None
+        self.reset = session.reset_before_each(app)
         self.credentials = credential_secrets(session.auth.as_check()) if session.auth is not None else []
         self.intents = IntentStore(project)
         self.contracts = ContractStore(project)
@@ -311,9 +375,9 @@ class _Job:
         steps: int,
         save: bool,
         mode: Mode,
-        correction: Optional[str],
+        correction: str | None,
         assume: bool,
-        stored: Optional[IntentSpec],
+        stored: IntentSpec | None,
     ) -> None:
         result = self.result
         spec = stored or IntentSpec(id=self.intents.id_for(goal), goal=goal)
@@ -354,7 +418,7 @@ class _Job:
                 spec, checks = await self._understand(spec, checks, chat, await browser.snapshot(), correction, assume)
             self.intents.save(spec)
             self.intents.save_checks(spec.id, checks)
-            skills = SkillStore(self.project).matching(spec.as_text())
+            skills = SkillStore(self.project).matching(spec.as_text()) if self.use_skills else []
             existing = [
                 criterion.description
                 for contract in self.contracts.list()
@@ -372,13 +436,14 @@ class _Job:
                     skills=skills,
                     max_steps=steps,
                     secrets=self.credentials,
+                    budget=self.budget,
                 )
             secrets = [*self.credentials, *browser.secrets, *environment_secrets()]
         finally:
             await browser.close()
 
         result.steps, result.tool_calls = tested.steps, tested.tool_calls
-        self._spent(tested.tokens_in, tested.tokens_out, tested.cost_usd)
+        self._spent("tester", tested.steps, tested.tokens_in, tested.tokens_out, tested.cost_usd)
         result.tester_status, result.tester_error, result.summary = tested.status, tested.error, tested.summary
         result.questions = tested.questions
 
@@ -391,6 +456,21 @@ class _Job:
                 artifacts_dir=self.run_dir.path / "replay",
                 timeout_scale=self.scale,
             )
+        # Decided by code, with no model: a check that failed while the app was showing its own message is not
+        # asserted as a bug. The app most likely refused on purpose and said so; a person sees it with the message.
+        result.explained = [
+            Explained(title=item.finding.title, messages=item.finding.messages) for item in report.bugs if item.finding.messages
+        ]
+        report.bugs = [item for item in report.bugs if not item.finding.messages]
+        if report.bugs:
+            # Replay shows that a bug's steps end badly, not why. A second look sets aside the ones that are the
+            # tester's doing; it can only remove, and what it removes is shown with the reason.
+            with self.console.status("[dim]Challenging the confirmed bugs...[/dim]"):
+                challenged = await challenge(report.bugs, spec.as_text(), chat, run_dir=self.run_dir.path, budget=self.budget)
+            if challenged.status != "skipped":
+                self._spent("challenger", challenged.steps, challenged.tokens_in, challenged.tokens_out, challenged.cost_usd)
+            report.bugs = challenged.standing
+            result.set_aside = [SetAside(title=item.finding.title, reason=reason) for item, reason in challenged.set_aside]
         result.bugs = [_confirmed(item) for item in report.bugs]
         result.works = [*carried_works, *[_confirmed(item) for item in report.works]]
         result.unconfirmed = len(report.unconfirmed)
@@ -398,11 +478,15 @@ class _Job:
             write_unconfirmed(self.run_dir.path, report)
         self.intents.save_checks(spec.id, _with_confirmed(checks, report))
         self._save_draft(spec.goal, report, save)
-        self._save_skills(tested.skills, secrets)
+        if self.use_skills:
+            self._save_skills(tested.skills, secrets)
 
         if result.bugs:
             result.outcome = "bugs"
             failures = [Failure.from_confirmed(item) for item in report.bugs]
+            if self.budget.exhausted():  # nothing left for a diagnosis: the facts alone make the prompt
+                self._write_fix_prompt(failures, None, spec, [w.title for w in result.works])
+                return
             with self.console.status("[dim]Looking for the cause in the code...[/dim]"):
                 diagnosis = await diagnose(
                     failures,
@@ -413,8 +497,9 @@ class _Job:
                     server_log=self.app.log_tail(),
                     run_dir=self.run_dir.path,
                     secrets=secrets,
+                    budget=self.budget,
                 )
-            self._spent(diagnosis.tokens_in, diagnosis.tokens_out, diagnosis.cost_usd)
+            self._spent("diagnoser", diagnosis.steps, diagnosis.tokens_in, diagnosis.tokens_out, diagnosis.cost_usd)
             self._write_fix_prompt(failures, diagnosis.brief, spec, [w.title for w in result.works])
         elif tested.status == "model_error":
             result.outcome = "could_not_test"  # nothing can be said about an app the tester could not finish testing
@@ -465,7 +550,7 @@ class _Job:
         checks: list[SavedCheck],
         chat: BaseChatModel,
         snapshot: str,
-        correction: Optional[str],
+        correction: str | None,
         assume: bool,
     ) -> tuple[IntentSpec, list[SavedCheck]]:
         """Run the Intent agent; ask its questions once when a person is there to answer."""
@@ -474,6 +559,7 @@ class _Job:
         context = self.app.repo_context or RepositoryInspector().inspect(self.project)
         summary = context.format_summary()
         known = set(spec.assumptions)
+        written = list(spec.behaviours)
         with self.console.status("[dim]Reading the goal...[/dim]"):
             first = await run_intent(
                 spec.goal,
@@ -485,8 +571,9 @@ class _Job:
                 ui_snapshot=snapshot,
                 assume=assume,
                 run_dir=self.run_dir.path,
+                budget=self.budget,
             )
-        self._spent(first.tokens_in, first.tokens_out, first.cost_usd)
+        self._spent("intent", first.steps, first.tokens_in, first.tokens_out, first.cost_usd)
         spec, checks, dropped = first.spec, first.checks, list(first.dropped)
         if first.status != "ok":
             term.note(
@@ -505,11 +592,17 @@ class _Job:
                     repo_summary=summary,
                     ui_snapshot=snapshot,
                     run_dir=self.run_dir.path,
+                    budget=self.budget,
                 )
-            self._spent(second.tokens_in, second.tokens_out, second.cost_usd)
+            self._spent("intent", second.steps, second.tokens_in, second.tokens_out, second.cost_usd)
             # Asked once: whatever the agent would ask now is left for `--correct`.
             spec, checks, dropped = second.spec, second.checks, dropped + list(second.dropped)
 
+        changed = [b for b in spec.behaviours if b not in written]
+        if changed:
+            # Shown every time: the intent decides what gets tested, and a page can try to steer what is written.
+            term.section(self.console, "Intent changed", "added or rewritten in this run; edit the file to undo")
+            term.bullets(self.console, [escape(b) for b in changed])
         assumed = [a for a in spec.assumptions if a not in known]
         if assumed:
             term.section(self.console, "Assumptions", "taken without asking; correct one with --correct")
@@ -570,7 +663,16 @@ class _Job:
         path.write_text(text, encoding="utf-8", newline="\n")
         self.result.fix_prompt = str(path)
 
-    def _spent(self, tokens_in: int, tokens_out: int, cost: Optional[float]) -> None:
+    def _spent(self, agent: str, steps: int, tokens_in: int, tokens_out: int, cost: float | None) -> None:
+        usage = next((a for a in self.result.agents if a.agent == agent), None)
+        if usage is None:
+            usage = AgentUsage(agent=agent)
+            self.result.agents.append(usage)
+        usage.steps += steps
+        usage.tokens_in += tokens_in
+        usage.tokens_out += tokens_out
+        if cost is not None:
+            usage.cost_usd = (usage.cost_usd or 0.0) + cost
         self.result.tokens_in += tokens_in
         self.result.tokens_out += tokens_out
         if cost is not None:
@@ -589,11 +691,12 @@ def _after_replay(check: SavedCheck, passed: bool) -> SavedCheck:
 
 def _with_confirmed(checks: list[SavedCheck], report: ReplayReport) -> list[SavedCheck]:
     """The feature's checks with this run's confirmed ones added; a check with the same id is replaced."""
-    confirmed = [
-        SavedCheck(id=item.criterion_id, description=item.finding.title, check=item.check, source="confirmed", kind=kind)
-        for kind, items in (("bug", report.bugs), ("works", report.works))
-        for item in items
-    ]
+    def saved(item: Confirmed, kind: Literal["bug", "works"]) -> SavedCheck:
+        return SavedCheck(
+            id=item.criterion_id, description=item.finding.title, check=item.check, source="confirmed", kind=kind
+        )
+
+    confirmed = [*(saved(item, "bug") for item in report.bugs), *(saved(item, "works") for item in report.works)]
     new_ids = {c.id for c in confirmed}
     return [*[c for c in checks if c.id not in new_ids], *confirmed]
 
@@ -667,6 +770,28 @@ def render_test_result(console: Console, result: ExplorationResult) -> None:
         term.section(console, f"{count} working behaviour{'s' if count != 1 else ''} confirmed")
         for works in result.works:
             console.print(f"  {term.mark('pass')} {escape(works.title)}")
+
+    if result.explained:
+        count = len(result.explained)
+        term.section(
+            console,
+            f"{count} finding{'s' if count != 1 else ''} where the app said why",
+            "reproduced, but the app was showing a message; not reported as bugs unless the message is wrong",
+        )
+        for explained in result.explained:
+            console.print(f"  {term.mark('open')} {escape(explained.title)}")
+            console.print(f"      [dim]the app showed: {escape('; '.join(explained.messages))}[/]")
+
+    if result.set_aside:
+        count = len(result.set_aside)
+        term.section(
+            console,
+            f"{count} finding{'s' if count != 1 else ''} set aside",
+            "reproduced, but judged to be the tester's doing; say so if one is a real bug",
+        )
+        for item in result.set_aside:
+            console.print(f"  {term.mark('open')} {escape(item.title)}")
+            console.print(f"      [dim]{escape(item.reason)}[/]")
 
     if result.questions:
         term.section(console, "Not settled by the intent", "questions for you, not bugs; answer one with --correct")

@@ -1,0 +1,8 @@
+body { font: 16px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 28rem; padding: 0 1rem; color: #1b1f24; }
+h1 { font-size: 1.4rem; }
+.who { display: grid; gap: 0.25rem; margin-bottom: 1rem; }
+input { font: inherit; padding: 0.4rem 0.5rem; border: 1px solid #b6bcc6; border-radius: 6px; }
+ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.5rem; }
+li { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0.75rem; border: 1px solid #d8dce3; border-radius: 8px; }
+button { font: inherit; padding: 0.3rem 0.7rem; border: 1px solid #b6bcc6; border-radius: 6px; background: #fff; cursor: pointer; }
+[role="alert"] { color: #b42318; margin: 0; }

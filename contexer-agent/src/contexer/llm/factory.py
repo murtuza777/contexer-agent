@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from contexer.config.project import CompilerSettings
@@ -20,7 +20,7 @@ SUPPORTED_PROVIDERS = tuple(provider_ids())
 _AUTO_ORDER = ("anthropic", "openai", "openrouter")
 
 
-def create_llm_provider(config: ContexerConfig, provider: Optional[str] = None, model: Optional[str] = None) -> LLMProvider:
+def create_llm_provider(config: ContexerConfig, provider: str | None = None, model: str | None = None) -> LLMProvider:
     """Build ``provider`` (default: ``config.llm_provider``), optionally overriding its model.
 
     Model precedence: ``model`` (``[compiler] model``), then ``CONTEXER_LLM_MODEL``,
@@ -70,8 +70,8 @@ def available_providers(config: ContexerConfig) -> list[str]:
 
 
 def compiler_provider(
-    config: ContexerConfig, settings: Optional[CompilerSettings] = None
-) -> Optional[LLMProvider]:
+    config: ContexerConfig, settings: CompilerSettings | None = None
+) -> LLMProvider | None:
     """The provider used to compile goals, or None when no key is configured.
 
     Precedence: ``[compiler]`` in contexer.toml, then ``CONTEXER_LLM_PROVIDER``

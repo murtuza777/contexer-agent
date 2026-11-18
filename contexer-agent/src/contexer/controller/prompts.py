@@ -7,8 +7,6 @@ sees the same definition of done.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from contexer.contract import Contract
 from contexer.gate.models import RunResult
 from contexer.verification.models import CriterionResult, VerificationResult, format_contract
@@ -30,7 +28,7 @@ _MAX_UI_LINES = 25
 _MAX_LOG_LINES = 25
 
 
-def implement_prompt(contract: Contract, repo: Optional[RepositoryContext], others: list[Contract]) -> str:
+def implement_prompt(contract: Contract, repo: RepositoryContext | None, others: list[Contract]) -> str:
     parts = [
         "You are implementing a change in this repository. When you finish, Contexer starts the app and executes "
         "the acceptance checks below in a real browser. Those checks — not your own judgement — decide whether the "
@@ -55,10 +53,10 @@ def repair_prompt(
     result: RunResult,
     *,
     repeated: list[str],
-    reverted_from: Optional[int],
-    app_error: Optional[str] = None,
+    reverted_from: int | None,
+    app_error: str | None = None,
     fresh_session: bool = False,
-    others: Optional[list[Contract]] = None,
+    others: list[Contract] | None = None,
 ) -> str:
     parts: list[str] = []
     if fresh_session:
@@ -98,7 +96,7 @@ def repair_prompt(
     return "\n\n".join(parts)
 
 
-def _results(verification: Optional[VerificationResult]) -> list[CriterionResult]:
+def _results(verification: VerificationResult | None) -> list[CriterionResult]:
     return verification.criteria_results if verification is not None else []
 
 

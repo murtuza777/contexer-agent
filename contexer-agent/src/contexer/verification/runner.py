@@ -8,8 +8,9 @@ import logging
 import os
 import re
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal, Optional, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urljoin
 
 from contexer.observer.playwright import capture_ui_snapshot, record_console_error
@@ -26,7 +27,8 @@ from contexer.verification.checks import (
 )
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, BrowserContext, Locator as PWLocator, Page
+    from playwright.async_api import Browser, BrowserContext, Page
+    from playwright.async_api import Locator as PWLocator
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +74,9 @@ class CheckRunner:
         self,
         url: str,
         checks: list[tuple[str, Check]],
-        artifacts_dir: Optional[Path] = None,
-        storage_state: Optional[dict[str, Any]] = None,
-        before_each: Optional[Callable[[], Awaitable[Optional[str]]]] = None,
+        artifacts_dir: Path | None = None,
+        storage_state: dict[str, Any] | None = None,
+        before_each: Callable[[], Awaitable[str | None]] | None = None,
         timeout_scale: float = 1.0,
     ) -> list[CheckResult]:
         """Execute ``(criterion_id, check)`` pairs in order and return one result each.
@@ -126,7 +128,7 @@ class CheckRunner:
         base_url: str,
         path: str,
         flow: Check,
-        screenshot: Optional[Path] = None,
+        screenshot: Path | None = None,
     ) -> dict[str, Any]:
         """Run the login flow once and return the signed-in browser state.
 
@@ -169,8 +171,8 @@ class CheckRunner:
         url: str,
         criterion_id: str,
         check: Check,
-        artifacts_dir: Optional[Path],
-        storage_state: Optional[dict[str, Any]] = None,
+        artifacts_dir: Path | None,
+        storage_state: dict[str, Any] | None = None,
     ) -> CheckResult:
         if check.login is True and storage_state is None:
             return CheckResult(
@@ -200,7 +202,7 @@ class CheckRunner:
     async def _capture_evidence(
         self,
         context: BrowserContext,
-        page: Optional[Page],
+        page: Page | None,
         result: CheckResult,
         artifacts_dir: Path,
         tracing: bool,
@@ -229,7 +231,7 @@ class CheckRunner:
         url: str,
         criterion_id: str,
         check: Check,
-    ) -> tuple[CheckResult, Optional[Page]]:
+    ) -> tuple[CheckResult, Page | None]:
         started = time.monotonic()
         page_errors: list[str] = []
         console_errors: list[str] = []
@@ -238,10 +240,10 @@ class CheckRunner:
 
         def finish(
             passed: bool,
-            outcomes: Optional[list[ExpectationOutcome]] = None,
-            failed_step: Optional[str] = None,
-            ui_at_failure: Optional[str] = None,
-            blocked: Optional[bool] = None,
+            outcomes: list[ExpectationOutcome] | None = None,
+            failed_step: str | None = None,
+            ui_at_failure: str | None = None,
+            blocked: bool | None = None,
         ) -> CheckResult:
             return CheckResult(
                 criterion_id=criterion_id,
@@ -260,7 +262,7 @@ class CheckRunner:
             return finish(False, failed_step=f"secret(s) not set: {', '.join(missing)} (set them in the environment or .env)"), None
         secret_values.extend(os.environ[name] for name in check.secrets())
 
-        page: Optional[Page] = None
+        page: Page | None = None
         try:
             page = await context.new_page()
             page.on("pageerror", lambda exc: page_errors.append(str(exc)))
@@ -271,7 +273,7 @@ class CheckRunner:
             except Exception as exc:
                 return finish(False, failed_step=f"navigation to {url} ({_short(exc)})"), page
 
-            baselines: dict[int, Optional[str]] = {}
+            baselines: dict[int, str | None] = {}
             for i, exp in enumerate(check.expect):
                 if exp.changed is not None and exp.kind in _COMPARATOR_KINDS:
                     baselines[i] = await self._read_or_none(page, exp)
@@ -323,6 +325,14 @@ class CheckRunner:
 
     # -- steps ----------------------------------------------------------------
 
+    async def perform(self, page: Page, step: Step, base_url: str) -> None:
+        """Perform one step on ``page``. The browser tools act through this, so exploring and replaying agree."""
+        await self._perform(page, step, base_url)
+
+    async def evaluate(self, page: Page, exp: Expectation, before: str | None = None) -> ExpectationOutcome:
+        """Evaluate one expectation on ``page``, retrying until it holds or the expectation timeout passes."""
+        return await self._evaluate(page, exp, before)
+
     async def _perform(self, page: Page, step: Step, base_url: str) -> None:
         timeout = self.action_timeout * 1000
         value = expand_secrets(step.value or "")
@@ -354,7 +364,7 @@ class CheckRunner:
 
     # -- expectations ---------------------------------------------------------
 
-    async def _evaluate(self, page: Page, exp: Expectation, before: Optional[str]) -> ExpectationOutcome:
+    async def _evaluate(self, page: Page, exp: Expectation, before: str | None) -> ExpectationOutcome:
         deadline = time.monotonic() + self.expect_timeout
         while True:
             passed, actual = await self._probe(page, exp, before)
@@ -362,7 +372,7 @@ class CheckRunner:
                 return ExpectationOutcome(description=exp.describe(), passed=passed, actual=actual)
             await asyncio.sleep(0.1)
 
-    async def _probe(self, page: Page, exp: Expectation, before: Optional[str]) -> tuple[bool, str]:
+    async def _probe(self, page: Page, exp: Expectation, before: str | None) -> tuple[bool, str]:
         try:
             if exp.kind in ("checked", "unchecked"):
                 assert exp.target is not None
@@ -391,7 +401,7 @@ class CheckRunner:
         except Exception as exc:
             return False, f"error: {_short(exc)}"
 
-    async def _read(self, page: Page, exp: Expectation) -> Optional[str]:
+    async def _read(self, page: Page, exp: Expectation) -> str | None:
         if exp.kind == "url":
             return page.url
         if exp.kind == "title":
@@ -412,7 +422,7 @@ class CheckRunner:
             )
         raise ValueError(f"'{exp.kind}' has no readable value")
 
-    async def _read_or_none(self, page: Page, exp: Expectation) -> Optional[str]:
+    async def _read_or_none(self, page: Page, exp: Expectation) -> str | None:
         try:
             if exp.target is not None and await _locate(page, exp.target).count() == 0:
                 return None
@@ -481,6 +491,12 @@ async def _describe_failed_action(target: PWLocator, step: Step, exc: BaseExcept
     return f"the action did not complete: {_short(exc)}"
 
 
+# Public names for what the browser tools share with this module.
+locate = _locate
+any_visible = _any_visible
+describe_failed_action = _describe_failed_action
+
+
 def _typed_values(flow: Check) -> list[str]:
     """Everything a sign-in flow types is a credential, whether literal or ``${NAME}``."""
     values: list[str] = []
@@ -502,14 +518,14 @@ async def _alert_text(page: Page) -> str:
     return " / ".join(t.strip() for t in texts if t.strip())[:200]
 
 
-def _show(value: Optional[str], before: Optional[str], exp: Expectation) -> str:
+def _show(value: str | None, before: str | None, exp: Expectation) -> str:
     now = _quote(value)
     if exp.changed is not None:
         return f"{_quote(before)} → {now}"
     return now
 
 
-def _quote(value: Optional[str]) -> str:
+def _quote(value: str | None) -> str:
     if value is None:
         return "<absent>"
     flat = " ".join(value.split())
@@ -524,3 +540,6 @@ def _short(exc: BaseException) -> str:
     """First line of an exception message; Playwright errors carry long call logs."""
     text = str(exc).strip().splitlines()
     return text[0][:200] if text else type(exc).__name__
+
+
+short_error = _short

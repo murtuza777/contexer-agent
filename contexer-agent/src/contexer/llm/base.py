@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-import re
-from typing import Any, Optional
+from typing import Any
+
 
 def _mask_api_key_match(match: re.Match[str]) -> str:
     val = match.group(0)
@@ -26,7 +27,7 @@ _API_KEY_PATTERNS = [
 ]
 
 
-def sanitize_sensitive_text(text: str, sensitive_values: Optional[list[str]] = None) -> str:
+def sanitize_sensitive_text(text: str, sensitive_values: list[str] | None = None) -> str:
     """Mask known API key patterns and explicit secret values from text."""
     if not text:
         return text
@@ -59,7 +60,7 @@ def sanitize_sensitive_text(text: str, sensitive_values: Optional[list[str]] = N
 class LLMError(Exception):
     """Base exception for all LLM provider errors."""
 
-    def __init__(self, message: str, original_error: Optional[Exception] = None) -> None:
+    def __init__(self, message: str, original_error: Exception | None = None) -> None:
         clean_msg = sanitize_sensitive_text(message)
         super().__init__(clean_msg)
         self.original_error = original_error
@@ -123,13 +124,13 @@ class LLMProvider(ABC):
     async def generate(
         self,
         prompt: str | list[Any],
-        system_instruction: Optional[str] = None,
+        system_instruction: str | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Generate a complete response for a prompt."""
 
     @abstractmethod
-    def validate_configuration(self) -> tuple[bool, Optional[str]]:
+    def validate_configuration(self) -> tuple[bool, str | None]:
         """Validate if required credentials and options are present.
 
         Returns:

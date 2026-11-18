@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
 from contexer.llm.base import LLMProvider
 from contexer.llm.structured import parse_json_object
@@ -54,8 +55,8 @@ class Verifier:
 
     def __init__(
         self,
-        llm_provider: Optional[LLMProvider] = None,
-        runner: Optional[CheckRunner] = None,
+        llm_provider: LLMProvider | None = None,
+        runner: CheckRunner | None = None,
     ) -> None:
         self.llm_provider = llm_provider
         self.runner = runner or CheckRunner()
@@ -64,11 +65,11 @@ class Verifier:
         self,
         goal: str,
         observation: BrowserObservation,
-        analysis: Optional[GoalAnalysis] = None,
-        repo_context: Optional[RepositoryContext] = None,
-        artifacts_dir: Optional[Path] = None,
-        storage_state: Optional[dict[str, Any]] = None,
-        before_each: Optional[Callable[[], Awaitable[Optional[str]]]] = None,
+        analysis: GoalAnalysis | None = None,
+        repo_context: RepositoryContext | None = None,
+        artifacts_dir: Path | None = None,
+        storage_state: dict[str, Any] | None = None,
+        before_each: Callable[[], Awaitable[str | None]] | None = None,
         timeout_scale: float = 1.0,
     ) -> VerificationResult:
         """Verify the application at ``observation.url`` against ``analysis``.
@@ -110,7 +111,7 @@ class Verifier:
 
         results: list[CriterionResult] = []
         confidences: list[float] = []
-        judgment: Optional[_Judgment] = None
+        judgment: _Judgment | None = None
 
         if asserted:
             pairs = [(c.id, c.check) for c in asserted if c.check is not None]
@@ -190,8 +191,8 @@ class Verifier:
         self,
         goal: str,
         observation: BrowserObservation,
-        analysis: Optional[GoalAnalysis],
-    ) -> Optional[_Judgment]:
+        analysis: GoalAnalysis | None,
+    ) -> _Judgment | None:
         """Ask the LLM to judge criteria from a page snapshot; ``None`` if unavailable."""
         criteria_list = analysis.acceptance_criteria if analysis else []
         criteria_prompt_section = "\n".join(
@@ -304,7 +305,7 @@ class Verifier:
         self,
         goal: str,
         observation: BrowserObservation,
-        analysis: Optional[GoalAnalysis],
+        analysis: GoalAnalysis | None,
     ) -> _Judgment:
         """Keyword evidence check used when no LLM is available.
 

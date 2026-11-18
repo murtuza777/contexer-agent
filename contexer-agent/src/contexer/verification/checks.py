@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -68,13 +68,13 @@ class Locator(BaseModel):
 
     model_config = ConfigDict(extra="ignore", coerce_numbers_to_str=True)
 
-    role: Optional[str] = None
-    name: Optional[str] = None
-    text: Optional[str] = None
-    label: Optional[str] = None
-    placeholder: Optional[str] = None
-    test_id: Optional[str] = None
-    css: Optional[str] = None
+    role: str | None = None
+    name: str | None = None
+    text: str | None = None
+    label: str | None = None
+    placeholder: str | None = None
+    test_id: str | None = None
+    css: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -125,8 +125,8 @@ class Step(BaseModel):
     model_config = ConfigDict(extra="ignore", coerce_numbers_to_str=True)
 
     action: StepAction
-    target: Optional[Locator] = None
-    value: Optional[str] = None
+    target: Locator | None = None
+    value: str | None = None
 
     @model_validator(mode="after")
     def _validate_shape(self) -> Step:
@@ -177,15 +177,15 @@ class Expectation(BaseModel):
     model_config = ConfigDict(extra="ignore", coerce_numbers_to_str=True, populate_by_name=True)
 
     kind: ExpectKind
-    target: Optional[Locator] = None
-    attribute: Optional[str] = None
-    css_property: Optional[str] = Field(default=None, alias="property")
-    equals: Optional[str] = None
-    contains: Optional[str] = None
-    matches: Optional[str] = None
-    changed: Optional[bool] = None
-    min: Optional[int] = None
-    max: Optional[int] = None
+    target: Locator | None = None
+    attribute: str | None = None
+    css_property: str | None = Field(default=None, alias="property")
+    equals: str | None = None
+    contains: str | None = None
+    matches: str | None = None
+    changed: bool | None = None
+    min: int | None = None
+    max: int | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -232,7 +232,7 @@ class Expectation(BaseModel):
     def has_comparator(self) -> bool:
         return any(v is not None for v in (self.equals, self.contains, self.matches, self.changed))
 
-    def compare(self, actual: Optional[str], before: Optional[str] = None) -> bool:
+    def compare(self, actual: str | None, before: str | None = None) -> bool:
         """Apply this expectation's comparators to an observed value."""
         if actual is None:
             # Only "changed" can hold for an absent value (it disappeared).
@@ -305,7 +305,7 @@ class Check(BaseModel):
 
     steps: list[Step] = Field(default_factory=list)
     expect: list[Expectation] = Field(min_length=1)
-    login: Optional[bool] = None
+    login: bool | None = None
 
     def describe_lines(self) -> list[str]:
         lines = ["as:     signed-out visitor"] if self.login is False else []
@@ -328,7 +328,7 @@ class MissingSecretError(ValueError):
     """A ``${NAME}`` placeholder refers to an environment variable that is not set."""
 
 
-def expand_secrets(value: str, env: Optional[dict[str, str]] = None) -> str:
+def expand_secrets(value: str, env: dict[str, str] | None = None) -> str:
     """Replace ``${NAME}`` with the environment variable's value (never stored in contracts)."""
     source = os.environ if env is None else env
 
@@ -367,7 +367,7 @@ class CheckResult(BaseModel):
     criterion_id: str
     passed: bool
     outcomes: list[ExpectationOutcome] = Field(default_factory=list)
-    failed_step: Optional[str] = None
+    failed_step: str | None = None
     # A step could not act on its target. Either the feature is missing or the
     # check named it differently, so this is not proof of broken behaviour.
     blocked: bool = False
@@ -377,8 +377,8 @@ class CheckResult(BaseModel):
     console_errors: list[str] = Field(default_factory=list)
     duration_seconds: float = 0.0
     # Evidence files, when the runner was given an artifacts directory.
-    screenshot: Optional[str] = None
-    trace: Optional[str] = None
+    screenshot: str | None = None
+    trace: str | None = None
 
     def summary(self) -> str:
         """One-line evidence statement."""

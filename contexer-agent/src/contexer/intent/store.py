@@ -19,7 +19,7 @@ import json
 import re
 from datetime import date
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -57,7 +57,7 @@ class IntentSpec(BaseModel):
     corrections: list[Correction] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
 
-    def with_correction(self, text: str, on: Optional[str] = None) -> IntentSpec:
+    def with_correction(self, text: str, on: str | None = None) -> IntentSpec:
         """A copy with one more correction, dated today unless ``on`` says otherwise."""
         correction = Correction(on=date.today().isoformat() if on is None else on, text=" ".join(text.split()))
         return self.model_copy(update={"corrections": [*self.corrections, correction]})
@@ -137,7 +137,7 @@ class SavedCheck(BaseModel):
     check: Check
     source: Literal["draft", "confirmed"] = "draft"
     # For a confirmed check: whether it failed (a bug to fix) or passed (behaviour to keep) when last replayed.
-    kind: Optional[Literal["bug", "works"]] = None
+    kind: Literal["bug", "works"] | None = None
 
 
 class IntentStore:
@@ -174,12 +174,12 @@ class IntentStore:
             raise IntentError(f"No intent '{intent_id}' in {self.root} (known: {known})")
         return self._read(path)
 
-    def find(self, goal: str) -> Optional[IntentSpec]:
+    def find(self, goal: str) -> IntentSpec | None:
         """The stored intent for this goal, if a run already wrote one."""
         intent_id = self.id_for(goal)
         return self.load(intent_id) if self.exists(intent_id) else None
 
-    def latest(self) -> Optional[IntentSpec]:
+    def latest(self) -> IntentSpec | None:
         """The intent that was saved last: what ``--again`` and ``--correct`` refer to."""
         files = self._files()
         return self._read(max(files, key=lambda p: p.stat().st_mtime_ns)) if files else None
@@ -192,7 +192,7 @@ class IntentStore:
         self._write_index()
         return path
 
-    def append_correction(self, intent_id: str, text: str, on: Optional[str] = None) -> IntentSpec:
+    def append_correction(self, intent_id: str, text: str, on: str | None = None) -> IntentSpec:
         spec = self.load(intent_id).with_correction(text, on)
         self.save(spec)
         return spec

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -112,7 +112,9 @@ async def test_the_brief_adds_the_cause_and_the_instruction_and_cannot_change_th
     assert "Deleting a task still lowers the count" in prompt and "Adding a task shows it in the list" in prompt
     # The section with the facts is identical with and without the brief.
     start, end = "## What is wrong", "## What to do"
-    assert prompt[prompt.index(start) : prompt.index("## Likely cause")] == facts_only[facts_only.index(start) : facts_only.index(end)]
+    note = "## A note on the next two sections"  # what a model wrote is announced before it appears
+    assert prompt.index(note) < prompt.index("## Likely cause")
+    assert prompt[prompt.index(start) : prompt.index(note)] == facts_only[facts_only.index(start) : facts_only.index(end)]
 
 
 def test_no_failures_means_no_prompt() -> None:
@@ -187,7 +189,7 @@ async def test_the_read_tools_are_confined_to_the_project_and_keep_out_of_contex
     (project / "node_modules" / "lib" / "index.js").write_text("remaining-count", encoding="utf-8")
 
     assert [t.name for t in project_tools(project)] == ["read_file", "grep"]
-    refused: list[Optional[str]] = [
+    refused: list[str | None] = [
         await _call(project, "read_file", path="../outside.txt"),
         await _call(project, "read_file", path=str(tmp_path / "outside.txt")),
         await _call(project, "read_file", path=".contexer/contracts/todo-basics.json"),

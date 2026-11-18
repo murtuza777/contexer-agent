@@ -151,3 +151,32 @@ def test_a_clean_run_that_errors_counts_as_a_false_failure() -> None:
     score = AppScore(app="x")
     _score(score, VariantRun(app="x", kind="benign", name="b", outcome="error", error="app did not start"))
     assert (score.clean_runs, score.false_failure_runs) == (1, 1)
+
+
+def test_a_folder_a_stopped_dev_server_is_still_writing_to_does_not_end_the_benchmark(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seen in CI: Next.js was still writing .next/dev/cache when the next variant was laid out."""
+    from contexer.bench import runner
+
+    [app] = discover(_mini_fixture(tmp_path))
+    real_rmtree = shutil.rmtree
+    attempts: list[str] = []
+
+    def busy_once(path: Path, *args: object, **kwargs: object) -> None:
+        attempts.append(Path(path).name)
+        if attempts.count(".next") == 1 and Path(path).name == ".next":
+            raise OSError(39, "Directory not empty", str(path))
+        real_rmtree(path, *args, **kwargs)
+
+    with runner._Workspace(app) as workspace:
+        work = workspace.materialise()
+        (work / ".next" / "dev" / "cache").mkdir(parents=True)
+        (work / ".next" / "dev" / "cache" / "x").write_text("busy", encoding="utf-8")
+        monkeypatch.setattr(runner.shutil, "rmtree", busy_once)
+        monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+
+        workspace.materialise()
+
+        assert attempts.count(".next") == 2  # it was tried again
+        assert not (work / ".next").exists() and (work / "index.html").is_file()

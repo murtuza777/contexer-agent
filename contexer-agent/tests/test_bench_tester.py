@@ -242,3 +242,57 @@ async def test_an_agent_that_crashes_on_one_variant_does_not_end_the_suite(tmp_p
     assert crashed.error.startswith("the tester failed: RuntimeError: Page.goto")
     assert (score.errors, score.clean_runs, score.bugs, score.steps) == (1, 0, 1, 3)
     assert "1 run(s) were not scored" in results_markdown(report)
+
+
+async def test_the_benchmark_measures_the_tester_together_with_its_challenger(tmp_path: Path) -> None:
+    """What `contexer test` would show is what is scored: a finding the Challenger sets aside is not reported."""
+    from contexer.bench.tester import LiveTester
+    from tests.fakes import AgentScript, calls, submit
+
+    explore = calls(
+        ("fill", {"target": {"placeholder": "What needs doing?"}, "value": "Buy milk"}),
+        ("click", {"target": {"role": "button", "name": "Add"}}),
+        ("check", {"target": {"role": "checkbox", "name": "Complete Buy milk"}}),
+        ("expect", {"kind": "text", "target": {"test_id": "remaining-count"}, "equals": "0 left"}),
+    )
+    report_bug = calls(("record_finding", {"kind": "bug", "title": "The count ignores completed tasks", "observation": "e1",
+                                           "violates": "the remaining count stays correct"}))  # fmt: skip
+    model = AgentScript(
+        tester=[explore, report_bug, submit(summary="x"), explore, report_bug, submit(summary="x")],
+        challenger=[submit(verdicts=[{"finding": 1, "verdict": "tester_error", "reason": "Set aside for the test."}])],
+    )
+    report = await run_tester_bench(_mini_fixture(tmp_path), LiveTester(model=model))
+
+    [score] = report.apps
+    # On the correct app the bug is refused when recorded; on the bug variant it is recorded and then set aside.
+    assert (score.bugs, score.found, score.false_alarms) == (1, 0, 0)
+    assert len(model.seen["challenger"]) == 1
+    bug_run = next(r for r in report.runs if r.kind == "bug")
+    assert bug_run.findings == 0 and bug_run.set_aside == 1
+
+
+async def test_a_finding_the_app_explained_is_not_scored_as_a_bug_or_a_false_alarm(tmp_path: Path) -> None:
+    from contexer.bench.tester import LiveTester
+    from tests.fakes import AgentScript, calls, submit
+
+    fixtures = Path(__file__).resolve().parents[1] / "bench" / "fixtures" / "bookings"
+    shutil.copytree(fixtures / "app", tmp_path / "bookings" / "app", ignore=shutil.ignore_patterns("runs"))
+    script = [
+        calls(
+            ("fill", {"target": {"label": "Your name"}, "value": "Bob"}),
+            ("click", {"target": {"role": "button", "name": "Book 09:00"}}),
+            ("click", {"target": {"role": "button", "name": "Book 10:00"}}),
+            ("expect", {"kind": "text", "target": {"test_id": "slot-1000"}, "contains": "Booked by Bob"}),
+        ),
+        calls(("record_finding", {"kind": "bug", "title": "Booking a second slot fails", "observation": "e1",
+                                  "violates": "book a free time slot with their name"})),  # fmt: skip
+        submit(summary="x"),
+    ]
+    model = AgentScript(tester=script)
+
+    report = await run_tester_bench(tmp_path, LiveTester(model=model))
+
+    [score] = report.apps
+    [run] = report.runs
+    assert (score.clean_runs, score.false_alarms, score.false_alarm_runs) == (1, 0, 0)
+    assert (run.findings, run.explained) == (0, 1) and "challenger" not in model.seen

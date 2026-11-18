@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from contexer.appserver.winjob import KillOnCloseJob
@@ -55,7 +55,7 @@ def without_agent_session(env: dict[str, str]) -> dict[str, str]:
 class ProcessTree:
     """A ``Popen`` plus whatever is needed to stop its descendants."""
 
-    def __init__(self, proc: subprocess.Popen[bytes], job: Optional[KillOnCloseJob]) -> None:
+    def __init__(self, proc: subprocess.Popen[bytes], job: KillOnCloseJob | None) -> None:
         self.proc = proc
         self._job = job
         self._lock = threading.Lock()  # Ctrl+C may stop a tree while its worker thread is stopping it
@@ -64,7 +64,7 @@ class ProcessTree:
     def pid(self) -> int:
         return self.proc.pid
 
-    def poll(self) -> Optional[int]:
+    def poll(self) -> int | None:
         return self.proc.poll()
 
     def kill(self, grace: float = 10.0) -> None:
@@ -101,7 +101,7 @@ class ProcessTree:
 def spawn_tree(
     argv: list[str],
     cwd: str | Path,
-    env: Optional[dict[str, str]] = None,
+    env: dict[str, str] | None = None,
     *,
     stdin: Any = subprocess.DEVNULL,
 ) -> ProcessTree:
@@ -115,7 +115,7 @@ def spawn_tree(
         )
     else:
         kwargs["start_new_session"] = True
-    proc = subprocess.Popen(
+    proc: subprocess.Popen[bytes] = subprocess.Popen(  # pyright: ignore[reportAssignmentType]
         popen_args(argv),
         cwd=str(cwd),
         env=env,
@@ -138,6 +138,8 @@ _CREATE_SUSPENDED = 0x00000004
 
 def _resume(proc: subprocess.Popen[bytes]) -> None:
     """Resume a process created suspended (subprocess keeps only its process handle, not the thread's)."""
+    if sys.platform != "win32":  # only Windows starts the process suspended
+        return
     import ctypes
 
     ntdll = ctypes.WinDLL("ntdll")
@@ -148,7 +150,7 @@ def _resume(proc: subprocess.Popen[bytes]) -> None:
         raise OSError(f"could not resume the child process (NTSTATUS {status:#x})")
 
 
-def _assign_to_job(proc: subprocess.Popen[bytes]) -> Optional[KillOnCloseJob]:
+def _assign_to_job(proc: subprocess.Popen[bytes]) -> KillOnCloseJob | None:
     try:
         from contexer.appserver.winjob import KillOnCloseJob
 
@@ -160,6 +162,8 @@ def _assign_to_job(proc: subprocess.Popen[bytes]) -> Optional[KillOnCloseJob]:
 
 
 def _signal_group(pid: int, sig: int) -> None:
+    if sys.platform == "win32":  # process groups are signalled on POSIX; Windows uses the job object
+        return
     try:
         os.killpg(pid, sig)
     except (ProcessLookupError, PermissionError):

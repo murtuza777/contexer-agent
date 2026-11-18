@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -35,7 +35,7 @@ class OpenCodeClient:
         self,
         base_url: str = DEFAULT_OPENCODE_URL,
         timeout: float = DEFAULT_REQUEST_TIMEOUT,
-        client: Optional[httpx.AsyncClient] = None,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -58,9 +58,9 @@ class OpenCodeClient:
         method: str,
         path: str,
         *,
-        params: Optional[dict[str, Any]] = None,
-        json_body: Optional[dict[str, Any]] = None,
-        timeout: Optional[float] = None,
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> httpx.Response:
         """Execute an HTTP request with structured error handling."""
         req_timeout = timeout if timeout is not None else self.timeout
@@ -113,8 +113,8 @@ class OpenCodeClient:
 
     async def create_session(
         self,
-        title: Optional[str] = None,
-        directory: Optional[str] = None,
+        title: str | None = None,
+        directory: str | None = None,
     ) -> OpenCodeSession:
         """Create a new OpenCode session.
 
@@ -159,7 +159,7 @@ class OpenCodeClient:
                 response_body=response.text,
             ) from exc
 
-    async def list_sessions(self, directory: Optional[str] = None) -> list[OpenCodeSession]:
+    async def list_sessions(self, directory: str | None = None) -> list[OpenCodeSession]:
         """List sessions from OpenCode.
 
         Endpoint: GET /session
@@ -181,8 +181,8 @@ class OpenCodeClient:
         self,
         session_id: str,
         prompt: str,
-        model: Optional[dict[str, str]] = None,
-        agent: Optional[str] = None,
+        model: dict[str, str] | None = None,
+        agent: str | None = None,
     ) -> None:
         """Send a prompt asynchronously to OpenCode.
 
@@ -202,9 +202,9 @@ class OpenCodeClient:
         self,
         session_id: str,
         prompt: str,
-        model: Optional[dict[str, str]] = None,
-        agent: Optional[str] = None,
-        timeout: Optional[float] = None,
+        model: dict[str, str] | None = None,
+        agent: str | None = None,
+        timeout: float | None = None,
     ) -> OpenCodeMessage:
         """Send a prompt synchronously, waiting for completion.
 
@@ -266,7 +266,7 @@ class OpenCodeClient:
             return session_status.type
         return ExecutionStatus.IDLE
 
-    async def get_messages(self, session_id: str, limit: Optional[int] = None) -> list[OpenCodeMessage]:
+    async def get_messages(self, session_id: str, limit: int | None = None) -> list[OpenCodeMessage]:
         """Retrieve message history for a session.
 
         Endpoint: GET /session/{sessionID}/message

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import ValidationError
 
@@ -37,7 +37,7 @@ class IssueFlowError(Exception):
     """The issue flow cannot go on; the message is fit to post on the issue."""
 
 
-def command_for(event_name: str, event: dict[str, Any], label: str = DEFAULT_LABEL) -> tuple[Command, Optional[int], str]:
+def command_for(event_name: str, event: dict[str, Any], label: str = DEFAULT_LABEL) -> tuple[Command, int | None, str]:
     """What a GitHub event asks Contexer to do: (command, issue number, who asked)."""
     issue = event.get("issue") or {}
     number = issue.get("number")
@@ -66,7 +66,7 @@ def issue_goal(issue: dict[str, Any]) -> str:
     return f"{title}\n\n{body[:4000]}".strip()
 
 
-def draft_comment(contract: Contract, preview: Optional[RunResult], drafted_by: str = "", note: str = "") -> str:
+def draft_comment(contract: Contract, preview: RunResult | None, drafted_by: str = "", note: str = "") -> str:
     lines = [
         f"<!-- contexer:draft id={contract.id} sha256={contract.content_hash()} -->",
         "### Contexer: what \"done\" means for this issue",
@@ -134,7 +134,7 @@ def status_comment(headline: str, lines: list[str], footer: str = "") -> str:
     return "\n".join(body) + "\n"
 
 
-def _preview_marks(preview: Optional[RunResult]) -> dict[str, str]:
+def _preview_marks(preview: RunResult | None) -> dict[str, str]:
     marks: dict[str, str] = {}
     if preview is None or preview.decision.outcome == "error":
         return marks

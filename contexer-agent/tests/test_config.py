@@ -3,7 +3,7 @@
 import os
 from unittest.mock import patch
 
-from contexer.config.settings import ContexerConfig, load_config, DEFAULT_OPENROUTER_MODEL
+from contexer.config.settings import DEFAULT_OPENROUTER_MODEL, ContexerConfig, load_config
 
 
 class TestContexerConfig:

@@ -17,8 +17,8 @@ import json
 import os
 import sys
 import tomllib
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -29,11 +29,11 @@ CREDENTIALS_FILE = "credentials.toml"
 class UserSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    provider: Optional[str] = None
-    model: Optional[str] = None
-    base_url: Optional[str] = None
-    agent: Optional[str] = None
-    agent_model: Optional[str] = None
+    provider: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    agent: str | None = None
+    agent_model: str | None = None
 
 
 def contexer_home() -> Path:
@@ -118,6 +118,6 @@ def mask(secret: str) -> str:
     return f"{secret[:6]}…{secret[-4:]}" if len(secret) > 12 else "••••"
 
 
-def _toml_pairs(values: dict[str, Optional[str]]) -> list[str]:
+def _toml_pairs(values: Mapping[str, str | None]) -> list[str]:
     # A JSON string is a valid TOML basic string for every value we write.
     return [f"{key} = {json.dumps(value, ensure_ascii=False)}" for key, value in values.items() if value]

@@ -20,6 +20,8 @@ the tests.
 ## Run the checks
 
 ```bash
+python -m ruff check src tests
+python -m pyright src
 python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
 contexer bench --repeats 2
 ```
@@ -56,6 +58,10 @@ not be merged.
    model replies. Live tests skip themselves when a key is missing.
 6. **Measure before claiming.** A change that affects accuracy comes with
    benchmark numbers, whatever they are.
+7. **Assume the model is compromised.** A guardrail is a property of the
+   code, with a test in which a scripted model does what an attacker wants.
+   An instruction in a prompt is not a guardrail. A new tool for an agent
+   goes into the tool audit in `docs/architecture.md`.
 
 ## Commits
 
