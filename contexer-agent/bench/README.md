@@ -9,6 +9,7 @@ contexer bench --live        # compile each app's goal with the LLM instead, the
 contexer bench --app notes   # one app
 contexer bench --suite tester --agent stub   # the tester suite (below)
 contexer bench --suite repair --agent opencode   # the repair suite (below)
+contexer bench --suite reviewer --agent scan     # the reviewer suite (below)
 ```
 
 ## How it works
@@ -99,6 +100,32 @@ contexer bench --suite repair --agent claude-code --bug todo/count-ignores-done 
 
 Results are in [repair-results/](repair-results/).
 
+## The reviewer suite
+
+`contexer bench --suite reviewer --agent scan|reviewer` measures the review
+of a diff (`crew/reviewer.py`). `reviewer/<case>/` holds `before/`,
+`after/` and `case.json`:
+
+- **10 planted cases**, one issue each: a secret in the source, a focused
+  test, a deleted test, leftover debug code, a test rewritten to match a
+  bug, an off-by-one, user text put into the page as HTML, a removed admin
+  check, a value hard-coded for the check, a query built from input.
+- **10 clean cases**: refactors, a feature with its tests, a key read from
+  the environment, a placeholder in a README, an error that is logged.
+
+A planted issue is **flagged** when a note points at its file with a
+fitting category. Whether the note's words are right is not judged, so the
+number is an upper bound. A **false high** is a high-severity note on a
+clean diff; a high-severity security note is what turns a pull request into
+a draft.
+
+`--agent scan` runs the code-only scan with no model: the floor. `--agent
+reviewer` adds the Reviewer agent on the model you configured. A run of the
+whole suite writes `reviewer-results/<agent>.md`.
+
+Twenty small diffs written by the person who wrote the scan are a smoke
+test, not a measure of how the review does on real pull requests.
+
 ## What the numbers mean, and don't
 
 - **Hand-written contracts** measure the runner:
@@ -119,7 +146,8 @@ Results are in [repair-results/](repair-results/).
 ## Results
 
 See [RESULTS.md](RESULTS.md), [tester-results/](tester-results/) for the tester suite
-and [repair-results/](repair-results/) for the repair suite.
+[repair-results/](repair-results/) for the repair suite and
+[reviewer-results/](reviewer-results/) for the reviewer suite.
 
 ## Adding a fixture
 

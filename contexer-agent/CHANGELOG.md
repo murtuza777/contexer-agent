@@ -7,6 +7,34 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Added
 
+- **The Reviewer: a passing run is read before it is handed over** (Phase 4
+  of the agentic harness, graph engine).
+  - A scan of the diff by code finds secrets, focused or skipped tests,
+    deleted tests, removed assertions and leftover debug code. The
+    project's own `test`, `lint` and `typecheck` scripts are run with a
+    time limit and without credentials in their environment. With a model,
+    the Reviewer agent reads the diff with read-only tools.
+  - What code saw can get one more repair turn. If that turn breaks a
+    check it is undone and the pass stands. What the model wrote is advice
+    and never starts a repair. No note changes a verdict.
+  - `contexer run --no-review` turns it off. The notes are in the report
+    and in `run.json`.
+  - `contexer bench --suite reviewer --agent scan|reviewer`: ten planted
+    issues and ten clean diffs. The scan alone flags 4 of 10 with no false
+    high-severity note; with the Reviewer on Azure gpt-5.4, 10 of 10 and
+    one false high ([results](bench/reviewer-results/reviewer.md)).
+- **Pull requests and issues on the graph engine.**
+  - The pull request description adds what was understood, each attempt
+    with what was decided after it, and the review's notes. A
+    high-severity security note keeps a proven run a draft.
+  - `contexer issue build --engine graph` (or `CONTEXER_ENGINE`).
+  - With the graph engine and a model, `contexer issue draft` uses the
+    Intent agent: the comment shows what it understood and its questions.
+    `/contexer answer <text>` from someone with write access drafts the
+    checks again with the answer applied.
+  - An issue's text is quoted as data, under a fixed preamble, in every
+    prompt it reaches. A contract drafted from an issue records where its
+    goal came from (`origin`).
 - **`contexer bench --suite repair`: the two engines, measured.** Each seeded
   bug goes to a coding agent once per engine; fixed means the gate passed.
   `--repair-only` makes every fix a repair, `--model` picks the coding
