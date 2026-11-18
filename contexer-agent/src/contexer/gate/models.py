@@ -85,6 +85,18 @@ class TriageRow(BaseModel):
     rejected: str = ""  # what a model answered when that answer was not used
 
 
+class ReviewRow(BaseModel):
+    """One note from the review of the diff. ``backed`` means code saw it; otherwise it is a model's advice."""
+
+    file: str = ""
+    line: int = 0
+    severity: str = "low"
+    category: str = "other"
+    explanation: str = ""
+    source: str = "reviewer"
+    backed: bool = False
+
+
 class AgentRow(BaseModel):
     """What one of Contexer's own agents used in the run."""
 
@@ -110,6 +122,7 @@ class AgentRunSummary(BaseModel):
     agents: list[AgentRow] = Field(default_factory=list)
     intent_id: str = ""
     corrections: list[str] = Field(default_factory=list)
+    review: list[ReviewRow] = Field(default_factory=list)
 
 
 class RunResult(BaseModel):

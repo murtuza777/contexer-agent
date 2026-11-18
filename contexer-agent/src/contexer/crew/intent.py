@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field, ValidationError
 from contexer.contract.models import slugify
 from contexer.crew.base import AgentSpec, AgentStatus, run_agent
 from contexer.crew.budget import Budget
-from contexer.crew.untrusted import untrusted
+from contexer.crew.untrusted import quoted_goal, untrusted
 from contexer.intent.store import IntentSpec, SavedCheck
 from contexer.verification.checks import Check
 from contexer.workflow.criteria import CHECK_DSL_GUIDE, parse_check
@@ -106,6 +106,7 @@ async def run_intent(
     assume: bool = False,
     run_dir: Path | None = None,
     budget: Budget | None = None,
+    origin: str = "",
 ) -> IntentResult:
     """Write or update the intent for ``goal``.
 
@@ -126,7 +127,7 @@ async def run_intent(
         timeout=_TIMEOUT,
         max_output_tokens=_MAX_OUTPUT_TOKENS,
     )
-    task = _task(spec, existing, repo_summary, ui_snapshot, updating=bool(correction), assume=assume)
+    task = _task(spec, existing, repo_summary, ui_snapshot, updating=bool(correction), assume=assume, origin=origin)
     ran = await run_agent(agent, model, [], task, run_dir=run_dir, budget=budget)
     result.status, result.error, result.steps = ran.status, ran.error, ran.steps
     result.tokens_in, result.tokens_out, result.cost_usd = ran.tokens_in, ran.tokens_out, ran.cost_usd
@@ -175,9 +176,19 @@ async def run_intent(
 
 
 def _task(
-    spec: IntentSpec, existing: list[SavedCheck], repo_summary: str, ui_snapshot: str, *, updating: bool, assume: bool
+    spec: IntentSpec,
+    existing: list[SavedCheck],
+    repo_summary: str,
+    ui_snapshot: str,
+    *,
+    updating: bool,
+    assume: bool,
+    origin: str = "",
 ) -> str:
-    parts = ["## The goal, in the person's words", spec.goal.strip()]
+    if origin.strip():  # an issue anyone can write: quoted, and not called the person's words
+        parts = ["## The goal", quoted_goal(spec.goal, origin)]
+    else:
+        parts = ["## The goal, in the person's words", spec.goal.strip()]
     if spec.behaviours or spec.corrections or spec.assumptions:
         parts += ["", "## What is already written down about this feature", spec.as_text()]
     if existing:

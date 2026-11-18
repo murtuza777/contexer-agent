@@ -305,6 +305,18 @@ def _loop_details(run: AgentRunSummary) -> str:
             "choose how to repair; it cannot make a run pass.</p>"
             f"<table class='diff attempts'><tr><th>After attempt</th><th>Decision</th><th>Decided by</th><th>Reason</th></tr>{rows}</table>"
         )
+    if run.review:
+        rows = "".join(
+            f"<tr><td>{_e(n.severity)}</td><td>{_e(n.category)}</td>"
+            f"<td><code>{_e(n.file)}{f':{n.line}' if n.line else ''}</code></td>"
+            f"<td>{'a program' if n.backed else 'a model (advice)'}</td><td>{_e(n.explanation)}</td></tr>"
+            for n in run.review
+        )
+        parts.append(
+            "<h3>Review</h3><p class='muted'>What reading the diff found after every check passed. A note does not "
+            "change the verdict: the checks decide that.</p>"
+            f"<table class='diff attempts'><tr><th>Severity</th><th>About</th><th>Where</th><th>Found by</th><th>Note</th></tr>{rows}</table>"
+        )
     if run.agents:
         rows = "".join(
             f"<tr><td>{_e(a.agent)}</td><td>{a.steps}</td><td>{a.tokens_in:,} in · {a.tokens_out:,} out</td>"

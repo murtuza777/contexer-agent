@@ -74,6 +74,7 @@ The same groups as `contexer --help`:
 | **More** | |
 | `contexer models [--provider P] [--free] [--search S]` | A provider's models; `--providers` lists every provider and the keys you have |
 | `contexer bench [--live]` | Seeded-bug benchmark: catch rate and false-failure rate |
+| `contexer bench --suite repair\|reviewer\|tester` | The other suites: repairs per engine, the review of a diff, the exploring tester |
 
 Useful options:
 

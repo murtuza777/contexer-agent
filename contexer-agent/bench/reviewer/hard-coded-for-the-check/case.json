@@ -1,0 +1,11 @@
+{
+  "goal": "The counter shows how many tasks are left",
+  "planted": {
+    "file": "src/counter.js",
+    "categories": [
+      "logic",
+      "other"
+    ],
+    "scan": false
+  }
+}

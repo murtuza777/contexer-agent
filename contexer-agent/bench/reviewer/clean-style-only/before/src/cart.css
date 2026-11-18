@@ -1,0 +1,2 @@
+.cart { display: grid; gap: 8px; }
+.cart-total { font-weight: 600; }

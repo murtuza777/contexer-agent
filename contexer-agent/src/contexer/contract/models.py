@@ -41,6 +41,9 @@ class Contract(BaseModel):
     criteria: list[AcceptanceCriterion] = Field(default_factory=list)
     source: ContractSource = "user"
     created_at: str = Field(default_factory=lambda: utc_now())
+    # Where the goal's words came from when a person did not type them to Contexer, e.g. "GitHub issue #7".
+    # Such a goal is quoted as data in every prompt (crew/untrusted.py: quoted_goal). Not part of what is approved.
+    origin: str = ""
     approval: Approval | None = None
 
     # -- identity -------------------------------------------------------------

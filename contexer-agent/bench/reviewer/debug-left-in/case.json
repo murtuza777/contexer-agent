@@ -1,0 +1,10 @@
+{
+  "goal": "Pages of ten items",
+  "planted": {
+    "file": "src/list.js",
+    "categories": [
+      "debug"
+    ],
+    "scan": true
+  }
+}

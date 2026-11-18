@@ -33,7 +33,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, Field
 
 from contexer.appserver import AppStartError, RunningApp, open_app
-from contexer.bench.runner import FixtureApp, Variant, VariantKind, _Workspace, discover
+from contexer.bench.runner import FixtureApp, Variant, VariantKind, Workspace, discover
 from contexer.contract import Contract
 from contexer.contract.models import utc_now
 from contexer.evidence.rundir import RunDir
@@ -272,7 +272,7 @@ async def run_tester_bench(
         plan: list[tuple[Variant, int]] = [(good, r) for r in range(repeats)]
         plan += [(v, r) for v in app.benign for r in range(repeats)]
         plan += [(v, 0) for v in app.bugs]
-        with _Workspace(app) as workspace:
+        with Workspace(app) as workspace:
             for variant, repeat in plan:
                 run = await _run_variant(agent, goal, variant, repeat, workspace)
                 report.runs.append(run)
@@ -290,7 +290,7 @@ def _goal(app: FixtureApp) -> str:
     return " ".join(goals) or f"The {app.name} app works as a user would expect."
 
 
-async def _run_variant(agent: TesterAgent, goal: str, variant: Variant, repeat: int, workspace: _Workspace) -> TesterRun:
+async def _run_variant(agent: TesterAgent, goal: str, variant: Variant, repeat: int, workspace: Workspace) -> TesterRun:
     started = time.monotonic()
     run = TesterRun(app=variant.app, kind=variant.kind, name=variant.name, repeat=repeat)
     if variant.kind == "bug":
@@ -346,7 +346,7 @@ async def _run_variant(agent: TesterAgent, goal: str, variant: Variant, repeat: 
     return run
 
 
-async def _replay_on_good(workspace: _Workspace, goal: str, findings: list[Finding]) -> list[Replay]:
+async def _replay_on_good(workspace: Workspace, goal: str, findings: list[Finding]) -> list[Replay]:
     work = workspace.materialise()
     with open_app(work, log_path=RunDir.create(work).server_log) as running:
         return await _replay(work, running, goal, findings)

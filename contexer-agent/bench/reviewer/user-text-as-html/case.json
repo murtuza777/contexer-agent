@@ -1,0 +1,10 @@
+{
+  "goal": "Comments show the author in bold",
+  "planted": {
+    "file": "src/comments.js",
+    "categories": [
+      "security"
+    ],
+    "scan": false
+  }
+}

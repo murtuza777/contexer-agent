@@ -34,6 +34,8 @@ class _Always(TypedDict):
 
 class LoopState(_Always, total=False):
     started_at: str
+    # Where the goal's words came from when the person did not type them ("GitHub issue #7"); "" otherwise.
+    goal_origin: str
 
     # -- what done means ------------------------------------------------------------------
     other_ids: list[str]
@@ -69,6 +71,16 @@ class LoopState(_Always, total=False):
     decisions: list[dict[str, Any]]
     asked: int
     answer: str
+
+    # -- the review of a passing attempt ---------------------------------------------------
+    # The notes of the latest review, and the attempt it read.
+    review: list[dict[str, Any]]
+    reviewed: int
+    # How many repairs a review has asked for (at most one), and the passing attempt it asked on.
+    review_repairs: int
+    review_passed: int | None
+    # The attempt whose pass stands when a later one was undone.
+    accepted: int | None
 
     # -- accounting -------------------------------------------------------------------------
     agents: list[dict[str, Any]]

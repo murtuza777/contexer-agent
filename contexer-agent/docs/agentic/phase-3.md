@@ -120,7 +120,7 @@ anything.
 ## Results, 2026-11-18
 
 All four tickets are built, tests first. `--engine graph` is opt-in;
-`classic` stays the default until the phase gate below is measured.
+`classic` is still the default; the phase gate has been measured (below).
 
 **T3.1.** LangGraph was adopted after the spike (recorded in
 [architecture.md](architecture.md) §8). `graph/`: `state.py` (plain data,
@@ -223,13 +223,46 @@ each of Contexer's agents used, with the path of its transcript.
   Diagnoser ran before each repair, and the third attempt passed. About
   2,200 tokens for Triage and 7,900 for the Diagnoser.
 
-**Not done: the second half of the phase gate.** Repair success on the
-seeded bugs, graph against classic with the same coding agent and model,
-has not been measured. It needs a real coding agent on 40 bugs twice,
-roughly $50 to $60 of Claude Code spend at the rate above, and a small
-sample would say nothing: both engines fix these bugs in the first attempt,
-and they differ only when a repair is needed. Until it is measured the
-graph is opt-in and `classic` is the default.
+**The second half of the phase gate: measured, and equal.** `contexer bench
+--suite repair` (`bench/repair.py`) lays out every seeded bug with its app's
+approved contract and hands it to a coding agent once per engine. A bug
+counts as fixed only when the run ends `succeeded`. With `--repair-only` the
+first turn gives the agent the job and tells it to change nothing, so the
+checks fail on the seeded bug and every fix is a repair, which is the only
+place the engines differ.
+
+OpenCode on Azure gpt-5.4, gpt-5.4 for Contexer's own agents, all 46 bugs of
+the 7 apps, `--repair-only`, 2 repair rounds
+([the report](../../bench/repair-results/opencode-azure-gpt-5.4.md)):
+
+| Engine | Bugs | Fixed | Attempts | Minutes |
+| --- | --- | --- | --- | --- |
+| classic | 46 | 46 | 92 | 39.7 |
+| graph | 46 | 46 | 92 | 46.6 |
+
+What this does and does not show:
+
+- The graph repairs as well as classic on these bugs, so the gate's condition
+  ("at least as good") is met.
+- It is not evidence that the graph is better. Every bug was fixed by the
+  first repair, in the same session, on both engines. Triage chose
+  `repair_same_session` 46 times, which is what the rule chooses too; a fresh
+  session, a rollback and a question were never needed. These bugs are too
+  easy for gpt-5.4 to separate the engines. A weaker coding model is the test
+  that can.
+- The graph took 17% longer (about 9 seconds per bug): Triage and the
+  Diagnoser each make a model call before a repair.
+- One coding agent, one model, one run per bug. The cost was not measured:
+  the OpenCode adapter reports none.
+
+Building the benchmark found one difference between the engines: the graph
+read the contract back from `.contexer/contracts/` and ended `needs_human`
+when the caller kept it elsewhere, where classic uses the object it is given.
+The graph now does the same.
+
+`classic` is still the default. The gate allows the switch; it has not been
+made, because it changes what `contexer run` does for everyone and the
+measurement above shows no gain to pay for the extra model calls.
 
 **Other things left open.**
 

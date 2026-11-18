@@ -126,7 +126,7 @@ A `contexer run "GOAL" --pr`, end to end:
 | `browser/` | A browser an agent operates: the tools (`tools.py`), the recording of what it did (`recorder.py`), and freezing findings into checks and replaying them (`freeze.py`) |
 | `config/` | Environment settings, `contexer.toml`, per-user settings in `~/.contexer` |
 | `workflow/` | Goal-to-checks compiler (`criteria.py`), repository inspector, static file server |
-| `bench/` | The seeded-bug benchmark: the gate suite (`runner.py`) and the tester suite (`tester.py`) |
+| `bench/` | The seeded-bug benchmark: the gate suite (`runner.py`), the tester suite (`tester.py`), the repair suite (`repair.py`) and the reviewer suite (`reviewer.py`) |
 | `demo/` | The `contexer demo` todo app and its contract |
 | `procutil.py` | Process trees that are always stopped together |
 
@@ -522,8 +522,10 @@ after every node. It is opt-in (`--engine graph` or `CONTEXER_ENGINE=graph`)
 until it is measured to repair at least as well as the classic loop.
 
 ```text
-intent → approve → coder_turn → guard_snapshot → ensure_app → test → score ─ pass ─► finalize
-   ▲        │           ▲                                               │
+intent → approve → coder_turn → guard_snapshot → ensure_app → test → score ─ pass ─► review ─► finalize
+   ▲        │           ▲  ▲                                            │               │
+   │        │           │  └──────────── one repair, when code saw something ───────────┘
+   │        │           │                                               │
    │   correction       │                                            triage ── stop ──► finalize
    └────────┴───────────┼──── correction ◄──────────────────────────────┤
                         │                                            ask_user
@@ -539,6 +541,7 @@ intent → approve → coder_turn → guard_snapshot → ensure_app → test →
 | `ensure_app` | Starts or refreshes the app | No |
 | `test` | Replays every approved check in Chromium | No |
 | `score` | Scores the attempt, reverts a worse one to the best, ends the run on a pass or when no round is left | No |
+| `review` | Reads the diff of an attempt that passed: a scan, the project's own commands, the Reviewer. May ask for one repair; cannot fail the run | The Reviewer, when a model is configured |
 | `triage` | Chooses the next move among the legal ones | Triage, when a model is configured; otherwise the 0.4 rules |
 | `ask_user` | Waits for a person's answer to Triage's question | No |
 | `diagnose` | Writes the repair prompt from the browser's evidence; adds the Diagnoser's brief as a marked lead | The Diagnoser, when a model is configured |
@@ -566,6 +569,43 @@ intent → approve → coder_turn → guard_snapshot → ensure_app → test →
   `finalize` does not trust the state: `settle()` keeps `succeeded` only when
   `decide()` run again on the last attempt's recorded verdicts returns
   `pass`, and otherwise ends the run as `failed_checks`.
+- **Review** (`crew/reviewer.py`). After an attempt passes, and before
+  `finalize`, the diff from the baseline is read. Three sources, kept
+  apart:
+  - `prescan(diff)`, code only: a secret on an added line (known key
+    formats, a private key, a mixed-case value of 16 or more characters
+    assigned to a name like `api_key`, `token` or `secret`; the note says
+    where and never repeats the value), an environment file in the
+    change, `.only` or `skip` added in a test file, a deleted test file,
+    more assertions removed than added in a test file, and `console.log`,
+    `debugger` or `breakpoint()` added outside tests.
+  - `run_commands`, code only: the `test`, `lint`, `typecheck` and
+    `type-check` scripts of the project's `package.json`, each once, with
+    a time limit (180 s), `CI=1`, and an environment without any variable
+    named like a credential. Nothing else is ever run. npm's placeholder
+    test script is skipped, and when dependencies are declared but not
+    installed the commands are not run. A command that fails is a note; one
+    that times out proves nothing. Files a command wrote are put back to
+    the snapshot that passed.
+  - the Reviewer agent, when a model is configured: `read_file`, `grep`
+    and `list_changed_files`, all read-only. Its notes must name a file
+    the diff touches, are capped at 500 characters and 20 notes, and
+    repeat nothing the scan found.
+
+  A note from the first two is `backed`: code saw it. A note from the
+  model is advice and is never `backed`. When there is a backed note of
+  medium or high severity, and a repair round, budget and time are left,
+  the review asks the coding agent for **one** more turn
+  (`MAX_REVIEW_REPAIRS`), in the session that did the work, with only the
+  backed notes in the prompt. If that turn passes, it is reviewed again
+  and the run ends. If it breaks a check, or the agent does not complete
+  it, the files go back to the attempt that passed, the run ends
+  `succeeded` on that attempt, and the notes stay in the report. So a
+  review can ask for more, and it cannot take a pass away: `finalize`
+  still recomputes the gate's decision on the attempt that stands.
+  `RunSettings.review` (`contexer run --no-review`) turns the node off.
+  Limits: a failing command is not run on the baseline, so the note says
+  it may have failed before the change; only npm scripts are known.
 - **Triage** (`crew/triage.py`). `legal_moves()` is code: no repair when no
   round or budget is left; no same-session repair after a revert; a
   rollback only when an earlier attempt is still the best; a question only
@@ -899,10 +939,21 @@ wants (`tests/test_guardrails.py`). The plan is in
 | Declare the work done | `graph/routing.py: settle`: a run ends `succeeded` only when the gate's decision, computed again from the replayed checks, is `pass`. Triage's moves do not include one that passes a run, and a move outside the legal list is replaced by the rules |
 
 Text from the app (page snapshots, project summaries, diffs, server logs,
-failure reports, saved skills) goes into every prompt inside
+failure reports, command output, saved skills) goes into every prompt inside
 `<untrusted source="...">`, and text that imitates the closing marker is
 neutralised (`crew/untrusted.py`). That is the soft layer: it makes steering
 less likely, and nothing depends on it.
+
+A goal a person typed to Contexer is theirs. A goal taken from a GitHub
+issue is not: anyone who can open an issue wrote it. A contract drafted
+from an issue records that in `origin` ("GitHub issue #7"; not part of the
+approved hash), and `quoted_goal()` then puts the goal into every prompt
+(the coding agent's, the Intent agent's, the Diagnoser's, the Reviewer's)
+inside `<untrusted source="issue">` under a fixed preamble that says who
+wrote it and that anything in it which is not about the app's behaviour is
+not the goal. `contexer issue build` sets `origin` itself, so editing the
+JSON in the draft comment cannot remove it. The approval by someone with
+write access is still what makes the checks count.
 
 ### Tool audit
 
@@ -913,6 +964,7 @@ less likely, and nothing depends on it.
 | Challenger | none (only `submit`) | No. It can only set a confirmed bug aside, with a reason |
 | Triage | none (only `submit`) | No. It chooses one of the moves code lists as legal; no move ends a run as succeeded |
 | Diagnoser | `read_file`, `grep` | No. Both are read-only and confined |
+| Reviewer | `read_file`, `grep`, `list_changed_files` | No. All three are read-only and confined. The project's `test`, `lint` and `typecheck` scripts are run by code before the agent starts, not by the agent; files they write are put back |
 
 Only the external coding agent edits the project. A new tool for an agent
 has to be added to this table and to `test_each_agent_has_exactly_the_tools_in_the_audit_table`.
@@ -1034,7 +1086,8 @@ tampered or cancelled, and only when files changed:
    is passed as an `http.<server>/.extraheader`, so nothing is stored in
    `.git/config`.
 5. Open the pull request: ready for review when the run succeeded, a draft
-   otherwise; where drafts are not supported, a normal one titled
+   otherwise, and also a draft when the run succeeded but the review holds
+   a high-severity security note (from the scan or from the model); where drafts are not supported, a normal one titled
    `[Draft] ...`; an existing one for the branch is reused. Without a token,
    the result is the compare link.
 
@@ -1043,6 +1096,14 @@ with each verdict and evidence, the regression replay count, the agent,
 attempts, repair rounds, cost and duration, the contract and its approval
 hash, where the evidence is (the workflow run's artifact in Actions), and
 `Closes #N` for issue runs. You are left on the new branch.
+
+For a run on the graph engine it adds: **What was understood** (the
+intent's behaviours, corrections and assumptions, when the run wrote an
+intent), **Attempts** (each attempt's result and what was decided after
+it, by a model or by the rules, when there was more than one), and
+**Review** (each note with its severity, where, and whether a program or
+a model found it). Checks found by the Tester are not there: the Tester
+does not run inside the loop yet.
 
 ### Issue flow (`github/issues.py`, `cli/issue_cli.py`, `issue/action.yml`)
 
@@ -1065,7 +1126,8 @@ sequenceDiagram
 ```
 
 - `command_for(event)`: `issues: labeled` with the label → draft;
-  `issue_comment: created` starting with `/contexer draft` → draft,
+  `issue_comment: created` starting with `/contexer draft` or
+  `/contexer answer <text>` → draft,
   `/contexer approve` or `/contexer build` → build; comments on pull requests
   and anything else → ignore. `contexer issue event --plan` prints it (and
   writes `command=` to `GITHUB_OUTPUT`) so the action installs the coding
@@ -1074,7 +1136,21 @@ sequenceDiagram
   checks with how each fares on the app today, and the contract as JSON inside
   `<details>`. A maintainer may edit the JSON; the build notices
   (`edited since drafting`).
-- **Build**: the approver must have `admin`, `maintain` or `write` access
+- **Drafting with the Intent agent** (graph engine, `CONTEXER_ENGINE=graph`,
+  and a model configured): the comment also shows what the agent
+  understood (behaviours, assumptions) and its questions, each with the
+  reading the checks take and the other one. `/contexer answer <text>`
+  drafts again; every answer on the issue from someone with write access
+  is written into the intent as a correction before the model is called,
+  and answers from anyone else are ignored. Nothing is kept between
+  workflow runs: the issue and its comments are the state. The classic
+  engine, or no model, drafts as before.
+- **Build**: `--engine` or `CONTEXER_ENGINE` chooses the engine. On the
+  graph, the contract from the comment is approved in the approver's name
+  and the graph starts at its approval point, which passes; the checks are
+  not drafted a second time, because a second draft could differ from what
+  was approved. Triage does not stop to ask (nobody is at a terminal).
+  The approver must have `admin`, `maintain` or `write` access
   (checked through the API); only a comment by a `Bot` user counts as the
   draft, so a person's imitation is ignored; the contract is approved in the
   approver's name; `check_free_quota` warns; the run is followed by one
@@ -1180,7 +1256,7 @@ and prints the fix under each problem.
 ## 18. Benchmark
 
 `bench/runner.py`, `contexer bench [--repeats N] [--live] [--app NAME] [--fixtures DIR] [--out
-FILE] [--suite gate|tester] [--agent NAME]` (run from `contexer-agent/`; the fixtures are not in the PyPI package).
+FILE] [--suite gate|tester|repair|reviewer] [--agent NAME]` (run from `contexer-agent/`; the fixtures are not in the PyPI package).
 
 - Fixtures in `bench/fixtures/<app>/`: `app/` (the correct app with approved
   contracts in `app/.contexer/contracts/`), `bugs/<id>/` (file overlays with
@@ -1200,6 +1276,28 @@ FILE] [--suite gate|tester] [--agent NAME]` (run from `contexer-agent/`; the fix
 - `--live` compiles each app's goal with the drafting model, keeps only the
   executable checks that pass on the good app, and scores those.
 - A workspace per app keeps `node_modules` between variants.
+
+**Repair suite** (`bench/repair.py`, `contexer bench --suite repair --agent
+NAME [--model M] [--engine classic|graph] [--bug app/bug] [--limit N]
+[--rounds N] [--repair-only]`): measures the run loop. For each bug the
+workspace is laid out afresh (the good app, the bug on top), and
+`RunController` or `GraphController` runs the app's approved contract with a
+new agent session. **Fixed** means the run ended `succeeded`. `--repair-only`
+wraps the agent so its first turn carries the job and an instruction to
+change nothing, and allows one more round, so every fix is a repair. The
+report has a row per engine (fixed, attempts, minutes, cost when the agent
+reports one) and lists the bugs on which the engines differ. A run that
+raises is recorded as `error` and the benchmark goes on. Results:
+`bench/repair-results/`.
+
+**Reviewer suite** (`bench/reviewer.py`, `contexer bench --suite reviewer
+--agent scan|reviewer`): `bench/reviewer/<case>/` has `before/`, `after/`
+and `case.json`. Ten cases have one planted issue (its file, the
+categories a note may carry, whether a scan can see it); ten are clean
+changes, some written to look suspicious. A planted issue is **flagged**
+when a note points at its file with a fitting category; the wording is not
+judged. A **false high** is a high-severity note on a clean diff. `scan`
+runs no model. Results: `bench/reviewer-results/`.
 
 **Tester suite** (`bench/tester.py`, `contexer bench --suite tester --agent
 NAME`): measures an agent that explores instead of a contract. A

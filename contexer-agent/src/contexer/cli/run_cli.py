@@ -35,6 +35,7 @@ from contexer.gate import RunResult
 from contexer.gate.session import VerificationSession
 from contexer.github.api import GitHubClient, GitHubError, github_token
 from contexer.github.handoff import Handoff, HandoffError, HandoffPlan, hand_off, plan_handoff
+from contexer.github.issues import ISSUE_ORIGIN
 from contexer.graph import GraphController, ResumeError
 from contexer.llm import discovery
 from contexer.workflow.criteria import GoalAnalyzer
@@ -60,6 +61,9 @@ def run(
         None, "--engine", help="graph (can wait for you, stop and resume) or classic (default). Also CONTEXER_ENGINE."
     ),
     resume: str | None = typer.Option(None, "--resume", metavar="RUN", help="Continue a stopped run of the graph engine."),
+    no_review: bool = typer.Option(
+        False, "--no-review", help="Graph engine: do not read the diff of a passing run before it ends."
+    ),
     correct: str | None = typer.Option(None, "--correct", help="With --resume: a correction to what done means, applied first."),
 ) -> None:
     """Turn a goal into approved checks, have a coding agent build it, prove it, and repair until it passes."""
@@ -102,6 +106,7 @@ def run(
             turn_timeout=config.agent.turn_timeout,
             judged_policy=config.gate.judged,
             replay_others=not no_replay,
+            review=not no_review,
         )
         crew_budget = Budget(max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=config.limits.cost_usd)
         model_for_crew = crew_model(project)
@@ -121,6 +126,7 @@ def run(
             drafting = compiler_llm(project)
             check_free_quota(console, drafting, agent, yes)
             contract, graph_preview, graph_analyzer = _draft(console, project, store, goal, url, drafting, draft_id)
+            contract = _from_issue(store, contract, issue)
         if contract is not None and contract.status != "approved":
             contract = _approve(console, store, contract, yes, graph_preview, graph_analyzer)
         outcome = execute_graph(
@@ -138,6 +144,7 @@ def run(
             contract_id=draft_id,
             resume=resume,
             correction=correct,
+            origin=ISSUE_ORIGIN.format(number=issue) if issue is not None else "",
         )
         final = store.load(outcome.contract_id) if outcome.contract_id and store.exists(outcome.contract_id) else None
         _finish(console, outcome, final, handoff_plan, pr, issue, open_report)
@@ -153,6 +160,7 @@ def run(
     analyzer: GoalAnalyzer | None = None
     if goal:
         contract, preview, analyzer = _draft(console, project, store, goal, url, drafting, draft_id)
+        contract = _from_issue(store, contract, issue)
     else:
         try:
             contract = store.load(contract_id or "")
@@ -195,6 +203,15 @@ def _finish(
     if open_report:
         webbrowser.open(Path(outcome.run_dir, "report.html").resolve().as_uri())
     raise typer.Exit(code=outcome.exit_code)
+
+
+def _from_issue(store: ContractStore, contract: Contract, issue: int | None) -> Contract:
+    """A contract drafted from an issue says so, so its goal is quoted as data in every prompt."""
+    if issue is None:
+        return contract
+    marked = contract.model_copy(update={"origin": ISSUE_ORIGIN.format(number=issue)})
+    store.save(marked)
+    return marked
 
 
 ENGINES: tuple[str, ...] = get_args(Engine)
@@ -259,7 +276,7 @@ def _progress(console: Console, activity: term.Activity, on_progress: Callable[[
             activity.stop()
             mark, style = next((v for k, v in _VERDICT.items() if f": {k}:" in message), ("open", "yellow"))
             console.print(f"  {term.mark(mark)} [{style}]{text}[/]")
-        elif kind in ("revert", "strategy"):
+        elif kind in ("revert", "strategy", "review"):
             activity.stop()
             console.print(f"  {term.mark('warn')} {text}")
         elif kind == "approved":
@@ -329,6 +346,8 @@ def execute_graph(
     contract_id: str | None = None,
     resume: str | None = None,
     correction: str | None = None,
+    on_progress: Callable[[str, str], None] | None = None,
+    origin: str = "",
 ) -> RunOutcome:
     """A run on the graph engine: it can wait for an approval or an answer, be stopped, and be resumed."""
     from contexer.cli.test_cli import is_interactive
@@ -338,7 +357,7 @@ def execute_graph(
     subject = f"Resuming {resume}" if resume else (contract.goal if contract is not None else goal or "")
     term.header(console, "run", subject.splitlines()[0] if subject else "")
     decides = (
-        f"{escape(describe_model(model))} [dim](Intent, Triage, Diagnoser)[/]"
+        f"{escape(describe_model(model))} [dim](Intent, Triage, Diagnoser, Reviewer)[/]"
         if model is not None
         else "the rules decide [dim](no model is configured for Contexer's own agents; `contexer setup` adds one)[/]"
     )
@@ -357,7 +376,7 @@ def execute_graph(
         agent,
         settings,
         url=url,
-        on_event=_progress(console, activity),
+        on_event=_progress(console, activity, on_progress),
         model=model,
         ask=_asker(console, activity, yes),
         # Triage may stop to ask only when a person is at the terminal; an approval is always asked for.
@@ -370,7 +389,7 @@ def execute_graph(
         elif contract is not None:
             outcome = asyncio.run(controller.run(contract, others))
         else:
-            outcome = asyncio.run(controller.run_goal(goal or "", others=others, contract_id=contract_id))
+            outcome = asyncio.run(controller.run_goal(goal or "", others=others, contract_id=contract_id, origin=origin))
     except ResumeError as exc:
         activity.stop()
         term.note(console, "fail", f"[red]Cannot resume:[/] {escape(str(exc))}")
