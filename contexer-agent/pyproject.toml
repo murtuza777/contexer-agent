@@ -39,6 +39,10 @@ dependencies = [
     "langchain-core>=1.8.1,<2.0",
     "langchain-openai>=1.8.0,<2.0",
     "langchain-anthropic>=1.7.10,<2.0",
+    # The run loop as a graph that can wait for a person and resume in a later process (graph/).
+    # Floors are the versions the T3.1 spike ran on, 2026-11-18.
+    "langgraph>=1.2.22,<2.0",
+    "langgraph-checkpoint-sqlite>=3.1.3,<4.0",
 ]
 
 
