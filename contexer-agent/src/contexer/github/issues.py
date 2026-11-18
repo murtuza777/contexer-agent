@@ -11,18 +11,32 @@
 
 Nothing in an issue or a comment counts as an approval except that command
 from a person with write access, checked through the API.
+
+When the Intent agent drafts the checks, the comment also shows what it
+understood and any question it has. ``/contexer answer <text>`` answers one:
+the checks are drafted again with every answer given by someone with write
+access. An answer changes what is drafted, never what is approved.
+
+The issue's own text is data: wherever it goes into a prompt it is quoted,
+with a fixed preamble (``crew/untrusted.py: quoted_goal``).
 """
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any, Literal
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
 
 from contexer.contract import Contract
 from contexer.gate.models import RunResult
+
+if TYPE_CHECKING:
+    from contexer.crew.intent import Question
+    from contexer.intent.store import IntentSpec
 
 Command = Literal["draft", "build", "ignore"]
 
@@ -31,6 +45,18 @@ _DRAFT = re.compile(r"<!-- contexer:draft id=(?P<id>[\w.-]+) sha256=(?P<sha>[0-9
 _JSON_BLOCK = re.compile(r"```json\s*\n(?P<json>.*?)\n```", re.DOTALL)
 STATUS_MARKER = "<!-- contexer:status -->"
 WRITE_ROLES = {"admin", "maintain", "write"}
+# What a contract drafted from an issue records as the origin of its goal.
+ISSUE_ORIGIN = "GitHub issue #{number}"
+_ANSWER = re.compile(r"^\s*/contexer\s+answer\s+(?P<text>.+)", re.IGNORECASE | re.DOTALL)
+MAX_ANSWER_CHARS = 1000
+
+
+@dataclass(frozen=True)
+class Answer:
+    """What someone replied to the Intent agent's questions with ``/contexer answer``."""
+
+    by: str
+    text: str
 
 
 class IssueFlowError(Exception):
@@ -53,8 +79,8 @@ def command_for(event_name: str, event: dict[str, Any], label: str = DEFAULT_LAB
         login = str((comment.get("user") or {}).get("login", ""))
         if len(words) >= 2 and words[0].lower() == "/contexer":
             verb = words[1].lower()
-            if verb == "draft":
-                return "draft", number, login
+            if verb == "draft" or (verb == "answer" and len(words) >= 3):
+                return "draft", number, login  # an answer drafts the checks again, with the answer applied
             if verb in ("approve", "build"):
                 return "build", number, login
     return "ignore", number, ""
@@ -66,11 +92,59 @@ def issue_goal(issue: dict[str, Any]) -> str:
     return f"{title}\n\n{body[:4000]}".strip()
 
 
-def draft_comment(contract: Contract, preview: RunResult | None, drafted_by: str = "", note: str = "") -> str:
+def issue_answers(comments: list[dict[str, Any]]) -> list[Answer]:
+    """Every ``/contexer answer`` on the issue, oldest first. Whether its author may answer is the caller's check."""
+    answers: list[Answer] = []
+    for comment in comments:
+        if (comment.get("user") or {}).get("type") == "Bot":
+            continue
+        match = _ANSWER.match(str(comment.get("body") or ""))
+        if match is None:
+            continue
+        text = " ".join(match.group("text").split())[:MAX_ANSWER_CHARS]
+        login = str((comment.get("user") or {}).get("login", ""))
+        if text and login:
+            answers.append(Answer(by=login, text=text))
+    return answers
+
+
+def draft_comment(
+    contract: Contract,
+    preview: RunResult | None,
+    drafted_by: str = "",
+    note: str = "",
+    *,
+    intent: IntentSpec | None = None,
+    questions: Sequence[Question] = (),
+    answers: Sequence[Answer] = (),
+) -> str:
     lines = [
         f"<!-- contexer:draft id={contract.id} sha256={contract.content_hash()} -->",
         "### Contexer: what \"done\" means for this issue",
         "",
+    ]
+    if intent is not None and (intent.behaviours or intent.assumptions):
+        lines += ["### What Contexer understood", ""]
+        lines += [f"- {_md(line)}" for line in intent.behaviours]
+        if intent.assumptions:
+            lines += ["", "Assumed without asking:", "", *[f"- {_md(line)}" for line in intent.assumptions]]
+        lines.append("")
+    if answers:
+        lines += ["Answers applied: " + "; ".join(f"@{a.by}: {_md(a.text)}" for a in answers), ""]
+    if questions:
+        lines += ["### Questions", "", "The issue can be read in more than one way. The checks below take the first reading.", ""]
+        for number, q in enumerate(questions, 1):
+            lines += [
+                f"{number}. **{_md(q.question)}**",
+                f"   - Taken: {_md(q.reading_a)}",
+                f"   - Otherwise: {_md(q.reading_b)}",
+            ]
+        lines += [
+            "",
+            "To answer, someone with write access replies `/contexer answer <your answer>`; the checks are drafted again.",
+            "",
+        ]
+    lines += [
         "Contexer drafted these checks from the issue. Each one runs in a real browser against the app.",
         "",
         "| | Check | On the app today |",

@@ -109,7 +109,7 @@ class FakeGitHub:
             return httpx.Response(200, json={"role_name": self.roles.get(match.group(1), "none")})
         if path == "/repos/acme/todo/pulls" and method == "POST":
             self.pulls.append(json.loads(request.content))
-            return httpx.Response(201, json={"html_url": "https://github.com/acme/todo/pull/8", "draft": False})
+            return httpx.Response(201, json={"html_url": "https://github.com/acme/todo/pull/8", "draft": self.pulls[-1].get("draft", False)})
         return httpx.Response(404, json={"message": f"Not Found: {method} {path}"})
 
     def client(self, repo: str, token: str, *args, **kwargs) -> GitHubClient:

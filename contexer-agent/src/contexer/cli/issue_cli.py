@@ -7,34 +7,55 @@ the triggering GitHub event asks for, so a workflow needs one step.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import typer
 from rich.console import Console
 from rich.markup import escape
 
 from contexer.agents import create_agent
-from contexer.cli.gate_cli import compiler_llm
-from contexer.cli.run_cli import _draft, _render, check_free_quota, choose_agent, execute_run
+from contexer.appserver import AppStartError, open_app
+from contexer.cli import run_cli
+from contexer.cli.gate_cli import compiler_llm, preview_draft
+from contexer.cli.run_cli import (
+    _draft,
+    _render,
+    check_free_quota,
+    choose_agent,
+    choose_engine,
+    execute_graph,
+    execute_run,
+)
 from contexer.config.project import ProjectConfigError, load_project_config, load_project_env
-from contexer.contract import ContractStore
+from contexer.contract import Contract, ContractStore
 from contexer.controller import RunOutcome, RunSettings
+from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
+from contexer.crew.intent import IntentResult, run_intent
+from contexer.evidence import RunDir
+from contexer.gate import RunResult
+from contexer.gate.session import VerificationSession
 from contexer.github.api import GitHubClient, GitHubError, github_token, repo_of
 from contexer.github.handoff import Handoff, HandoffError, hand_off, plan_handoff
 from contexer.github.issues import (
     DEFAULT_LABEL,
+    ISSUE_ORIGIN,
     WRITE_ROLES,
+    Answer,
     IssueFlowError,
     command_for,
     draft_comment,
     find_draft,
+    issue_answers,
     issue_goal,
     status_comment,
 )
+from contexer.intent.store import IntentSpec, IntentStore, SavedCheck
+from contexer.verification.models import AcceptanceCriterion
 
 issue_app = typer.Typer(
     help="Work on GitHub issues: post the checks for approval, then build a proven pull request.",
@@ -58,15 +79,34 @@ def draft(
         issue = _issue(console, client, number)
         posted = client.comment(number, status_comment("Contexer is drafting the checks for this issue…", [], _run_link()))
         store = ContractStore(project)
-        drafting = compiler_llm(project)
-        contract, preview, analyzer = _draft(
-            console, project, store, issue_goal(issue), url, drafting, store.unique_id(f"issue {number} {issue.get('title', '')}")
-        )
-        note = ""
-        if contract.source == "rules":
-            reason = f" ({analyzer.last_error})" if analyzer.last_error else ""
-            note = f"The model returned no usable checks{reason}, so these come from simple rules. Edit them, or reply `/contexer draft` later."
-        body = draft_comment(contract, preview, analyzer.drafted_by or "", note)
+        origin = ISSUE_ORIGIN.format(number=number)
+        contract_id = store.unique_id(f"issue {number} {issue.get('title', '')}")
+        model = run_cli.crew_model(project) if choose_engine(None) == "graph" else None
+        if model is not None:
+            # The graph engine's way: the Intent agent writes what it understood, the checks, and its questions.
+            answers = _answers(client, number)
+            with console.status("[dim]Drafting the checks from the issue, then trying them on the app as it is...[/dim]"):
+                contract, preview, result = asyncio.run(
+                    _draft_with_intent(project, store, issue_goal(issue), origin, contract_id, url, model, answers)
+                )
+            note = ""
+            if result.status != "ok":
+                note = f"The Intent agent did not finish ({result.error or result.status}). Reply `/contexer draft` to try again."
+            elif not any(c.check for c in contract.criteria):
+                note = "No check could be drafted that a browser can run. Say more concretely what should happen, then reply `/contexer draft`."
+            body = draft_comment(
+                contract, preview, _model_name(model), note, intent=result.spec, questions=result.questions, answers=answers
+            )
+        else:
+            drafting = compiler_llm(project)
+            contract, preview, analyzer = _draft(console, project, store, issue_goal(issue), url, drafting, contract_id)
+            contract = contract.model_copy(update={"origin": origin})
+            store.save(contract)
+            note = ""
+            if contract.source == "rules":
+                reason = f" ({analyzer.last_error})" if analyzer.last_error else ""
+                note = f"The model returned no usable checks{reason}, so these come from simple rules. Edit them, or reply `/contexer draft` later."
+            body = draft_comment(contract, preview, analyzer.drafted_by or "", note)
         client.edit_comment(int(posted["id"]), body)
     console.print(f"[green]✓[/] Posted {len(contract.criteria)} checks on issue #{number}: {escape(str(posted.get('html_url', '')))}")
 
@@ -80,10 +120,12 @@ def build(
     model: str | None = typer.Option(None, "--model", help="Model for the coding agent."),
     rounds: int | None = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
     budget: float | None = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
+    engine: str | None = typer.Option(None, "--engine", help="graph or classic (default). Also CONTEXER_ENGINE."),
 ) -> None:
     """Approve the checks drafted on an issue in BY's name, build them, and open a pull request that closes it."""
     console = Console()
     project = project_dir.resolve()
+    chosen = choose_engine(engine)
     load_project_env(project)
     try:
         config = load_project_config(project)
@@ -106,6 +148,8 @@ def build(
         check_free_quota(console, None, agent, yes=True)
 
         store = ContractStore(project)
+        # The comment's JSON can be edited; where the goal came from is not for the comment to say.
+        contract = contract.model_copy(update={"origin": ISSUE_ORIGIN.format(number=number)})
         store.save(contract)
         contract = store.approve(contract.id, by=by)
         approved = f"approved by @{by}" + (" (checks edited in the comment)" if edited else "")
@@ -117,7 +161,21 @@ def build(
             turn_timeout=config.agent.turn_timeout,
             judged_policy=config.gate.judged,
         )
-        outcome = execute_run(console, project, agent, contract, store, settings, on_progress=live.event)
+        if chosen == "graph":
+            outcome = execute_graph(
+                console,
+                project,
+                agent,
+                store,
+                settings,
+                model=run_cli.crew_model(project),
+                budget=Budget(max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=config.limits.cost_usd),
+                yes=True,  # nobody is at a terminal in a workflow: Triage does not stop to ask
+                contract=contract,
+                on_progress=live.event,
+            )
+        else:
+            outcome = execute_run(console, project, agent, contract, store, settings, on_progress=live.event)
         handoff: Handoff | None = None
         handoff_error: str | None = None
         if outcome.terminal not in ("tampered", "cancelled"):
@@ -158,16 +216,92 @@ def event(
     if command == "draft":
         draft(number, project_dir, None)
     else:
-        build(number, who, project_dir, agent_name, model, None, None)
+        build(number, who, project_dir, agent_name, model, None, None, None)
 
 
 # -- helpers --------------------------------------------------------------------------------
 
 
+def _answers(client: GitHubClient, number: int) -> list[Answer]:
+    """The answers on the issue from people who may decide what done means: those with write access."""
+    roles: dict[str, bool] = {}
+    kept: list[Answer] = []
+    try:
+        found = issue_answers(client.comments(number))
+    except GitHubError:
+        return kept
+    for answer in found:
+        if answer.by not in roles:
+            try:
+                roles[answer.by] = client.permission(answer.by) in WRITE_ROLES
+            except GitHubError:
+                roles[answer.by] = False
+        if roles[answer.by]:
+            kept.append(answer)
+    return kept
+
+
+async def _draft_with_intent(
+    project: Path,
+    store: ContractStore,
+    goal: str,
+    origin: str,
+    contract_id: str,
+    url: str | None,
+    model: Any,
+    answers: list[Answer],
+) -> tuple[Contract, RunResult | None, IntentResult]:
+    """Draft an issue's checks with the Intent agent, on the app as it is when it runs."""
+    run_dir = RunDir.create(project)
+    session = VerificationSession(project, run_dir)
+    intents = IntentStore(project)
+    spec = IntentSpec(id=intents.id_for(goal), goal=goal.strip())
+    for answer in answers:  # written into the intent by code, so they hold whatever the model does
+        spec = spec.with_correction(answer.text)
+
+    async def drafted(ui_snapshot: str, repo_summary: str) -> tuple[Contract, IntentResult]:
+        result = await run_intent(
+            goal, model, stored=spec, ui_snapshot=ui_snapshot, repo_summary=repo_summary, run_dir=run_dir.path, origin=origin
+        )
+        contract = Contract(
+            id=contract_id,
+            goal=goal.strip(),
+            summary="Drafted by the Intent agent from the issue.",
+            criteria=[_criterion(check) for check in result.checks],
+            source="llm",
+            origin=origin,
+        )
+        return contract, result
+
+    try:
+        with open_app(project, url) as app:
+            seen = await session.observe(app)
+            summary = app.repo_context.format_summary() if app.repo_context is not None else ""
+            contract, result = await drafted(seen.ui_snapshot, summary)
+            preview = await preview_draft(session, app, contract)
+    except AppStartError:  # nothing runs yet: the checks are drafted from the issue alone
+        contract, result = await drafted("", "")
+        preview = None
+    store.save(contract)
+    return contract, preview, result
+
+
+def _criterion(check: SavedCheck) -> AcceptanceCriterion:
+    return AcceptanceCriterion(
+        id=check.id, description=check.description, verification_method="interactive_test", check=check.check
+    )
+
+
+def _model_name(model: Any) -> str:
+    from contexer.llm.chat import describe_model
+
+    return describe_model(model)
+
+
 class _LiveStatus:
     """One comment on the issue that follows the run: attempts, verdicts, reverts."""
 
-    _KINDS = ("phase", "verdict", "revert", "strategy", "agent-done")
+    _KINDS = ("phase", "verdict", "revert", "strategy", "agent-done", "review")
 
     def __init__(self, client: GitHubClient, number: int, headline: str) -> None:
         self.client, self.number, self.headline = client, number, headline

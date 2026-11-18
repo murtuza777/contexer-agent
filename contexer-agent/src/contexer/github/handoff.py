@@ -3,7 +3,13 @@
 The pull request's description carries the evidence: every check with its
 verdict, the regression replay, the attempts and what they cost. A run whose
 checks all passed opens a pull request ready for review; any other run with
-changes opens a draft that says what still fails.
+changes opens a draft that says what still fails. A run that passed but whose
+review found a high-severity security note is a draft too: the checks did
+pass, and a person looks before it is merged.
+
+For a run on the graph engine the description also carries what was
+understood (the intent), each attempt with what was decided after it, and the
+review's notes.
 
 Everything that can be checked before the agent starts is checked by
 :func:`plan_handoff`, so a run never spends its budget and then finds it
@@ -23,10 +29,13 @@ from typing import TYPE_CHECKING
 
 from contexer.contract import Contract
 from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
+from contexer.crew.reviewer import holds_pull_request
+from contexer.crew.triage import MOVE_LABELS
 from contexer.github.api import GitHubClient, GitHubError, github_token, repo_of
 
 if TYPE_CHECKING:
-    from contexer.controller.run import RunOutcome
+    from contexer.controller.models import RunOutcome
+    from contexer.intent.store import IntentSpec
 
 PROJECT_URL = "https://github.com/murtuza777/contexer-agent"
 _BOT = ("Contexer", "contexer@users.noreply.github.com")
@@ -105,7 +114,10 @@ def hand_off(
     branch = _free_branch(plan, f"contexer/{contract.id}")
     _git_or_fail(plan.root, "switch", "--quiet", "-c", branch)
     _git_or_fail(plan.root, "add", "--all", "--", *paths)
-    succeeded = outcome.terminal == "succeeded"
+    held = holds_pull_request(outcome.review)
+    succeeded = outcome.terminal == "succeeded" and not held
+    if held and outcome.terminal == "succeeded":
+        note += "Opened as a draft: the review found a high-severity security note. "
     try:
         _git_or_fail(plan.root, *_identity(plan.root), "commit", "--quiet", "-m", _commit_message(outcome, contract))
     except HandoffError as exc:  # a pre-commit hook, usually
@@ -134,7 +146,7 @@ def hand_off(
             title=_title(outcome, contract),
             head=branch,
             base=plan.base,
-            body=pull_request_body(outcome, contract, issue=issue),
+            body=pull_request_body(outcome, contract, issue=issue, intent=_intent(plan.project, outcome)),
             draft=not succeeded,
         )
     except GitHubError as exc:
@@ -147,15 +159,44 @@ def hand_off(
 # -- the pull request ---------------------------------------------------------------------
 
 
-def pull_request_body(outcome: RunOutcome, contract: Contract, *, issue: int | None = None) -> str:
+def _intent(project: Path, outcome: RunOutcome) -> IntentSpec | None:
+    """The intent the run wrote, when it wrote one (graph engine, from a goal)."""
+    if not outcome.intent_id:
+        return None
+    from contexer.intent.store import IntentStore
+
+    store = IntentStore(project)
+    try:
+        return store.load(outcome.intent_id) if store.exists(outcome.intent_id) else None
+    except Exception:  # the evidence matters more than one section of it
+        return None
+
+
+def pull_request_body(
+    outcome: RunOutcome, contract: Contract, *, issue: int | None = None, intent: IntentSpec | None = None
+) -> str:
     final = outcome.final
     decision = final.decision if final is not None else None
     lines: list[str] = []
     if outcome.terminal == "succeeded" and decision is not None:
         lines.append(f"✅ **All {decision.verified} checks proven in a real browser.**")
+        if holds_pull_request(outcome.review):
+            lines += [
+                "",
+                "⚠️ **Opened as a draft:** reading the diff found a high-severity security note (see Review below). "
+                "The checks passed; a person should look at it before this is merged.",
+            ]
     else:
         lines.append(f"⚠️ **Not done yet:** {outcome.reason}")
     lines += ["", "### Goal", "", _quote(contract.goal), ""]
+    if intent is not None and (intent.behaviours or intent.assumptions or intent.corrections):
+        lines += ["### What was understood", ""]
+        lines += [f"- {_md(line)}" for line in intent.behaviours]
+        if intent.corrections:
+            lines += ["", "Corrections from the person:", "", *[f"- {_md(c.text)}" for c in intent.corrections]]
+        if intent.assumptions:
+            lines += ["", "Assumed without asking:", "", *[f"- {_md(line)}" for line in intent.assumptions]]
+        lines.append("")
 
     for result in final.contracts if final is not None else []:
         target = result.contract.id == contract.id
@@ -177,6 +218,9 @@ def pull_request_body(outcome: RunOutcome, contract: Contract, *, issue: int | N
             f"{held} of {total} checks from {len(others)} earlier approved contract(s) still pass.",
             "",
         ]
+
+    lines += _attempt_lines(outcome)
+    lines += _review_lines(outcome)
 
     attempts = len(outcome.attempts)
     repairs = max(attempts - 1, 0)
@@ -202,6 +246,43 @@ def pull_request_body(outcome: RunOutcome, contract: Contract, *, issue: int | N
         "in Chromium against the app as changed here, and the contract's checks replay on later pull requests.",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _attempt_lines(outcome: RunOutcome) -> list[str]:
+    """Each attempt and what was decided after it. Only when there was more than one, or a decision to show."""
+    if len(outcome.attempts) < 2 and not outcome.triage:
+        return []
+    decided = {d.attempt: d for d in outcome.triage}
+    lines = ["### Attempts", "", "| # | Result | What was decided next |", "|---|---|---|"]
+    for attempt in outcome.attempts:
+        result = f"{attempt.outcome}: {attempt.verified} proven, {attempt.refuted} failed, {attempt.unverified} not run"
+        decision = decided.get(attempt.n)
+        if decision is not None:
+            who = "a model" if decision.source == "model" else "the rules"
+            after = f"{MOVE_LABELS.get(decision.move, decision.move).capitalize()} ({who}): {_md(decision.reason)[:300]}"
+        else:
+            after = _md(attempt.note)[:300] if attempt.note else ""
+        lines.append(f"| {attempt.n} | {_md(result)} | {after} |")
+    return [*lines, ""]
+
+
+def _review_lines(outcome: RunOutcome) -> list[str]:
+    if not outcome.review:
+        return []
+    lines = [
+        "### Review",
+        "",
+        "What reading the diff found after the checks passed. A note does not change the verdict: the checks "
+        "decide that. \"A program\" means code saw it in the diff or ran a command; \"a model\" is advice.",
+        "",
+        "| Severity | About | Where | Found by | Note |",
+        "|---|---|---|---|---|",
+    ]
+    for note in outcome.review:
+        where = f"`{note.file}:{note.line}`" if note.file and note.line else (f"`{note.file}`" if note.file else "")
+        by = "a program" if note.backed else "a model"
+        lines.append(f"| {note.severity} | {note.category} | {where} | {by} | {_md(note.explanation)[:400]} |")
+    return [*lines, ""]
 
 
 def _title(outcome: RunOutcome, contract: Contract) -> str:

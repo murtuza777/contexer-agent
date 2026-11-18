@@ -98,6 +98,7 @@ class GraphController:
         draft: Contract | None = None,
         others: list[Contract] | None = None,
         contract_id: str | None = None,
+        origin: str = "",
     ) -> RunOutcome:
         """Start from a goal: draft the checks (or take ``draft``), wait for approval, then build."""
         if draft is None and self.model is None:
@@ -108,14 +109,15 @@ class GraphController:
             contract_id = draft.id
         ctx = self._context(RunDir.create(self.project))
         ctx.others = self._others(contract_id or "", others if others is not None else store.list())
-        state = self.initial_state(ctx, goal=goal, contract_id=contract_id or "")
+        state = self.initial_state(ctx, goal=goal, contract_id=contract_id or "", origin=origin)
         return await self._drive(ctx, state)
 
-    def initial_state(self, ctx: RunContext, *, goal: str, contract_id: str) -> LoopState:
+    def initial_state(self, ctx: RunContext, *, goal: str, contract_id: str, origin: str = "") -> LoopState:
         baseline = ctx.shadow.snapshot(f"{ctx.run.run_id}/0", "baseline")
         return LoopState(
             run_id=ctx.run.run_id,
             goal=goal,
+            goal_origin=origin,
             started_at=utc_now(),
             contract_id=contract_id,
             other_ids=[c.id for c in ctx.others],

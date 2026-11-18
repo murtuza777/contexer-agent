@@ -8,6 +8,7 @@ sees the same definition of done.
 from __future__ import annotations
 
 from contexer.contract import Contract
+from contexer.crew.untrusted import quoted_goal
 from contexer.gate.models import RunResult
 from contexer.verification.models import CriterionResult, VerificationResult, format_contract
 from contexer.workflow.inspector import RepositoryContext
@@ -33,7 +34,7 @@ def implement_prompt(contract: Contract, repo: RepositoryContext | None, others:
         "You are implementing a change in this repository. When you finish, Contexer starts the app and executes "
         "the acceptance checks below in a real browser. Those checks — not your own judgement — decide whether the "
         "work is done.",
-        f"Goal: {contract.goal}",
+        _goal(contract),
         "Acceptance checks (the approved contract; each 'do:' step and 'expect:' line is executed verbatim):\n"
         + format_contract(contract.criteria),
     ]
@@ -46,6 +47,13 @@ def implement_prompt(contract: Contract, repo: RepositoryContext | None, others:
         parts.append("Project:\n" + repo.format_summary())
     parts.append(RULES)
     return "\n\n".join(parts)
+
+
+def _goal(contract: Contract) -> str:
+    """The goal as the coding agent reads it: the person's own words as they are, anyone else's quoted as data."""
+    if contract.origin.strip():
+        return quoted_goal(contract.goal, contract.origin)
+    return f"Goal: {contract.goal}"
 
 
 def repair_prompt(

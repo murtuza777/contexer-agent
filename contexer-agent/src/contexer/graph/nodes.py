@@ -90,6 +90,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             assume=True,  # questions are not asked mid-run; assumptions are shown with the checks, and can be corrected
             run_dir=ctx.run.path,
             budget=ctx.budget,
+            origin=(existing.origin if existing is not None else "") or state.get("goal_origin", ""),
         )
         ctx.intents.save(result.spec)
         ctx.intents.save_checks(result.spec.id, result.checks)
@@ -117,6 +118,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 summary="Drafted by the Intent agent from the goal.",
                 criteria=criteria,
                 source="llm",
+                origin=state.get("goal_origin", ""),
             )
         else:
             contract = existing.model_copy(update={"criteria": criteria})
@@ -524,7 +526,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 failures,
                 ctx.model,
                 ctx.project,
-                intent=contract.goal,
+                intent=quoted_goal(contract.goal, contract.origin),
                 diff=ctx.shadow.diff(state["snapshots"]["0"], state["current"], max_chars=_DIFF_CHARS),
                 server_log=shown.server_log_tail,
                 run_dir=ctx.run.path,

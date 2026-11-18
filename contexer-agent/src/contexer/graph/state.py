@@ -34,6 +34,8 @@ class _Always(TypedDict):
 
 class LoopState(_Always, total=False):
     started_at: str
+    # Where the goal's words came from when the person did not type them ("GitHub issue #7"); "" otherwise.
+    goal_origin: str
 
     # -- what done means ------------------------------------------------------------------
     other_ids: list[str]
