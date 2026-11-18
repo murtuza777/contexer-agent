@@ -913,6 +913,7 @@ less likely, and nothing depends on it.
 | Challenger | none (only `submit`) | No. It can only set a confirmed bug aside, with a reason |
 | Triage | none (only `submit`) | No. It chooses one of the moves code lists as legal; no move ends a run as succeeded |
 | Diagnoser | `read_file`, `grep` | No. Both are read-only and confined |
+| Reviewer | `read_file`, `grep`, `list_changed_files` | No. All three are read-only and confined. The project's `test`, `lint` and `typecheck` scripts are run by code before the agent starts, not by the agent; files they write are put back |
 
 Only the external coding agent edits the project. A new tool for an agent
 has to be added to this table and to `test_each_agent_has_exactly_the_tools_in_the_audit_table`.

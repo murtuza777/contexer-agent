@@ -70,6 +70,16 @@ class LoopState(_Always, total=False):
     asked: int
     answer: str
 
+    # -- the review of a passing attempt ---------------------------------------------------
+    # The notes of the latest review, and the attempt it read.
+    review: list[dict[str, Any]]
+    reviewed: int
+    # How many repairs a review has asked for (at most one), and the passing attempt it asked on.
+    review_repairs: int
+    review_passed: int | None
+    # The attempt whose pass stands when a later one was undone.
+    accepted: int | None
+
     # -- accounting -------------------------------------------------------------------------
     agents: list[dict[str, Any]]
     cost_usd: float

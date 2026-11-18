@@ -23,6 +23,7 @@ NODES: tuple[str, ...] = (
     "ensure_app",
     "test",
     "score",
+    "review",
     "triage",
     "ask_user",
     "diagnose",
@@ -69,7 +70,15 @@ def after_test(state: LoopState) -> str:
 
 
 def after_score(state: LoopState) -> str:
+    # A pass is read by the Reviewer once before the run ends; every other end goes straight to finalize.
+    if state.get("terminal") == "succeeded" and state.get("reviewed") != state.get("n"):
+        return "review"
     return "finalize" if _ended(state) else "triage"
+
+
+def after_review(state: LoopState) -> str:
+    # The review either leaves the pass as it is, or clears it to ask for one repair.
+    return "finalize" if _ended(state) else "coder_turn"
 
 
 def after_triage(state: LoopState) -> str:
@@ -101,6 +110,7 @@ EDGES: dict[str, Callable[[LoopState], str]] = {
     "ensure_app": after_ensure_app,
     "test": after_test,
     "score": after_score,
+    "review": after_review,
     "triage": after_triage,
     "ask_user": after_ask_user,
     "diagnose": after_diagnose,
@@ -114,7 +124,8 @@ TARGETS: dict[str, tuple[str, ...]] = {
     "guard_snapshot": ("ensure_app", "finalize"),
     "ensure_app": ("test", "finalize"),
     "test": ("score", "finalize"),
-    "score": ("triage", "finalize"),
+    "score": ("triage", "review", "finalize"),
+    "review": ("coder_turn", "finalize"),
     "triage": ("diagnose", "ask_user", "intent", "finalize"),
     "ask_user": ("diagnose", "intent", "finalize"),
     "diagnose": ("coder_turn", "finalize"),

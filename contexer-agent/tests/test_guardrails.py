@@ -26,6 +26,7 @@ from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
 from contexer.crew.challenger import challenge
 from contexer.crew.diagnoser import MAX_CAUSE_CHARS, Failure, RepairBrief, diagnose, fix_prompt, validated_brief
 from contexer.crew.intent import MAX_BEHAVIOUR_CHARS, MAX_BEHAVIOURS, run_intent
+from contexer.crew.reviewer import review
 from contexer.crew.tester import Finding, run_tester
 from contexer.crew.triage import AttemptView, Situation, triage
 from contexer.crew.untrusted import untrusted
@@ -34,6 +35,8 @@ from contexer.verification.checks import Check, CheckResult, ExpectationOutcome
 from tests.fakes import ScriptedChatModel, calls, submit
 
 pytestmark = pytest.mark.anyio
+
+REVIEW_DIFF = "diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n@@ -1,0 +1,1 @@\n+const a = 1;\n"
 
 FIXTURES = Path(__file__).resolve().parents[1] / "bench" / "fixtures"
 INTENT = "Users can add, complete and delete tasks, and the remaining count stays correct"
@@ -342,9 +345,12 @@ async def test_each_agent_has_exactly_the_tools_in_the_audit_table(tmp_path: Pat
     assert triager.bound_tools == ["submit"]
     assert tester.bound_tools == [*browser_tools, "record_finding", "submit"]
     assert diagnoser.bound_tools == ["read_file", "grep", "submit"]
+    reviewer = ScriptedChatModel(submit(notes=[]))
+    await review(REVIEW_DIFF, work, reviewer, run_project_commands=False, run_dir=None)
+    assert reviewer.bound_tools == ["read_file", "grep", "list_changed_files", "submit"]
     assert _fingerprint(work) == before  # and none of them wrote a file
 
     audit = (Path(__file__).resolve().parents[1] / "docs" / "architecture.md").read_text(encoding="utf-8")
     table = audit[audit.index("### Tool audit") :]
-    for name in [*browser_tools, "record_finding", "read_file", "grep"]:
+    for name in [*browser_tools, "record_finding", "read_file", "grep", "list_changed_files"]:
         assert f"`{name}`" in table, f"{name} is missing from the tool audit table"

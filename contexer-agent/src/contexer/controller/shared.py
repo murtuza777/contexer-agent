@@ -13,7 +13,7 @@ from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
 from contexer.controller.models import RunOutcome
 from contexer.evidence.report import write_evidence
 from contexer.evidence.rundir import RunDir
-from contexer.gate.models import AgentRow, AgentRunSummary, AttemptRow, GateDecision, RunResult, TriageRow
+from contexer.gate.models import AgentRow, AgentRunSummary, AttemptRow, GateDecision, ReviewRow, RunResult, TriageRow
 from contexer.intent.store import INTENT_DIR
 
 DEPENDENCY_FILES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"}
@@ -36,6 +36,7 @@ def write_run_evidence(project: Path, outcome: RunOutcome, run: RunDir) -> None:
         agents=[AgentRow(**usage.model_dump()) for usage in outcome.agents],
         intent_id=outcome.intent_id,
         corrections=list(outcome.corrections),
+        review=[ReviewRow(**note.model_dump(exclude={"evidence"})) for note in outcome.review],
         attempts=[
             AttemptRow(
                 n=a.n,

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from contexer import __version__
 from contexer.agents.base import AgentTurn
+from contexer.crew.reviewer import ReviewNote
 from contexer.crew.triage import TriageDecision
 from contexer.evidence.test_report import AgentUsage
 from contexer.gate.models import JudgedPolicy, RunResult
@@ -34,6 +35,8 @@ class RunSettings(BaseModel):
     wall_clock: float = 3600.0
     judged_policy: JudgedPolicy = "advisory"
     replay_others: bool = True
+    # Graph engine: read the diff of a passing attempt before the run ends (crew/reviewer.py).
+    review: bool = True
 
 
 class Attempt(BaseModel):
@@ -76,6 +79,8 @@ class RunOutcome(BaseModel):
     agents: list[AgentUsage] = Field(default_factory=list)  # Contexer's own agents: Intent, Triage, Diagnoser
     intent_id: str = ""
     corrections: list[str] = Field(default_factory=list)
+    # What the review of the final state found. Advice and facts about the diff; never part of the verdict.
+    review: list[ReviewNote] = Field(default_factory=list)
 
     @property
     def exit_code(self) -> int:

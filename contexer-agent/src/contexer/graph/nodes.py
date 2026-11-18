@@ -38,7 +38,9 @@ from contexer.controller.shared import (
 )
 from contexer.crew.diagnoser import Failure, brief_section, diagnose
 from contexer.crew.intent import run_intent
+from contexer.crew.reviewer import ReviewNote, review, review_repair_prompt
 from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, TriageDecision, triage
+from contexer.crew.untrusted import quoted_goal
 from contexer.evidence.test_report import AgentUsage
 from contexer.gate.decision import decide
 from contexer.gate.models import GateDecision, RunResult
@@ -52,6 +54,9 @@ from contexer.verification.verifier import Verifier
 
 Node = Callable[[LoopState], Awaitable[dict[str, Any]]]
 _DIFF_CHARS = 20_000
+_REVIEW_DIFF_CHARS = 200_000
+# A review may ask the coding agent for one more turn on work that passed, and no more.
+MAX_REVIEW_REPAIRS = 1
 
 
 def make_nodes(ctx: RunContext) -> dict[str, Node]:
@@ -241,6 +246,17 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         if tampered:
             attempt.note = f"Agent modified what defines done (contracts, intent or contexer.toml): {', '.join(tampered)} (restored)."
             updates.update(terminal="tampered", reason=attempt.note)
+        elif not turn.ok and not changed and state.get("review_passed") is not None:
+            # The turn a review asked for did not happen. The work it was asked on had passed, and still stands.
+            accepted = state.get("review_passed")
+            attempt.note = f"The repair the review asked for did not complete ({turn.error or turn.status}); attempt {accepted} stands."
+            ctx.event("strategy", attempt.note)
+            updates.update(
+                accepted=accepted,
+                reviewed=n,
+                terminal="succeeded",
+                reason=f"Every check proven in the browser (attempt {accepted}).",
+            )
         elif not turn.ok and not changed:
             attempt.note = turn.error or turn.status
             updates.update(
@@ -303,6 +319,26 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             return updates
 
         snapshots = state.get("snapshots", {})
+        accepted = state.get("review_passed")
+        if accepted is not None and str(accepted) in snapshots:
+            # This attempt was the repair a review asked for, on work that had already passed. It broke a
+            # check, so it is undone: a review can ask for more, it cannot take a pass away.
+            ctx.shadow.restore(snapshots[str(accepted)])
+            attempt.reverted_to = accepted
+            attempt.note = f"The repair the review asked for broke a check; went back to attempt {accepted}, which passed."
+            ctx.event("revert", attempt.note)
+            _restart_if_dependencies_changed(ctx, snapshots[str(n)], snapshots[str(accepted)])
+            updates.update(
+                attempts=_dump(attempts),
+                best=accepted,
+                accepted=accepted,
+                reviewed=n,  # what the review found on that attempt still stands; it is not read again
+                current=snapshots[str(accepted)],
+                reverted_from=accepted,
+                terminal="succeeded",
+                reason=f"Every check proven in the browser (attempt {accepted}). A repair the review asked for was undone.",
+            )
+            return updates
         best, best_score = state.get("best"), state.get("best_score", UNSCORED)
         current = state["current"]
         reverted_from: int | None = None
@@ -334,6 +370,57 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 terminal="needs_human" if only_unverified or state.get("app_error") else "failed_checks",
                 reason=f"Not all checks passed after {ctx.settings.max_repair_rounds} repair round(s). "
                 + "; ".join(result.decision.reasons[:3]),
+            )
+        return updates
+
+    # -- review: the diff of a passing attempt is read before the run ends --------------------------
+
+    async def review_node(state: LoopState) -> dict[str, Any]:
+        n = state["n"]
+        updates: dict[str, Any] = {"reviewed": n}
+        if not ctx.settings.review:
+            return updates
+        snapshots = state["snapshots"]
+        passed = snapshots[str(n)]
+        contract = _contract(ctx)
+        ctx.event("phase-quiet", "Reading the change before it is handed over")
+        found = await review(
+            ctx.shadow.diff(snapshots["0"], passed, max_chars=_REVIEW_DIFF_CHARS),
+            ctx.project,
+            ctx.model,
+            intent=quoted_goal(contract.goal, contract.origin),
+            checks=[c.description for c in contract.criteria],
+            run_dir=ctx.run.path,
+            budget=ctx.budget,
+        )
+        # A project command may write files (a formatter, a snapshot test). What passed is the snapshot.
+        if ctx.shadow.changed_paths(passed, ctx.shadow.snapshot()):
+            ctx.shadow.restore(passed)
+        if found.status != "scan_only":
+            updates["agents"] = _used(state, "reviewer", found.steps, found.tokens_in, found.tokens_out, found.cost_usd)
+            if found.status != "ok":
+                ctx.event("strategy", f"The Reviewer did not finish ({found.error or found.status}); the notes are what a program found.")
+        updates["review"] = [note.model_dump(mode="json") for note in found.notes]
+        to_fix = found.blocking
+        if found.notes:
+            ctx.event("review", f"Review: {len(found.notes)} note(s), {len(to_fix)} to fix")
+
+        budget_left = ctx.settings.budget_usd is None or ctx.settings.budget_usd - state.get("cost_usd", 0.0) > 0
+        if (
+            to_fix
+            and state.get("review_repairs", 0) < MAX_REVIEW_REPAIRS
+            and n <= ctx.settings.max_repair_rounds
+            and budget_left
+            and ctx.elapsed() < ctx.settings.wall_clock
+        ):
+            # Not a failure: the pass is set aside for one turn, and comes back if that turn breaks anything.
+            updates.update(
+                terminal="",
+                reason="",
+                review_repairs=state.get("review_repairs", 0) + 1,
+                review_passed=n,
+                prompt=review_repair_prompt(found.notes),
+                fresh=not state.get("session_id"),
             )
         return updates
 
@@ -462,7 +549,10 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         best = state.get("best")
         final_n = attempts[-1].n if attempts else 0
         # The one outcome nobody may assert: it is recomputed from the checks that were replayed.
-        terminal, reason = settle(state.get("terminal") or "", state.get("reason") or "", _gate(ctx, best if best == final_n else None))
+        # The attempt that must have passed: the last one, or the one that stands after a review's repair was undone.
+        accepted = state.get("accepted")
+        proven = accepted if accepted is not None and accepted == best else (best if best == final_n else None)
+        terminal, reason = settle(state.get("terminal") or "", state.get("reason") or "", _gate(ctx, proven))
 
         # Leave the project in the best state that was reached, and never worse than it was found.
         if terminal == "tampered":
@@ -497,6 +587,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         "ensure_app": ensure_app,
         "test": test,
         "score": score_attempt,
+        "review": review_node,
         "triage": triage_node,
         "ask_user": ask_user,
         "diagnose": diagnose_node,
@@ -722,6 +813,7 @@ def _outcome(ctx: RunContext, state: LoopState, attempts: list[Attempt]) -> RunO
         agents=[AgentUsage.model_validate(row) for row in state.get("agents", [])],
         intent_id=state.get("intent_id") or "",
         corrections=list(state.get("corrections", [])),
+        review=[ReviewNote.model_validate(note) for note in state.get("review", [])],
     )
 
 

@@ -106,6 +106,7 @@ class AgentScript(BaseChatModel):
         "You are the Diagnoser": "diagnoser",
         "You are the Challenger": "challenger",
         "You are Triage": "triage",
+        "You are the Reviewer": "reviewer",
     }
 
     def __init__(self, **queues: Any) -> None:
@@ -139,6 +140,8 @@ class AgentScript(BaseChatModel):
             reply = submit(behaviours=[])
         elif agent == "diagnoser":
             reply = submit()
+        elif agent == "reviewer":
+            reply = submit(notes=[])
         elif agent == "challenger":
             reply = submit(verdicts=[])
         elif agent == "triage":

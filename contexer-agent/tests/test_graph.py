@@ -65,6 +65,7 @@ def test_the_graph_has_the_nodes_the_design_names() -> None:
         "ensure_app",
         "test",
         "score",
+        "review",
         "triage",
         "ask_user",
         "diagnose",

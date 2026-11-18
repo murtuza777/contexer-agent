@@ -259,7 +259,7 @@ def _progress(console: Console, activity: term.Activity, on_progress: Callable[[
             activity.stop()
             mark, style = next((v for k, v in _VERDICT.items() if f": {k}:" in message), ("open", "yellow"))
             console.print(f"  {term.mark(mark)} [{style}]{text}[/]")
-        elif kind in ("revert", "strategy"):
+        elif kind in ("revert", "strategy", "review"):
             activity.stop()
             console.print(f"  {term.mark('warn')} {text}")
         elif kind == "approved":
