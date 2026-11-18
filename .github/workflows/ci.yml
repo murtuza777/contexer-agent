@@ -8,11 +8,14 @@ on:
 permissions:
   contents: read
 
+# The tests and the benchmark are separate jobs: together they no longer fit in one 30-minute job
+# (the tests alone take about 18 minutes since every controller case runs on both engines), and a
+# job that reaches its limit is cancelled, which reads as a failure with nothing actually failing.
 jobs:
   test:
-    name: Tests and seeded-bug benchmark
+    name: Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: contexer-agent
@@ -39,7 +42,29 @@ jobs:
         # editor settings in pyrightconfig.json say. Windows-only code is checked on Windows by hand.
         run: python -m pyright --pythonpath "$(python -c 'import sys; print(sys.executable)')" src
       - name: Tests
-        run: python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
+        run: python -m pytest -q -p no:cacheprovider --durations=15 --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
+
+  bench:
+    name: Seeded-bug benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: contexer-agent
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          python -m pip install --quiet -e .
+          python -m playwright install chromium
+          python -c "from playwright.sync_api import sync_playwright as s; p = s().start(); p.chromium.launch().close(); p.stop()" \
+            || python -m playwright install-deps chromium
       - name: Benchmark (catch rate and false failures)
         run: contexer bench --repeats 2 --out bench-results.json
       - uses: actions/upload-artifact@v7.0.2
