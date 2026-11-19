@@ -38,7 +38,19 @@ DEFAULT_EXCLUDES = (
     "venv/",
     "__pycache__/",
     "*.log",
+    # Files that hold secrets or local data. A project with no .gitignore still must not lose them on a revert,
+    # and they must never reach a diff, a prompt or a pull request.
+    ".env",
+    ".env.local",
+    ".env.*.local",
+    ".dev.vars",
+    "*.db",
+    "*.sqlite",
+    "*.sqlite3",
 )
+# Paths git ignored at some snapshot of this project. Once here, a path stays out of every later snapshot.
+_FROZEN_FILE = "contexer-frozen"
+_MAX_FROZEN = 5000
 
 _IDENTITY = {
     "GIT_AUTHOR_NAME": "contexer",
@@ -75,6 +87,7 @@ class ShadowRepo:
     def snapshot(self, ref: str | None = None, message: str = "contexer snapshot") -> str:
         """Record the current files; return the snapshot's commit id."""
         self._ensure()
+        self._freeze_ignored()
         self._git("add", "--all", "--", ".")
         tree = self._git("write-tree").strip()
         commit = self._git("commit-tree", tree, "-m", message).strip()
@@ -87,6 +100,7 @@ class ShadowRepo:
         self._ensure()
         # Index the current state first so files created since the snapshot
         # are known to git and get removed by the reset.
+        self._freeze_ignored()
         self._git("add", "--all", "--", ".")
         self._git("read-tree", "-u", "--reset", commit)
 
@@ -128,6 +142,26 @@ class ShadowRepo:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         exclude.write_text("\n".join(DEFAULT_EXCLUDES) + "\n", encoding="utf-8")
 
+    def _freeze_ignored(self) -> None:
+        """Keep out of this and every later snapshot whatever git ignores right now.
+
+        The shadow repository reads the project's own ``.gitignore``. A coding agent can edit that file,
+        and without this, a path it un-ignores (``.env``, a data folder) would be snapshotted: its
+        contents would enter the diff, the prompts and a pull request, and a revert to an earlier
+        snapshot would delete it from disk. The first snapshot of a run is taken before the agent
+        starts, so what the person ignored is frozen then, and the list only grows.
+        """
+        info = self.git_dir / "info"
+        frozen_file = info / _FROZEN_FILE
+        known = frozenset(frozen_file.read_text(encoding="utf-8").splitlines()) if frozen_file.is_file() else frozenset()
+        listed = self._git("ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z")
+        now = {_as_pattern(path) for path in listed.split("\0") if path}
+        if now <= known or len(known) >= _MAX_FROZEN:
+            return
+        frozen = sorted(known | now)[:_MAX_FROZEN]
+        frozen_file.write_text("\n".join(frozen) + "\n", encoding="utf-8")
+        (info / "exclude").write_text("\n".join([*DEFAULT_EXCLUDES, *frozen]) + "\n", encoding="utf-8")
+
     def _git(self, *args: str) -> str:
         env = dict(os.environ)
         env.update(_IDENTITY)
@@ -150,3 +184,11 @@ class ShadowRepo:
         if proc.returncode != 0:
             raise SnapshotError(f"git {' '.join(args[:2])} failed: {proc.stderr.strip() or proc.stdout.strip()}")
         return proc.stdout
+
+
+def _as_pattern(path: str) -> str:
+    """One path, as git printed it, as an ignore pattern that matches that path and nothing else."""
+    escaped = "".join(f"\\{char}" if char in "\\*?[]" else char for char in path)
+    if escaped.endswith(" "):
+        escaped = escaped[:-1] + "\\ "
+    return "/" + escaped

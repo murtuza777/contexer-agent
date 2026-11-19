@@ -101,3 +101,64 @@ def test_a_home_folder_or_drive_root_is_never_snapshotted(monkeypatch, tmp_path)
     with pytest.raises(SnapshotError, match="home folder"):
         ShadowRepo(tmp_path).snapshot()
     assert not (tmp_path / ".contexer").exists()
+
+
+# -- what git ignored when the run began stays out of snapshots, whatever the agent does to .gitignore --------
+
+
+def test_a_file_that_was_ignored_stays_out_even_after_the_agent_rewrites_gitignore(tmp_path: Path) -> None:
+    from contexer.checkpoint import ShadowRepo
+
+    (tmp_path / ".gitignore").write_text("secrets.txt\ndata/\n", encoding="utf-8")
+    (tmp_path / "secrets.txt").write_text("API_KEY=real\n", encoding="utf-8")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "users.json").write_text("[1, 2, 3]\n", encoding="utf-8")
+    (tmp_path / "app.js").write_text("one\n", encoding="utf-8")
+    shadow = ShadowRepo(tmp_path)
+    baseline = shadow.snapshot()
+
+    # The "agent" edits the app and drops the ignore rules.
+    (tmp_path / ".gitignore").write_text("# nothing\n", encoding="utf-8")
+    (tmp_path / "app.js").write_text("two\n", encoding="utf-8")
+    after = shadow.snapshot()
+
+    assert shadow.changed_paths(baseline, after) == [".gitignore", "app.js"]  # not secrets.txt, not data/
+    assert "API_KEY" not in shadow.diff(baseline, after)
+
+    shadow.restore(baseline)  # a revert
+    assert (tmp_path / "app.js").read_text(encoding="utf-8") == "one\n"
+    assert (tmp_path / "secrets.txt").read_text(encoding="utf-8") == "API_KEY=real\n"  # still there
+    assert (tmp_path / "data" / "users.json").is_file()
+
+
+def test_env_files_and_local_databases_are_never_snapshotted_even_with_no_gitignore(tmp_path: Path) -> None:
+    from contexer.checkpoint import ShadowRepo
+
+    (tmp_path / "app.js").write_text("one\n", encoding="utf-8")
+    shadow = ShadowRepo(tmp_path)
+    baseline = shadow.snapshot()
+
+    # Created while the run goes on: by the dev server, or by the agent.
+    (tmp_path / ".env").write_text("TOKEN=x\n", encoding="utf-8")
+    (tmp_path / ".dev.vars").write_text("SECRET=y\n", encoding="utf-8")
+    (tmp_path / "dev.sqlite").write_bytes(b"SQLite format 3\x00")
+    (tmp_path / "app.js").write_text("two\n", encoding="utf-8")
+    after = shadow.snapshot()
+
+    assert shadow.changed_paths(baseline, after) == ["app.js"]
+    shadow.restore(baseline)
+    assert (tmp_path / ".env").is_file() and (tmp_path / ".dev.vars").is_file() and (tmp_path / "dev.sqlite").is_file()
+
+
+def test_an_ignored_name_with_pattern_characters_is_frozen_as_that_name(tmp_path: Path) -> None:
+    from contexer.checkpoint import ShadowRepo
+
+    (tmp_path / ".gitignore").write_text(r"notes \[draft\]*.md" + "\n", encoding="utf-8")  # the brackets are literal
+    (tmp_path / "notes [draft] #1.md").write_text("private\n", encoding="utf-8")
+    (tmp_path / "notes.md").write_text("public\n", encoding="utf-8")
+    shadow = ShadowRepo(tmp_path)
+    baseline = shadow.snapshot()
+    (tmp_path / ".gitignore").write_text("", encoding="utf-8")
+    (tmp_path / "notes.md").write_text("public, edited\n", encoding="utf-8")
+    assert "notes [draft] #1.md" not in shadow.changed_paths(shadow.snapshot(), baseline)
+    assert shadow.changed_paths(baseline, shadow.snapshot()) == [".gitignore", "notes.md"]
