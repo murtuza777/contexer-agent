@@ -76,7 +76,7 @@ def run(
         None, "--issue", min=1, help="Take the goal from this GitHub issue; the pull request closes it."
     ),
     engine: str | None = typer.Option(
-        None, "--engine", help="graph (can wait for you, stop and resume) or classic (default). Also CONTEXER_ENGINE."
+        None, "--engine", help="graph (default: reviews, can wait, stop and resume) or classic (the 0.4 loop). Also CONTEXER_ENGINE."
     ),
     resume: str | None = typer.Option(
         None, "--resume", metavar="RUN", help="Continue a stopped run of the graph engine."
@@ -257,11 +257,13 @@ def _from_issue(store: ContractStore, contract: Contract, issue: int | None) -> 
 
 
 ENGINES: tuple[str, ...] = get_args(Engine)
+# The graph engine reviews, checks sign-in before spending and keeps one budget; classic stays available by name.
+DEFAULT_ENGINE = "graph"
 
 
 def choose_engine(flag: str | None) -> Engine:
-    """--engine, then CONTEXER_ENGINE, then classic. The graph becomes the default once it is measured to be as good."""
-    name = (flag or os.environ.get("CONTEXER_ENGINE") or "classic").strip().lower()
+    """--engine, then CONTEXER_ENGINE, then the graph engine."""
+    name = (flag or os.environ.get("CONTEXER_ENGINE") or DEFAULT_ENGINE).strip().lower()
     if name not in ENGINES:
         source = "--engine" if flag else "CONTEXER_ENGINE"
         raise typer.BadParameter(f"{source} is '{name}'; choose graph or classic")

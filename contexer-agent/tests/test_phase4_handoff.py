@@ -73,7 +73,7 @@ async def test_a_high_severity_security_note_keeps_a_proven_run_a_draft(repo: Pa
     assert handoff is not None and handoff.draft and github_.pulls[0]["draft"] is True
     body = github_.pulls[0]["body"]
     assert "All 7 checks proven" in body  # the checks did pass, and the body says so
-    assert "draft" in body.lower() and "security" in body.lower()
+    assert "opened as a draft" in body.lower() and "security" in body.lower()  # the banner, and the note in the table
     assert "q7Rk2ZpX9vLm" not in body  # the note says where, never what
 
 

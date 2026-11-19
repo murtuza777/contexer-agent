@@ -139,3 +139,92 @@ across the frontend and the Worker, behind sign-in) is not done.
 One thing the run showed that should change: the pull request's title is
 the goal's first line cut at 100 characters, which reads badly for a goal
 written as one long sentence.
+
+---
+
+## Results, 2026-11-19 (second part)
+
+The three tickets are built, tests first. The release itself (the tag and
+the upload to PyPI) is the owner's step and is not done.
+
+**T5.3, the third live run: behind a sign-in, frontend and Worker.**
+
+Goal: on the signed-in Symptoms page, show how many symptoms were logged in
+the last 7 days, counted by the server. Setup: a test account created
+through the app's own sign-up page in the local database, `[auth]` steps,
+`[app] reset` to clear the symptoms table before each check, and `[app]
+port = 5173` because the app's auth only trusts its configured origin.
+
+*First try: failed, $6.26, nothing proven.* A draft pull request was opened
+and has been closed. Three causes:
+
+1. The test account stopped at a one-time consent screen, so the `[auth]`
+   steps never reached the app. That was a mistake in the setup.
+2. Contexer did not notice before spending. It paid for three coding-agent
+   turns on "no check could run", which no coding agent can fix. The coding
+   agent, looking for a way forward, started reading the local database.
+3. The checks had been drafted from the public landing page, because the
+   draft was made without the signed-in page. They named a field labelled
+   "Symptom"; the page has "Main symptom".
+
+Also seen: the coding agent's budget was $5 and the run spent $6.26. Claude
+Code checks its budget between its own steps, so one turn can overshoot.
+
+*What was changed in Contexer because of it.* The sign-in flow is tried
+once before anything is spent, and a failure ends the run as `needs_human`
+with nothing built. The Intent agent is given the signed-in page and the
+pages the goal names by path. Both have tests
+(`tests/test_graph_preflight.py`).
+
+*Second try: succeeded.*
+[Pull request #6](https://github.com/murtuza777/HealthCare.Ai/pull/6).
+
+| | |
+| --- | --- |
+| Checks drafted | 4, with the page's real names ("Main symptom", "Notes (optional)", "Save symptom") |
+| Attempt 1 | 4 files across the frontend and the Worker; 2 of 4 checks passed |
+| Triage (gpt-5.4) | repair in the same session: both failures stop at the same step, "Save symptom" stays disabled |
+| Diagnoser | 2 steps, read the code, wrote the lead |
+| Attempt 2 | 2 files; 4 of 4 checks passed |
+| Reviewer | 1 note, high: the delete button no longer asks "Delete this symptom entry?" |
+| Cost and time | $3.35 for Claude Code, about 50,000 tokens for Contexer's four agents, 6 minutes 45 seconds |
+
+The Reviewer's note is the most useful result of the phase. One check
+clicks Delete and expects the entry to be gone; a browser confirmation
+dialog would have blocked it; the coding agent removed the confirmation.
+Every check passed and the app got worse. The note was advice, about
+logic, and at the time only a high *security* note held a pull request as a
+draft, so #6 was opened ready for review. Changed: any high-severity note
+now makes the pull request a draft. #6 was converted to a draft by hand,
+with a comment.
+
+What this still does not fix: the check that led the agent there was
+approved with `--yes`. A person reading "click Delete, expect it gone"
+might have asked about the confirmation; Contexer did not. The check
+language has no step for answering a browser dialog, which is why the only
+way to pass was to remove it.
+
+**T5.2, built.** `[agents]` in `contexer.toml` (one budget, rates, a model
+and step cap per agent), `Budget.max_total_usd`, `estimate_run`, the bill
+per agent in the summary and in `run.json` (`crew_cost_usd`,
+`crew_cost_estimated`). Tests: `tests/test_budget.py`,
+`tests/test_run_cost_cli.py`. Where it differs from the plan:
+
+- The estimate is a ceiling in turns and model calls, with tokens at typical
+  sizes. It is not a cost forecast: a run that passes at once uses a small
+  part of it.
+- The free-tier check still counts requests the way it did; it does not use
+  the estimate.
+- A cheaper model for Triage and the Reviewer is a setting, not a default.
+  Only gpt-5.4 is deployed on the Azure resource used here, so a run with a
+  cheaper model per agent has not been made.
+- The budget cannot stop a coding agent in the middle of a turn.
+
+**T5.1, the rest.** The fix prompt that `contexer test` writes now quotes
+what the browser saw. `/security-review` of the whole diff has not been
+run as a separate review.
+
+**Release.** The graph engine is the default; `--engine classic` remains.
+The version is 0.5.0 in `pyproject.toml`. Not done: the tag, the PyPI
+upload under `contexer-agent`, a run on macOS, a run with Codex, and the
+rewrite of `docs/try-it.md` for the new flow.

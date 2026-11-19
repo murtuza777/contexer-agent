@@ -239,7 +239,7 @@ async def test_the_reviewer_reads_the_code_and_its_notes_are_advice(tmp_path: Pa
     [note] = result.notes
     assert (note.file, note.line, note.severity, note.category, note.source) == ("src/cart.js", 2, "high", "logic", "reviewer")
     assert not note.backed and result.blocking == []  # an opinion never starts a repair
-    assert not result.holds_pull_request  # high, but not security
+    assert result.holds_pull_request  # high: a person reads it before merging, whatever it is about
     assert (tmp_path / "agents" / "reviewer.jsonl").is_file()
 
     task = next(m for m in model.seen[0] if isinstance(m, HumanMessage)).text

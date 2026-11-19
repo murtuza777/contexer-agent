@@ -5,8 +5,31 @@
 Work on the [agentic harness](docs/agentic/architecture.md) starts here.
 Phase 0 adds the foundations; no agent ships yet.
 
+### Changed
+
+- **The graph engine is the default** for `contexer run` and `contexer
+  issue`. `--engine classic` or `CONTEXER_ENGINE=classic` runs the 0.4
+  loop. The version is 0.5.0.
+- A pull request is opened as a draft when the review holds a
+  high-severity note of any kind, not only a security one.
+
 ### Added
 
+- **Cost controls** (Phase 5). `[agents]` in `contexer.toml`: `max_usd`,
+  one budget for the coding agent and Contexer's agents together
+  (`--max-usd` on the command line); prices for a provider that reports
+  none; a model and a step cap per agent. A run prints what it can use at
+  most before it starts and what each agent used when it ends, and ends
+  `budget_exhausted` on its best attempt when the budget runs out.
+- **A sign-in check before anything is spent.** With `[auth]` configured,
+  a sign-in that does not work ends the run before the first coding turn.
+- **Checks are drafted from the signed-in app** and from the pages the
+  goal names, not from the landing page.
+- **A run behind a sign-in on a real project.**
+  [HealthCare.Ai pull request #6](https://github.com/murtuza777/HealthCare.Ai/pull/6):
+  a change across the frontend and the Worker, 2 attempts, 4 of 4 checks
+  proven, $3.35. The Reviewer found that the change had removed a delete
+  confirmation to make a check pass.
 - **Security pass, first part** (Phase 5).
   - An injection suite: twelve hostile strings through every channel to
     every agent. It found that the repair prompt for the coding agent

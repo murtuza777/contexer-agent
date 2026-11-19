@@ -120,7 +120,7 @@ def build(
     model: str | None = typer.Option(None, "--model", help="Model for the coding agent."),
     rounds: int | None = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
     budget: float | None = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
-    engine: str | None = typer.Option(None, "--engine", help="graph or classic (default). Also CONTEXER_ENGINE."),
+    engine: str | None = typer.Option(None, "--engine", help="graph (default) or classic. Also CONTEXER_ENGINE."),
 ) -> None:
     """Approve the checks drafted on an issue in BY's name, build them, and open a pull request that closes it."""
     console = Console()

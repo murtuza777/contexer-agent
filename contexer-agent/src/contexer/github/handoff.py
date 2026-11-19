@@ -117,7 +117,7 @@ def hand_off(
     held = holds_pull_request(outcome.review)
     succeeded = outcome.terminal == "succeeded" and not held
     if held and outcome.terminal == "succeeded":
-        note += "Opened as a draft: the review found a high-severity security note. "
+        note += "Opened as a draft: the review has a high-severity note. "
     try:
         _git_or_fail(plan.root, *_identity(plan.root), "commit", "--quiet", "-m", _commit_message(outcome, contract))
     except HandoffError as exc:  # a pre-commit hook, usually
@@ -183,7 +183,7 @@ def pull_request_body(
         if holds_pull_request(outcome.review):
             lines += [
                 "",
-                "⚠️ **Opened as a draft:** reading the diff found a high-severity security note (see Review below). "
+                "⚠️ **Opened as a draft:** reading the diff found a high-severity note (see Review below). "
                 "The checks passed; a person should look at it before this is merged.",
             ]
     else:

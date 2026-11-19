@@ -117,8 +117,13 @@ def blocking_notes(notes: Sequence[ReviewNote]) -> list[ReviewNote]:
 
 
 def holds_pull_request(notes: Sequence[ReviewNote]) -> bool:
-    """A high-severity security note, from any source, keeps a pull request a draft until a person has looked."""
-    return any(n.severity == "high" and n.category == "security" for n in notes)
+    """A high-severity note, from any source, keeps a pull request a draft until a person has looked.
+
+    It was security notes only, until a run on a real app passed every check by removing a "delete this?"
+    confirmation and the note that said so was high, about logic, and held nothing. A draft does not say
+    the work failed: the checks passed. It says: read this before merging.
+    """
+    return any(n.severity == "high" for n in notes)
 
 
 def reviewer_prompt() -> str:
