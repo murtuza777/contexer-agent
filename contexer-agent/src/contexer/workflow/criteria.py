@@ -44,6 +44,9 @@ Steps:
   {"action": "press", "value": "Enter", "target": <locator, optional>}
   {"action": "goto", "value": "/path"}
   {"action": "wait", "value": "300"}         milliseconds; rarely needed, expectations auto-retry
+  {"action": "accept_dialog"}                answers OK to the browser dialog (confirm, alert) the NEXT step opens;
+  {"action": "dismiss_dialog"}               answers Cancel. Put it before the step that opens it. A dialog no step
+                                             answers is dismissed, so a delete behind "Are you sure?" does not happen.
 
 Expectations (all must hold):
   {"kind": "visible", "target": L}     {"kind": "hidden", "target": L}

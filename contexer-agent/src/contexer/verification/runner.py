@@ -15,6 +15,8 @@ from urllib.parse import urljoin
 
 from contexer.observer.playwright import capture_ui_snapshot, record_console_error
 from contexer.verification.checks import (
+    DIALOG_ACTIONS,
+    UNANSWERED_DIALOG,
     Check,
     CheckResult,
     Expectation,
@@ -237,6 +239,8 @@ class CheckRunner:
         console_errors: list[str] = []
         # Expanded ${NAME} values; masked in everything the result records.
         secret_values: list[str] = []
+        dialogs: list[str] = []
+        armed: list[str] = []  # how to answer the next dialogs, in order
 
         def finish(
             passed: bool,
@@ -254,6 +258,7 @@ class CheckRunner:
                 ui_at_failure=ui_at_failure or "",
                 page_errors=list(page_errors),
                 console_errors=list(console_errors),
+                dialogs=list(dialogs),
                 duration_seconds=time.monotonic() - started,
             ).redacted(secret_values)
 
@@ -268,6 +273,22 @@ class CheckRunner:
             page.on("pageerror", lambda exc: page_errors.append(str(exc)))
             page.on("console", lambda msg: record_console_error(msg, console_errors))
 
+            async def answer(dialog: Any) -> None:
+                # A confirm, alert or prompt. A step of the check may have said how to answer the next one;
+                # otherwise it is dismissed, which is what a browser left alone does, and the result says so.
+                how = armed.pop(0) if armed else None
+                shown = f'{dialog.type} "{dialog.message[:200]}"'
+                try:
+                    if how == "accept":
+                        await dialog.accept()
+                    else:
+                        await dialog.dismiss()
+                except Exception:  # the page closed it first
+                    pass
+                dialogs.append(f"{shown} ({'accepted' if how == 'accept' else 'dismissed' if how else UNANSWERED_DIALOG})")
+
+            page.on("dialog", answer)
+
             try:
                 await page.goto(url, wait_until="load", timeout=self.navigation_timeout * 1000)
             except Exception as exc:
@@ -279,6 +300,9 @@ class CheckRunner:
                     baselines[i] = await self._read_or_none(page, exp)
 
             for n, step in enumerate(check.steps, 1):
+                if step.action in DIALOG_ACTIONS:
+                    armed.append(DIALOG_ACTIONS[step.action])
+                    continue
                 try:
                     await self._perform(page, step, url)
                 except Exception as exc:
@@ -301,6 +325,12 @@ class CheckRunner:
                     return finish(False, [outcome], ui_at_failure=ui, blocked=False), page
 
             await page.wait_for_timeout(self.settle_ms)
+            if armed:
+                # The check said a dialog would open and none did: the app never asked.
+                never = ExpectationOutcome(
+                    description=f"a dialog opens for the check to {armed[0]}", passed=False, actual="no dialog opened"
+                )
+                return finish(False, [never]), page
 
             # Behavioural expectations first (they poll); error accounting last
             # so exceptions thrown asynchronously by the interaction are counted.
@@ -336,6 +366,8 @@ class CheckRunner:
     async def _perform(self, page: Page, step: Step, base_url: str) -> None:
         timeout = self.action_timeout * 1000
         value = expand_secrets(step.value or "")
+        if step.action in DIALOG_ACTIONS:
+            return  # answered where the check's steps are run; there is nothing to do on the page
         if step.action == "wait":
             await page.wait_for_timeout(int(value))
             return

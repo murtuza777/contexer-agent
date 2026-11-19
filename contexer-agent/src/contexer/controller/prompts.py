@@ -158,6 +158,7 @@ def _bundle(contract_id: str, result: CriterionResult) -> str:
         lines.append(f"  uncaught exception: {err}")
     for err in check.console_errors[:3]:
         lines.append(f"  console: {err}")
+    lines.extend(check.dialog_lines())
     if check.ui_at_failure and check.blocked:
         lines.append("  the page offered instead:")
         lines.extend(f"    {line}" for line in check.ui_at_failure.splitlines()[:_MAX_UI_LINES])

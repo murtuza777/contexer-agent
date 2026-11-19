@@ -147,6 +147,7 @@ _PLACEHOLDER = re.compile(r"(?i)example|placeholder|your[-_ ]|changeme|dummy|sam
 _FOCUSED = re.compile(r"\b(?:it|test|describe|context)\.only\s*\(|\b(?:fit|fdescribe)\s*\(")
 _SKIPPED = re.compile(r"\b(?:it|test|describe|context)\.skip\s*\(|\b(?:xit|xdescribe|xtest)\s*\(|@pytest\.mark\.skip|@unittest\.skip")
 _ASSERTION = re.compile(r"\bexpect\s*\(|\bassert\b|\bassert[A-Z]\w*\s*\(|\.should\b")
+_CONFIRM = re.compile(r"\bconfirm\s*\(")
 _DEBUG = re.compile(r"\bconsole\.(log|debug|trace)\s*\(|^\s*debugger\s*;?\s*$|\bbreakpoint\(\)|\bpdb\.set_trace\(\)")
 
 
@@ -255,6 +256,15 @@ def prescan(diff: str) -> list[ReviewNote]:
                 add(file.path, line, "medium", "tests", "A test is switched off with `skip`.")
             elif not tests and _DEBUG.search(text):
                 add(file.path, line, "low", "debug", f"Leftover debug code: `{text.strip()[:80]}`.")
+        if not tests:
+            asked_before = sum(1 for text in file.removed if _CONFIRM.search(text))
+            asks_now = sum(1 for _line, text in file.added if _CONFIRM.search(text))
+            if asked_before > asks_now:
+                add(
+                    file.path, 0, "medium", "logic",
+                    "A confirmation the app asked before an action was removed. If a check could not get past it, the "
+                    'check needs {"action": "accept_dialog"} before the step that opens it; put the confirmation back.',
+                )  # fmt: skip
         if tests:
             removed = sum(1 for text in file.removed if _ASSERTION.search(text))
             added = sum(1 for _line, text in file.added if _ASSERTION.search(text))
