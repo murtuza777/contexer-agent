@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 
 from contexer.contract import Contract
 from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
-from contexer.crew.reviewer import holds_pull_request
+from contexer.crew.reviewer import holds_pull_request, prescan
 from contexer.crew.triage import MOVE_LABELS
 from contexer.github.api import GitHubClient, GitHubError, github_token, repo_of
 
@@ -126,6 +126,15 @@ def hand_off(
 
     if plan.remote is None:
         return Handoff(branch, commit, False, None, False, not succeeded, note + "The repository has no remote to push to.")
+    # A draft is still a push. Whatever the outcome, a change that adds a secret stays on this machine.
+    leaked = [n for n in prescan(outcome.diff) if n.category == "security" and n.severity == "high"]
+    if leaked:
+        where = ", ".join(f"{n.file}:{n.line}" if n.line else n.file for n in leaked[:3])
+        return Handoff(
+            branch, commit, False, None, False, True,
+            note + f"Not pushed: the change adds what looks like a secret ({where}). The work is committed on the local "
+            f"branch {branch}. Remove the secret (and revoke it if it is real), amend the commit, then push it yourself.",
+        )  # fmt: skip
     pushed = _git(plan.root, *_push_auth(plan), "push", "--quiet", "--set-upstream", plan.remote, branch, timeout=180)
     if pushed is None:
         return Handoff(

@@ -63,9 +63,10 @@ async def test_the_pull_request_of_a_graph_run_shows_the_attempts_the_triage_and
     assert "do not change the verdict" in body.lower() or "does not change the verdict" in body.lower()
 
 
-async def test_a_high_severity_security_note_keeps_a_proven_run_a_draft(repo: Path) -> None:  # noqa: F811
+async def test_a_high_severity_note_keeps_a_proven_run_a_draft(repo: Path) -> None:  # noqa: F811
     plan = plan_handoff(repo)
-    outcome, contract = await _graph_run(repo, [{"app.js": LEAK + GOOD_JS}], rounds=0)
+    opinion = {"file": "app.js", "line": 3, "severity": "high", "category": "logic", "explanation": "The count ignores archived tasks."}
+    outcome, contract = await _graph_run(repo, [{"app.js": GOOD_JS + "// x\n"}], rounds=0, model=AgentScript(reviewer=[submit(notes=[opinion])]))
     assert outcome.terminal == "succeeded" and outcome.review[0].severity == "high"
 
     github_ = PullsOnly()
@@ -73,8 +74,22 @@ async def test_a_high_severity_security_note_keeps_a_proven_run_a_draft(repo: Pa
     assert handoff is not None and handoff.draft and github_.pulls[0]["draft"] is True
     body = github_.pulls[0]["body"]
     assert "All 7 checks proven" in body  # the checks did pass, and the body says so
-    assert "opened as a draft" in body.lower() and "security" in body.lower()  # the banner, and the note in the table
-    assert "q7Rk2ZpX9vLm" not in body  # the note says where, never what
+    assert "opened as a draft" in body.lower() and "archived tasks" in body  # the banner, and the note in the table
+
+
+@pytest.mark.parametrize("turns, rounds", [([{"app.js": LEAK + GOOD_JS}], 0), ([{"app.js": LEAK + COUNT_BUG_JS}], 0)])
+async def test_a_change_that_adds_a_secret_is_committed_here_and_never_pushed(repo: Path, turns: list[dict], rounds: int) -> None:  # noqa: F811
+    """Whether the checks passed or not: a draft is still a push, and a pushed key is a leaked key."""
+    plan = plan_handoff(repo)
+    outcome, contract = await _graph_run(repo, turns, rounds=rounds)
+
+    github_ = PullsOnly()
+    handoff = hand_off(plan, outcome, contract, client_factory=github_.factory)
+    assert handoff is not None and not handoff.pushed and not handoff.is_pull_request and github_.pulls == []
+    assert "not pushed" in handoff.note.lower() and "app.js:1" in handoff.note and "secret" in handoff.note.lower()
+    assert "q7Rk2ZpX9vLm" not in handoff.note  # where, never what
+    assert git(repo, "ls-remote", "--heads", "origin", handoff.branch) == ""  # nothing reached the remote
+    assert git(repo, "branch", "--show-current") == handoff.branch  # the work is kept, on a local branch
 
 
 def test_the_body_shows_what_was_understood_when_an_intent_was_written() -> None:
@@ -171,10 +186,10 @@ def test_the_build_command_can_name_the_engine(github, tmp_path: Path, monkeypat
         ["issue", "build", "7", "--by", "alice", "--dir", str(root), "--agent", "scripted", "--model", str(turns), "--engine", "graph"],
     )
     assert result.exit_code == 0, result.output
-    # The checks passed and the review found a secret twice: a draft pull request, and the issue is told why.
-    assert fake.pulls[0]["draft"] is True
+    # The checks passed and the review found a secret twice: nothing is pushed, and the issue is told why.
+    assert fake.pulls == []
     status = fake.comments[-1]["body"]
-    assert "Draft pull request" in status and "review" in status.lower()
+    assert "not pushed" in status.lower() and "secret" in status.lower()
 
 
 # -- drafting with the Intent agent: what was understood, and questions ---------------------------
