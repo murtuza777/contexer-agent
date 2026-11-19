@@ -16,7 +16,7 @@ from langchain_core.messages import HumanMessage
 
 from contexer.contract import ContractStore
 from contexer.controller.prompts import implement_prompt, repair_prompt
-from contexer.crew.diagnoser import Failure, RepairBrief, diagnose, validated_brief
+from contexer.crew.diagnoser import Failure, RepairBrief, diagnose, fix_prompt, validated_brief
 from contexer.crew.intent import run_intent
 from contexer.crew.reviewer import ReviewNote, review, review_repair_prompt
 from contexer.crew.triage import AttemptView, Situation, triage
@@ -159,6 +159,8 @@ def test_the_coding_agents_prompts_quote_what_the_app_and_an_issue_said(injectio
     # What the browser saw, the page's errors and the server log come from the app the agent just wrote.
     prompt = repair_prompt(contract, _run_result(injection), repeated=[], reverted_from=None)
     assert_quoted(prompt, injection)
+    # The prompt `contexer test` writes for a person to paste into a coding agent.
+    assert_quoted(fix_prompt([_failure(injection)], intent="Count open tasks"), injection)
     # A failing command's output, in the one repair a review may ask for.
     note = ReviewNote(severity="medium", category="tests", source="command", backed=True, explanation="`npm run test` fails.", evidence=injection)
     assert_quoted(review_repair_prompt([note]), injection)
