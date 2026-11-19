@@ -9,13 +9,12 @@ data. It must leave the ``[auth]`` test account in place.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
 from contexer.appserver.detect import shell_argv
-from contexer.procutil import popen_args
+from contexer.procutil import child_env, popen_args
 
 RESET_TIMEOUT_SECONDS = 120.0
 
@@ -37,7 +36,7 @@ def run_reset(
         proc = subprocess.run(
             popen_args(shell_argv(command)),
             cwd=str(cwd),
-            env={**os.environ, **(env or {})},
+            env=child_env(env),  # the command is the project's, the code it runs may be the agent's
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,

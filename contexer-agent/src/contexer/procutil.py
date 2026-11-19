@@ -43,6 +43,31 @@ AGENT_SESSION_PREFIXES = ("CLAUDE_CODE_", "CLAUDE_AGENT_SDK_")
 AGENT_SESSION_VARS = frozenset({"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PREVIEW_CLASSIFIER_FLOOR", "AI_AGENT"})
 
 
+# Contexer pushes and opens the pull request itself. Nothing it starts needs a way into the repository: not
+# the coding agent, and not the code that agent wrote (install scripts, the dev server, the reset command).
+# Text from an issue reaches the agent's prompt, and in Actions these tokens can push and comment.
+REPOSITORY_TOKENS = frozenset(
+    {
+        "GITHUB_TOKEN",
+        "GH_TOKEN",
+        "CONTEXER_GITHUB_TOKEN",
+        "ACTIONS_RUNTIME_TOKEN",
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+        "ACTIONS_ID_TOKEN_REQUEST_URL",
+    }
+)
+
+
+def child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment for the app's own processes: the person's, without agent-session markers or repository tokens.
+
+    ``extra`` is what the project sets on purpose (``[app] env``) and is applied last.
+    """
+    env = {name: value for name, value in without_agent_session(dict(os.environ)).items() if name not in REPOSITORY_TOKENS}
+    env.update(extra or {})
+    return env
+
+
 def without_agent_session(env: dict[str, str]) -> dict[str, str]:
     """``env`` as a person's own terminal would have it: no markers of a hosting agent session."""
     return {
