@@ -7,6 +7,18 @@ Phase 0 adds the foundations; no agent ships yet.
 
 ### Added
 
+- **Security pass, first part** (Phase 5).
+  - An injection suite: twelve hostile strings through every channel to
+    every agent. It found that the repair prompt for the coding agent
+    carried what the app printed unquoted; that is fixed.
+  - OpenCode is denied edits under `.contexer/`, as Claude Code is.
+  - `contexer run` and `contexer doctor` warn about an environment file
+    git does not ignore and about a secret in a committed file.
+- **First runs on a real project.** `contexer test` and `contexer run --pr`
+  on [HealthCare.Ai](https://github.com/murtuza777/HealthCare.Ai), an app
+  Contexer had not seen. The run opened
+  [pull request #4](https://github.com/murtuza777/HealthCare.Ai/pull/4)
+  there: one attempt, 3 of 3 checks proven, $0.85 of Claude Code.
 - **The Reviewer: a passing run is read before it is handed over** (Phase 4
   of the agentic harness, graph engine).
   - A scan of the diff by code finds secrets, focused or skipped tests,

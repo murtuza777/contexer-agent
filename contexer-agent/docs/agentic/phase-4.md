@@ -132,11 +132,15 @@ in, 41 out) and had no notes.
   ignores it; quoting makes steering less likely and nothing relies on it.
   What an issue cannot do is in code: it cannot approve its own checks.
 
+**The real pull request, 2026-11-19.** The phase gate's last part is met:
+[murtuza777/HealthCare.Ai#4](https://github.com/murtuza777/HealthCare.Ai/pull/4),
+opened by `contexer run --pr --engine graph` on a project Contexer had
+never seen. The run is described in [phase-5.md](phase-5.md).
+
 **Not done.**
 
-- **One real pull request on a test repository.** Needs a repository on
-  GitHub that Contexer may push to and open pull requests and issues on.
-  The hand-off and the issue flow are tested against a fake GitHub and a
+- The issue flow (`contexer issue draft` and `build`) has not been run
+  against a real GitHub issue; it is tested against a fake GitHub and a
   real local git remote.
 - `contexer demo` still runs on the classic engine.
 - The classic engine has no review.

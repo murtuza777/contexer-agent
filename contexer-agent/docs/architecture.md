@@ -681,7 +681,7 @@ informational only. Process-based adapters track their running trees
 | --- | --- |
 | Claude Code (`claude_code.py`) | `claude -p --output-format stream-json --verbose --permission-mode acceptEdits` with an allowed-tools list (Read, Edit, MultiEdit, Write, Glob, Grep, LS, TodoWrite, package installs, `npx tsc`, `npm run build/lint`, `ls`, `git status/diff`) and denied tools (`Edit/MultiEdit/Write(.contexer/**)`, `git commit/push/reset/checkout`, `rm -rf`); `--max-budget-usd`, `--model`, `--resume <session>`. The prompt goes to stdin; NDJSON events are parsed for progress, cost and the final `result` |
 | Codex (`codex_agent.py`) | `codex exec --json --skip-git-repo-check --sandbox workspace-write --config approval_policy="never" --config sandbox_workspace_write.network_access=true --cd <dir> [--model] -`, and `resume <thread_id> -` for repairs. Only `turn.completed` / `turn.failed` end a turn. Codex reports no cost, so `--budget` does not apply |
-| OpenCode (`opencode_agent.py`) | Talks to `opencode serve` over HTTP (`OPENCODE_SERVER_URL`, default `http://127.0.0.1:4096`), starting it if `/global/health` does not answer (60 s). A session per run; tool calls are polled every 2 s for progress. On a timeout or Ctrl+C the session is aborted. With `OPENROUTER_API_KEY` and no model chosen it uses `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` |
+| OpenCode (`opencode_agent.py`) | Talks to `opencode serve` over HTTP (`OPENCODE_SERVER_URL`, default `http://127.0.0.1:4096`), starting it if `/global/health` does not answer (60 s). A session per run; tool calls are polled every 2 s for progress. The server is started with `OPENCODE_CONFIG_CONTENT` carrying `permission.edit` rules that deny `.contexer/**`, added to any config the user passes (checked live on OpenCode 1.4.3; a shell command can still write there, which the tamper guard catches). On a timeout or Ctrl+C the session is aborted. With `OPENROUTER_API_KEY` and no model chosen it uses `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` |
 | Scripted (`scripted.py`) | Applies queued file writes per turn (`None` deletes). `--agent scripted --model turns.json` reads them from a JSON list; used by tests and to try a setup without a model |
 
 Claude Code and Codex run in a worker thread; on cancellation the tree is
@@ -1241,7 +1241,7 @@ and prints the fix under each problem.
 
 | Risk | Protection |
 | --- | --- |
-| The agent moves the goalposts | Contracts are hashed at approval; Claude Code is denied writes to `.contexer/**`; the controller compares the contract files after every turn, puts them back and ends the run `tampered`; a modified contract never runs as approved |
+| The agent moves the goalposts | Contracts are hashed at approval; Claude Code and OpenCode are denied edits to `.contexer/**` (Codex has no per-path rule); the controller compares the contract files after every turn, puts them back and ends the run `tampered`; a modified contract never runs as approved |
 | The agent's claim is taken as proof | Only Contexer's own browser checks decide; changed files come from the shadow diff |
 | An attempt makes things worse | Every attempt is snapshotted; worse attempts are reverted; the run ends on the best attempt or the baseline |
 | Secrets leak into evidence or prompts | `${NAME}` values and password fields are masked in snapshots, `result.json`, `report.html` and repair prompts; signed-in checks keep no trace unless `--trace on`; the browser session lives only in memory |
@@ -1250,6 +1250,8 @@ and prints the fix under each problem.
 | Someone forges an approval | The workflow runs only for owners, members and collaborators; Contexer checks the approver's write access through the API; only the bot's own draft comment counts |
 | A required check passes on "neutral" | Contexer never reports neutral; undecided is `failure` |
 | Ctrl+C leaves an agent running | The agent's tree is killed (or its OpenCode session aborted) and the project restored |
+| A commit or pull request carries a secret | Before a run, `riskscan.py` warns about an environment file (`.env`, `.env.*`, `.dev.vars`) that git does not ignore or that is committed, and about a secret in a committed file; `contexer doctor` shows the same. After a run, the review's scan finds a secret the change added and keeps the pull request a draft. Both report and neither prints the value |
+| Text the app printed steers the coding agent | The failures, page errors and server log in a repair prompt are inside `<untrusted>` under a line that says they are evidence, not instructions. `tests/test_security.py` puts twelve hostile strings through every channel to every agent |
 | Snapshotting the wrong folder | A home folder or drive root is refused |
 | The PyPI package leaks local files | The sdist respects `.gitignore`; `.env` is never included |
 
