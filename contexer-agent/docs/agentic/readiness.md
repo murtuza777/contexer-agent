@@ -37,39 +37,37 @@ why. Rename the variable or reference it from `[auth]`.
 
 ## 2. Still open
 
-Not fixed in this pass. Ordered by how much they matter.
+Seven of the eleven items first listed here were fixed on 2026-11-20:
 
-1. **`/contexer approve` is not tied to the draft the approver read.** The
-   build approves the newest draft comment at the time the job runs. Someone
-   who can trigger a redraft can swap it between the approver reading and
-   the job starting. Fix: `/contexer approve <first 8 of the hash>`.
-2. **The draft comment is only found when a Bot posted it.** With a personal
-   token (a PAT, or `gh auth token` locally) the author is a User and the
-   build says there is no draft. The issue flow works in Actions with the
-   default token and not otherwise. It has also never been run against a
-   real GitHub issue.
-3. **The CI gate trusts the contract in the pull request.** A pull request
-   can weaken a check and recompute its approval hash. Fix: compare each
-   contract's hash with the same file on the base branch.
-4. **`--resume` reverts hand edits made since the run stopped, without
-   saying so.** They are kept in a snapshot that `contexer restore` cannot
-   reach. Fix: list the files and ask; add `restore --before-resume`.
-5. **Issue text the approver cannot see reaches the agents.** HTML comments
-   do not render on GitHub. Fix: strip them and zero-width characters, and
-   show the exact goal text un-collapsed.
-6. **Pull request bodies carry page text and model notes as live
-   Markdown** (`@mentions`, links). Fix: neutralise them in `_md`.
-7. **Blocking calls on the event loop** (dependency install, the review's
+| Was open | Now |
+| --- | --- |
+| `/contexer approve` not tied to the draft that was read | An approval given before the draft last changed is refused (`--approved-at`, set from the comment's time in Actions) |
+| The draft was only found when a Bot posted it | The draft is the comment Contexer's own token posted (`GitHubClient.identity`), so a personal token works and another bot's comment is not a draft |
+| The CI gate trusted the contract in the pull request | The gate names every contract the pull request changed against the base branch. It warns; it does not fail, because a contract can be changed on purpose |
+| `--resume` reverted hand edits without a word | It lists the files it put back, and `contexer restore RUN --before-resume` brings them back |
+| Hidden issue text reached the agents | HTML comments and invisible characters are removed, and the draft comment shows the goal exactly as the agents read it |
+| Pull request bodies carried live Markdown from the app and from models | Mentions, issue references, links and images in that text are made inert |
+| The token budget restarted on `--resume` | It starts from what the run had already spent |
+| The model's `grep` took any pattern and walked `node_modules` | Closed folders are never entered; a nested quantifier and an over-long pattern are refused |
+
+Tests: `test_issue_hardening.py`, `test_graph_resume.py`, `test_diagnoser.py`.
+
+Still open:
+
+1. **The issue flow has never been run against a real GitHub issue.** It is
+   tested against a fake GitHub and a real local git remote.
+2. **Blocking calls on the event loop** (dependency install, the review's
    commands, git) delay Ctrl+C by minutes. On Windows a timed-out install
    leaves `node` running.
-8. **The model's `grep` tool** takes any regular expression and walks
-   `node_modules` before filtering.
-9. **The token budget restarts on `--resume`.**
-10. **In Actions on Linux** a process the agent starts can probably read the
-    token from its parent's environment (`/proc`). Not confirmed. The real
-    fix is to build in a job with no write token and push from a second job.
-11. **Codex has no rule against editing `.contexer/`**; the tamper guard is
-    its only layer.
+3. **In Actions on Linux** a process the agent starts can probably read the
+   token from its parent's environment (`/proc`). Not confirmed. The real
+   fix is to build in a job with no write token and push from a second job.
+4. **Codex has no rule against editing `.contexer/`**; the tamper guard is
+   its only layer.
+5. **The gate's warning about a changed contract is advice.** Nothing stops
+   a reviewer from merging without reading it.
+6. **A resume cannot tell a person's edits from what a killed turn left.**
+   It keeps both and says so; it does not ask first.
 
 Not measured: macOS (never run), Codex (never run live), a cheaper model
 per agent (only one model is deployed), a project that is not a web app

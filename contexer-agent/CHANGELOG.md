@@ -24,6 +24,13 @@ is still open are in [docs/agentic/readiness.md](docs/agentic/readiness.md).
 
 ### Added (reliability)
 
+- The issue flow: an approval given before the draft last changed is
+  refused; the draft is found with a personal token too; hidden text in an
+  issue does not reach the agents; pull request text from the app or a
+  model is inert.
+- The gate names a contract that the pull request itself changed.
+- `--resume` lists the files it put back, and `contexer restore RUN
+  --before-resume` returns them. The budget carries over a resume.
 - `accept_dialog` and `dismiss_dialog` steps: a check can answer a browser
   confirmation, and one nobody answered is named in the failure.
 - One run at a time per project; a plain message for a failed snapshot, a
