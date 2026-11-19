@@ -35,7 +35,8 @@ class Contract(BaseModel):
     """A goal and the acceptance criteria that define it as done."""
 
     version: int = CONTRACT_VERSION
-    id: str
+    # A file name under .contexer/contracts, and part of a branch name: a plain name, never a path.
+    id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
     goal: str
     summary: str = ""
     criteria: list[AcceptanceCriterion] = Field(default_factory=list)

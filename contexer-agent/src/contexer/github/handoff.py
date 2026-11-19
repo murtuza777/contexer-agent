@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from contexer.contract import Contract
-from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
+from contexer.contract.store import AUTOMATIC_APPROVAL, CONTEXER_DIR, CONTRACTS_DIR
 from contexer.crew.reviewer import holds_pull_request, prescan
 from contexer.crew.triage import MOVE_LABELS
 from contexer.github.api import GitHubClient, GitHubError, github_token, repo_of
@@ -114,10 +114,15 @@ def hand_off(
     branch = _free_branch(plan, f"contexer/{contract.id}")
     _git_or_fail(plan.root, "switch", "--quiet", "-c", branch)
     _git_or_fail(plan.root, "add", "--all", "--", *paths)
-    held = holds_pull_request(outcome.review)
+    automatic = contract.approval is not None and contract.approval.by == AUTOMATIC_APPROVAL
+    held = holds_pull_request(outcome.review) or automatic
     succeeded = outcome.terminal == "succeeded" and not held
     if held and outcome.terminal == "succeeded":
-        note += "Opened as a draft: the review has a high-severity note. "
+        note += (
+            "Opened as a draft: the checks were approved with --yes and nobody read them. "
+            if automatic and not holds_pull_request(outcome.review)
+            else "Opened as a draft: the review has a high-severity note. "
+        )
     try:
         _git_or_fail(plan.root, *_identity(plan.root), "commit", "--quiet", "-m", _commit_message(outcome, contract))
     except HandoffError as exc:  # a pre-commit hook, usually
@@ -197,6 +202,12 @@ def pull_request_body(
             ]
     else:
         lines.append(f"⚠️ **Not done yet:** {outcome.reason}")
+    if contract.approval is not None and contract.approval.by == AUTOMATIC_APPROVAL:
+        lines += [
+            "",
+            "⚠️ **The checks were approved automatically (`--yes`).** Nobody read them before the work was built "
+            "against them. Read the definition of done below as carefully as the code: a check can pass for the wrong reason.",
+        ]
     lines += ["", "### Goal", "", _quote(contract.goal), ""]
     if intent is not None and (intent.behaviours or intent.assumptions or intent.corrections):
         lines += ["### What was understood", ""]

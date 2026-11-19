@@ -171,7 +171,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         if answer.get("approve") is not True:
             return {"terminal": "needs_human", "reason": "The checks were not approved, so nothing was built against them."}
 
-        approved = ctx.store.approve(contract.id)
+        approved = ctx.store.approve(contract.id, by=str(answer.get("by") or "") or None)
         ctx.contract = approved
         ctx.event("approved", f"Approved {approved.id}")
         updates: dict[str, Any] = {"approved_hash": approved.content_hash(), "guard": ctx.recapture_guard(), "restate": ""}

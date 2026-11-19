@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import collections
 import re
+import socket
 import subprocess
 import threading
 import time
@@ -29,6 +30,17 @@ _ANNOUNCED_URL = re.compile(r"https?://(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0
 _READY_STATUSES = set(range(200, 400)) | {400, 401, 402, 403}
 _LOG_LINES = 400
 _INSTALL_TIMEOUT = 900.0
+
+
+def port_in_use(port: int) -> bool:
+    """Whether something accepts connections on ``port`` of this machine right now."""
+    for host in ("127.0.0.1", "::1"):
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 class DevServerError(Exception):
@@ -65,6 +77,15 @@ class DevServer:
             self._log_file = open(self.log_path, "a", encoding="utf-8")  # noqa: SIM115 - closed in stop()
         if self.plan.install_argv and (install or not (self.plan.cwd / "node_modules").is_dir()):
             self._install()
+        # Something already answering on the port would be taken for the app, and every check would run against it.
+        deadline = time.monotonic() + 5  # a server just stopped may hold the port for a moment
+        while port_in_use(self.plan.port):
+            if time.monotonic() > deadline:
+                raise DevServerError(
+                    f"port {self.plan.port} is already in use, so `{self.plan.display}` cannot start there. Stop what is "
+                    "running on it (your own dev server?), or pass --url to check an app you already run."
+                )
+            time.sleep(0.25)
         self.on_status(f"Starting `{self.plan.display}` on port {self.plan.port}")
         self._spawn()
         self.url = self._wait_until_ready()

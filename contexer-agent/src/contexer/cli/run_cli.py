@@ -7,8 +7,9 @@ import os
 import shutil
 import webbrowser
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, NoReturn, get_args
 
 import typer
 from rich.console import Console
@@ -16,7 +17,8 @@ from rich.markup import escape
 
 from contexer.agents import CodingAgentAdapter, create_agent
 from contexer.appserver import AppStartError, open_app
-from contexer.checkpoint.shadow import unsafe_work_tree
+from contexer.checkpoint.lock import RunLocked, run_lock
+from contexer.checkpoint.shadow import SnapshotError, unsafe_work_tree
 from contexer.cli import term
 from contexer.cli.gate_cli import (
     compiler_llm,
@@ -35,6 +37,7 @@ from contexer.config.project import (
     load_project_env,
 )
 from contexer.contract import Contract, ContractError, ContractStore
+from contexer.contract.store import AUTOMATIC_APPROVAL
 from contexer.controller import Engine, RunController, RunOutcome, RunSettings
 from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
 from contexer.crew.estimate import RunEstimate, estimate_run
@@ -106,6 +109,8 @@ def run(
         raise typer.BadParameter("--correct goes with --resume RUN: it corrects a run that was stopped")
     console = Console()
     project = project_dir.resolve()
+    if shutil.which("git") is None:
+        raise typer.BadParameter("git is not installed. Contexer snapshots your project with git before an agent touches it.")
     unsafe = unsafe_work_tree(project)
     if unsafe:
         raise typer.BadParameter(f"{unsafe}; run Contexer in your app's folder, or pass --dir")
@@ -281,6 +286,28 @@ def crew_model(project: Path) -> Any:
         return None
 
 
+def _take_lock(console: Console, activity: Any, agent: CodingAgentAdapter, project: Path, run: str) -> ExitStack:
+    """Hold the project's run lock until the returned stack is closed. Exits with a plain sentence if another run has it."""
+    stack = ExitStack()
+    try:
+        stack.enter_context(run_lock(project, run))
+    except RunLocked as exc:
+        activity.stop()
+        agent.close()
+        term.note(console, "fail", f"[red]Not started:[/] {escape(str(exc))}")
+        raise typer.Exit(code=2) from None
+    return stack
+
+
+def _snapshot_failed(console: Console, activity: Any, exc: Exception) -> NoReturn:
+    """Contexer snapshots the project with git. When that fails there is nothing safe to go on with."""
+    activity.stop()
+    hint = "Install git and run again." if shutil.which("git") is None else "Your files are as the last step left them; `contexer runs` lists what was saved."
+    term.note(console, "fail", f"[red]Could not snapshot the project:[/] {escape(str(exc))}")
+    console.print(f"  {escape(hint)}")
+    raise typer.Exit(code=3) from None
+
+
 def run_budget(config: ProjectConfig, max_usd: float | None = None) -> Budget:
     """The budget of one run: the token limit, the project's rates, and the one budget in dollars (the flag wins)."""
     return Budget(
@@ -426,7 +453,7 @@ def _asker(console: Console, activity: term.Activity, yes: bool) -> Callable[[di
                 term.bullets(console, [escape(a) for a in assumptions], indent=4)
             console.print()
             if yes:
-                return {"approve": True}
+                return {"approve": True, "by": AUTOMATIC_APPROVAL}
             typed = typer.prompt(
                 "Approve these checks as the definition of done? [y/n, or type what to change]",
                 default="n",
@@ -513,6 +540,7 @@ def execute_graph(
         budget=budget,
         models=models,
     )
+    held = _take_lock(console, activity, agent, project, resume or "")
     try:
         if resume:
             outcome = asyncio.run(controller.resume(resume, correction=correction))
@@ -522,6 +550,8 @@ def execute_graph(
             outcome = asyncio.run(
                 controller.run_goal(goal or "", others=others, contract_id=contract_id, origin=origin)
             )
+    except SnapshotError as exc:
+        _snapshot_failed(console, activity, exc)
     except ResumeError as exc:
         activity.stop()
         term.note(console, "fail", f"[red]Cannot resume:[/] {escape(str(exc))}")
@@ -535,6 +565,7 @@ def execute_graph(
     finally:
         activity.stop()
         agent.close()
+        held.close()
     return outcome
 
 
@@ -567,8 +598,11 @@ def execute_run(
     on_event = _progress(console, activity, on_progress)
 
     controller = RunController(project, agent, settings, url=url, on_event=on_event)
+    held = _take_lock(console, activity, agent, project, "")
     try:
         outcome = asyncio.run(controller.run(contract, others))
+    except SnapshotError as exc:
+        _snapshot_failed(console, activity, exc)
     except KeyboardInterrupt:
         activity.stop()
         if controller.last_outcome is None:  # stopped before the first snapshot
@@ -578,6 +612,7 @@ def execute_run(
     finally:
         activity.stop()
         agent.close()
+        held.close()
     return outcome
 
 
@@ -660,7 +695,7 @@ def _approve(
         store.save(contract)
         term.note(console, "warn", f"Not approved. Edit {escape(str(store.path_for(contract.id)))} and run again.")
         raise typer.Exit(code=2)
-    approved = store.approve(contract.id)
+    approved = store.approve(contract.id, by=AUTOMATIC_APPROVAL if yes else None)
     console.print(f"{term.mark('pass')} Approved [bold]{escape(approved.id)}[/]")
     return approved
 
