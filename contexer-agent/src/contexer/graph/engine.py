@@ -59,6 +59,7 @@ class GraphController:
         budget: Budget | None = None,
         corrections: Any = None,
         can_ask: bool | None = None,
+        models: dict[str, BaseChatModel] | None = None,
     ) -> None:
         self.project = Path(project_dir).resolve()
         self.agent = agent
@@ -68,6 +69,7 @@ class GraphController:
         self.runner = runner or CheckRunner(trace="on-failure")
         # The model for Contexer's own agents (Intent, Triage, Diagnoser). None: the rules decide.
         self.model = model
+        self.models = dict(models or {})
         # How a person is asked. None: nobody is there, so nothing is approved and nobody is asked.
         self.ask = ask
         # Whether Triage may stop the run to ask a question. Approvals do not depend on it.
@@ -306,6 +308,7 @@ class GraphController:
             repo=RepositoryInspector().inspect(self.project),
             url=self.url,
             model=self.model,
+            models=self.models,
             budget=self.budget,
             can_ask=self.can_ask,
             corrections=self.corrections,

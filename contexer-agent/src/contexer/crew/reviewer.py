@@ -51,7 +51,7 @@ MAX_EXPLANATION_CHARS = 500
 DEFAULT_COMMAND_TIMEOUT = 180.0
 # The package.json scripts that count as the project's own checks, in the order they are run.
 COMMAND_SCRIPTS = ("test", "lint", "typecheck", "type-check")
-_MAX_STEPS = 12
+DEFAULT_REVIEW_STEPS = 12
 _TIMEOUT = 300.0
 _MAX_DIFF_CHARS = 30_000
 _MAX_OUTPUT_TAIL = 1_500
@@ -390,6 +390,7 @@ async def review(
     run_dir: Path | None = None,
     budget: Budget | None = None,
     secrets: Sequence[str] = (),
+    max_steps: int = DEFAULT_REVIEW_STEPS,
 ) -> ReviewResult:
     """Review ``diff`` (the change from the baseline to the project as it is now in ``project_dir``)."""
     result = ReviewResult()
@@ -419,7 +420,7 @@ async def review(
             args_schema=_NoArgs,
         ),
     ]
-    spec = AgentSpec(name="reviewer", system_prompt=reviewer_prompt(), output_schema=Review, max_steps=_MAX_STEPS, timeout=_TIMEOUT)
+    spec = AgentSpec(name="reviewer", system_prompt=reviewer_prompt(), output_schema=Review, max_steps=max_steps, timeout=_TIMEOUT)
     ran = await run_agent(
         spec, model, tools, _task(diff, intent, checks, result), run_dir=run_dir, secrets=list(secrets), budget=budget
     )

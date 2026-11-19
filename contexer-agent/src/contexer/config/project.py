@@ -72,6 +72,54 @@ class LimitSettings(BaseModel):
     cost_usd: float | None = Field(default=None, gt=0)
 
 
+CREW_AGENTS = ("intent", "tester", "challenger", "triage", "diagnoser", "reviewer")
+
+
+class CrewAgentSettings(BaseModel):
+    """One of Contexer's own agents: the model it runs on and how many steps it may take."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str | None = None
+    model: str | None = None
+    max_steps: int | None = Field(default=None, gt=0)
+
+
+class AgentsSettings(BaseModel):
+    """Cost controls for a run, and a model per agent.
+
+    ```toml
+    [agents]
+    max_usd = 5.00              # one budget: the coding agent and Contexer's agents together
+    input_usd_per_mtok = 2.50   # prices, for a provider that reports none (Azure, most others)
+    output_usd_per_mtok = 15.00
+
+    [agents.triage]             # intent, tester, challenger, triage, diagnoser, reviewer
+    model = "gpt-5.4-mini"      # a cheaper model for a small decision
+
+    [agents.reviewer]
+    max_steps = 8
+    ```
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_usd: float | None = Field(default=None, gt=0)
+    input_usd_per_mtok: float | None = Field(default=None, ge=0)
+    output_usd_per_mtok: float | None = Field(default=None, ge=0)
+    intent: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    tester: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    challenger: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    triage: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    diagnoser: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    reviewer: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+
+    def for_agent(self, name: str) -> CrewAgentSettings:
+        if name not in CREW_AGENTS:
+            raise KeyError(f"there is no agent named '{name}'")
+        return getattr(self, name)
+
+
 class AgentSettings(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -133,6 +181,7 @@ class ProjectConfig(BaseModel):
     compiler: CompilerSettings = Field(default_factory=CompilerSettings)
     gate: GateSettings = Field(default_factory=GateSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    agents: AgentsSettings = Field(default_factory=AgentsSettings)
     limits: LimitSettings = Field(default_factory=LimitSettings)
 
 

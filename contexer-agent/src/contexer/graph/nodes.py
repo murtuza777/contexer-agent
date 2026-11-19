@@ -16,6 +16,7 @@ Who decides what:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -36,9 +37,10 @@ from contexer.controller.shared import (
     turn_line,
     write_run_evidence,
 )
+from contexer.crew.diagnoser import DEFAULT_MAX_STEPS as DEFAULT_DIAGNOSER_STEPS
 from contexer.crew.diagnoser import Failure, brief_section, diagnose
 from contexer.crew.intent import run_intent
-from contexer.crew.reviewer import ReviewNote, review, review_repair_prompt
+from contexer.crew.reviewer import DEFAULT_REVIEW_STEPS, ReviewNote, review, review_repair_prompt
 from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, TriageDecision, triage
 from contexer.crew.untrusted import quoted_goal
 from contexer.evidence.test_report import AgentUsage
@@ -70,9 +72,13 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         existing = _stored_contract(ctx, contract_id)
         if existing is not None and not correction:
             return {}  # a contract was given; nothing to draft
-        if ctx.model is None:
+        intent_model = ctx.model_for("intent")
+        if intent_model is None:
             return {"terminal": "needs_human", "reason": "No model is configured to draft checks from the goal."}
 
+        cannot_sign_in = await _sign_in_problem(ctx)
+        if cannot_sign_in:
+            return {"terminal": "needs_human", "reason": cannot_sign_in}
         goal = state.get("goal") or (existing.goal if existing else "")
         intent_id = state.get("intent_id") or ""
         stored = ctx.intents.load(intent_id) if intent_id and ctx.intents.exists(intent_id) else ctx.intents.find(goal)
@@ -81,12 +87,12 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         ctx.event("phase-quiet", "Redrafting the checks for your correction" if correction else "Drafting checks from the goal")
         result = await run_intent(
             goal,
-            ctx.model,
+            intent_model,
             stored=spec,
             existing_checks=known,
             correction=correction or None,
             repo_summary=ctx.repo.format_summary() if ctx.repo is not None else "",
-            ui_snapshot=await _ui_snapshot(ctx),
+            ui_snapshot=await _ui_snapshot(ctx, goal),
             assume=True,  # questions are not asked mid-run; assumptions are shown with the checks, and can be corrected
             run_dir=ctx.run.path,
             budget=ctx.budget,
@@ -97,7 +103,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         updates: dict[str, Any] = {
             "intent_id": result.spec.id,
             "correction": "",
-            "agents": _used(state, "intent", result.steps, result.tokens_in, result.tokens_out, result.cost_usd),
+            "agents": _used(state, "intent", result.steps, result.tokens_in, result.tokens_out, _cost(ctx, result)),
         }
         if result.status != "ok":
             ctx.event("strategy", f"The Intent agent did not finish ({result.error or result.status}); the checks are as they were.")
@@ -192,12 +198,23 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             return {"correction": correction}
         if ctx.elapsed() > ctx.settings.wall_clock:
             return {"terminal": "timed_out", "reason": "Wall-clock budget used up."}
+        if state.get("n", 0) == 0:  # before the first turn is paid for
+            cannot_sign_in = await _sign_in_problem(ctx)
+            if cannot_sign_in:
+                return {"terminal": "needs_human", "reason": cannot_sign_in}
         cost = state.get("cost_usd", 0.0)
         remaining = None
         if ctx.settings.budget_usd is not None:
             remaining = ctx.settings.budget_usd - cost
             if remaining <= 0:
                 return {"terminal": "budget_exhausted", "reason": "Spending budget used up."}
+        # The one budget for the whole run: what this agent and Contexer's own agents have spent together.
+        used_up = ctx.spent(cost)
+        if used_up:
+            return {"terminal": "budget_exhausted", "reason": f"Stopped: {used_up}."}
+        total_left = ctx.budget.total_left() if ctx.budget is not None else None
+        if total_left is not None:
+            remaining = total_left if remaining is None else min(remaining, total_left)
 
         n = state.get("n", 0) + 1
         fresh = state.get("fresh", True)
@@ -211,6 +228,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             budget_usd=remaining,
             on_progress=lambda line: ctx.event("agent", line),
         )
+        ctx.spent(cost + (turn.cost_usd or 0.0))  # so the agents that run next see it
         return {
             "n": n,
             "turn": turn.model_dump(mode="json"),
@@ -389,17 +407,18 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         found = await review(
             ctx.shadow.diff(snapshots["0"], passed, max_chars=_REVIEW_DIFF_CHARS),
             ctx.project,
-            ctx.model,
+            ctx.model_for("reviewer"),
             intent=quoted_goal(contract.goal, contract.origin),
             checks=[c.description for c in contract.criteria],
             run_dir=ctx.run.path,
             budget=ctx.budget,
+            max_steps=_steps(ctx, "reviewer", DEFAULT_REVIEW_STEPS),
         )
         # A project command may write files (a formatter, a snapshot test). What passed is the snapshot.
         if ctx.shadow.changed_paths(passed, ctx.shadow.snapshot()):
             ctx.shadow.restore(passed)
         if found.status != "scan_only":
-            updates["agents"] = _used(state, "reviewer", found.steps, found.tokens_in, found.tokens_out, found.cost_usd)
+            updates["agents"] = _used(state, "reviewer", found.steps, found.tokens_in, found.tokens_out, _cost(ctx, found))
             if found.status != "ok":
                 ctx.event("strategy", f"The Reviewer did not finish ({found.error or found.status}); the notes are what a program found.")
         updates["review"] = [note.model_dump(mode="json") for note in found.notes]
@@ -434,13 +453,13 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             return {"correction": correction, "move": ""}
         n = state["n"]
         situation = _situation(ctx, state)
-        decision = await triage(situation, ctx.model, run_dir=ctx.run.path, budget=ctx.budget)
+        decision = await triage(situation, ctx.model_for("triage"), run_dir=ctx.run.path, budget=ctx.budget)
         updates: dict[str, Any] = {
             "move": decision.move,
             "decisions": [*state.get("decisions", []), decision.model_dump(mode="json")],
         }
         if decision.source == "model" or decision.rejected:
-            updates["agents"] = _used(state, "triage", decision.steps, decision.tokens_in, decision.tokens_out, decision.cost_usd)
+            updates["agents"] = _used(state, "triage", decision.steps, decision.tokens_in, decision.tokens_out, _cost(ctx, decision))
         if decision.rejected:
             ctx.event("strategy", decision.rejected)
         if decision.source == "model":
@@ -455,6 +474,10 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 terminal="needs_human" if only_unverified or state.get("app_error") else "failed_checks",
                 reason=f"Stopped after attempt {n}: {decision.reason}",
             )
+            # Out of money is its own ending: the work may be fine, there is nothing left to pay for the next turn.
+            used_up = ctx.spent(state.get("cost_usd", 0.0))
+            if used_up:
+                updates.update(terminal="budget_exhausted", reason=f"Stopped after attempt {n}: {used_up}.")
         elif decision.move == "rollback_and_retry":
             best = state.get("best")
             snapshots = state.get("snapshots", {})
@@ -489,7 +512,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         answer = answer if isinstance(answer, dict) else {}
         asked = state.get("asked", 0) + 1
         typed = str(answer.get("correction") or "").strip()
-        if typed and ctx.model is not None:
+        if typed and ctx.model_for("intent") is not None:
             return {"correction": typed, "asked": asked}
         if answer.get("stop"):
             return {"asked": asked, "terminal": "needs_human", "reason": f"Stopped at your request after attempt {n}."}
@@ -520,19 +543,21 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         )
         updates: dict[str, Any] = {}
         failures = _failures(shown)
-        if ctx.model is not None and failures and not app_error and not (ctx.budget is not None and ctx.budget.exhausted()):
+        diagnoser_model = ctx.model_for("diagnoser")
+        if diagnoser_model is not None and failures and not app_error and not (ctx.budget is not None and ctx.budget.exhausted()):
             ctx.event("phase-quiet", "Reading the code for the cause")
             found = await diagnose(
                 failures,
-                ctx.model,
+                diagnoser_model,
                 ctx.project,
                 intent=quoted_goal(contract.goal, contract.origin),
                 diff=ctx.shadow.diff(state["snapshots"]["0"], state["current"], max_chars=_DIFF_CHARS),
                 server_log=shown.server_log_tail,
                 run_dir=ctx.run.path,
                 budget=ctx.budget,
+                max_steps=_steps(ctx, "diagnoser", DEFAULT_DIAGNOSER_STEPS),
             )
-            updates["agents"] = _used(state, "diagnoser", found.steps, found.tokens_in, found.tokens_out, found.cost_usd)
+            updates["agents"] = _used(state, "diagnoser", found.steps, found.tokens_in, found.tokens_out, _cost(ctx, found))
             section = brief_section(found.brief)
             if section:
                 prompt += "\n\n" + section
@@ -641,21 +666,71 @@ def _start_app(ctx: RunContext, changed: list[str]) -> str | None:
     return None
 
 
-async def _ui_snapshot(ctx: RunContext) -> str:
+_PAGE_IN_GOAL = re.compile(r"(?<![\w:/.])/[a-z][\w.-]*(?:/[\w.-]+)*", re.IGNORECASE)
+MAX_GOAL_PAGES = 3
+
+
+def pages_in_goal(goal: str) -> list[str]:
+    """The paths a goal names (``/app/symptoms``), in order, at most three. Not ``and/or``, not a full URL."""
+    found: list[str] = []
+    for match in _PAGE_IN_GOAL.finditer(goal):
+        path = match.group(0).rstrip(".")
+        if path not in found:
+            found.append(path)
+    return found[:MAX_GOAL_PAGES]
+
+
+async def _sign_in_problem(ctx: RunContext) -> str | None:
+    """Why Contexer cannot sign in to the app as it is now, or None. Asked once, before anything is spent.
+
+    A run whose ``[auth]`` steps do not work cannot check anything, and no coding agent can repair that:
+    the steps and the test account are the person's. Without ``[auth]``, or when nothing runs yet, there
+    is nothing to ask.
+    """
+    if ctx.signed_in_checked:
+        return None
+    ctx.signed_in_checked = True
+    session = VerificationSession(ctx.project, ctx.run)
+    if session.auth is None or _start_app(ctx, []) is not None or ctx.app is None:
+        return None
+    await session.signed_in_state(ctx.app)
+    if session.sign_in_error is None:
+        return None
+    return (
+        f"Could not sign in with the [auth] flow in contexer.toml: {session.sign_in_error}. Nothing was built and "
+        "nothing was spent on the coding agent. Fix the [auth] steps or the test account, then run again "
+        "(what the browser showed: sign-in.jpg in the run folder)."
+    )
+
+
+async def _ui_snapshot(ctx: RunContext, goal: str = "") -> str:
     """What the app shows now: its roles, labels, placeholders and test ids. Empty when it does not run yet.
 
     Checks drafted without it invent names, and a coding agent told to make them pass renames the app to
-    fit. With it, the checks use the names that are there.
+    fit. With it, the checks use the names that are there. The app is read signed in when ``[auth]`` is
+    configured, and the pages the goal names are read too: a goal about ``/app/symptoms`` is not drafted
+    from the landing page.
     """
     if _start_app(ctx, []) is not None or ctx.app is None:
         ctx.event("app", "Nothing runs yet, so the checks are drafted from the goal alone.")
         return ""
+    session = VerificationSession(ctx.project, ctx.run)
     try:
-        seen = await VerificationSession(ctx.project, ctx.run).observe(ctx.app)
+        seen = await session.observe(ctx.app)
     except Exception as exc:  # a page that will not load must not stop the drafting
         ctx.event("app", f"The app could not be read before drafting: {exc}")
         return ""
-    return seen.ui_snapshot
+    parts = [seen.ui_snapshot]
+    state = await session.signed_in_state(ctx.app)
+    for path in pages_in_goal(goal):
+        try:
+            extra: dict[str, Any] = {"storage_state": state} if state is not None else {}
+            page = await session.observer.observe(ctx.app.url.rstrip("/") + path, screenshot=False, **extra)
+        except Exception:  # one page that will not load is not a reason to draft blind on the others
+            continue
+        if page.success and page.ui_snapshot.strip():
+            parts.append(f"The page at {path}:\n{page.ui_snapshot}")
+    return "\n\n".join(part for part in parts if part.strip())
 
 
 def _stored_contract(ctx: RunContext, contract_id: str) -> Contract | None:
@@ -697,6 +772,27 @@ def _attempts(state: LoopState) -> list[Attempt]:
 
 def _dump(attempts: list[Attempt]) -> list[dict[str, Any]]:
     return [a.model_dump(mode="json") for a in attempts]
+
+
+def _cost(ctx: RunContext, used: Any) -> float | None:
+    """What a call cost: the provider's figure, else the price at the project's rates, else unknown."""
+    if ctx.budget is None:
+        return used.cost_usd
+    return ctx.budget.cost_of(used.tokens_in, used.tokens_out, used.cost_usd)
+
+
+def _steps(ctx: RunContext, agent: str, default: int) -> int:
+    """The step cap the project set for an agent, or the agent's own."""
+    return ctx.settings.agent_steps.get(agent) or default
+
+
+def _budget_left(ctx: RunContext, agent_budget: float | None, spent: float) -> float | None:
+    """What the coding agent may still spend: the smaller of its own budget and the run's."""
+    left = None if agent_budget is None else agent_budget - spent
+    total = ctx.budget.total_left() if ctx.budget is not None else None
+    if total is None:
+        return left
+    return total if left is None else min(left, total)
 
 
 def _used(state: LoopState, agent: str, steps: int, tokens_in: int, tokens_out: int, cost: float | None) -> list[dict[str, Any]]:
@@ -758,7 +854,7 @@ def _situation(ctx: RunContext, state: LoopState) -> Situation:
     return Situation(
         attempts=views,
         rounds_left=ctx.settings.max_repair_rounds - (n - 1),
-        budget_left_usd=None if budget is None else budget - state.get("cost_usd", 0.0),
+        budget_left_usd=_budget_left(ctx, budget, state.get("cost_usd", 0.0)),
         best_attempt=state.get("best"),
         has_session=bool(state.get("session_id")),
         can_ask=ctx.can_ask,
@@ -816,7 +912,16 @@ def _outcome(ctx: RunContext, state: LoopState, attempts: list[Attempt]) -> RunO
         intent_id=state.get("intent_id") or "",
         corrections=list(state.get("corrections", [])),
         review=[ReviewNote.model_validate(note) for note in state.get("review", [])],
+        crew_cost_usd=_crew_cost(state),
+        crew_cost_estimated=bool(ctx.budget is not None and ctx.budget.estimated),
     )
+
+
+def _crew_cost(state: LoopState) -> float | None:
+    """The sum of what each of Contexer's agents cost, or None when no call has a known cost."""
+    costs = [row.get("cost_usd") for row in state.get("agents", [])]
+    known = [c for c in costs if c is not None]
+    return sum(known) if known else None
 
 
 def stopped_outcome(ctx: RunContext) -> RunOutcome:
