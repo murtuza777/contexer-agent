@@ -32,7 +32,7 @@ from contexer.controller.shared import ContractGuard
 from contexer.crew.budget import Budget
 from contexer.evidence.rundir import RUNS_DIR, RunDir
 from contexer.graph.build import CHECKPOINT_FILE, build_graph, step_limit
-from contexer.graph.context import STOPPED_FILE, AskFn, EventFn, RunContext, guard_digest
+from contexer.graph.context import STOPPED_FILE, AskFn, DetailFn, EventFn, RunContext, guard_digest
 from contexer.graph.nodes import stopped_outcome
 from contexer.graph.state import UNSCORED, LoopState
 from contexer.intent.store import IntentStore
@@ -60,12 +60,15 @@ class GraphController:
         corrections: Any = None,
         can_ask: bool | None = None,
         models: dict[str, BaseChatModel] | None = None,
+        on_detail: DetailFn | None = None,
     ) -> None:
         self.project = Path(project_dir).resolve()
         self.agent = agent
         self.settings = settings or RunSettings()
         self.url = url
         self.on_event = on_event or (lambda _kind, _msg: None)
+        # The same events with their data, for a live view or `--json`.
+        self.on_detail = on_detail
         self.runner = runner or CheckRunner(trace="on-failure")
         # The model for Contexer's own agents (Intent, Triage, Diagnoser). None: the rules decide.
         self.model = model
@@ -320,6 +323,7 @@ class GraphController:
             intents=IntentStore(self.project),
             runner=self.runner,
             on_event=self.on_event,
+            on_detail=self.on_detail,
             repo=RepositoryInspector().inspect(self.project),
             url=self.url,
             model=self.model,

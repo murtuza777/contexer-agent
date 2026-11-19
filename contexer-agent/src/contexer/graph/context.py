@@ -31,6 +31,32 @@ from contexer.verification.runner import CheckRunner
 from contexer.workflow.inspector import RepositoryContext
 
 EventFn = Callable[[str, str], None]
+
+
+@dataclass(frozen=True)
+class RunEvent:
+    """One thing that happened in a run, with the data a watcher needs to draw it.
+
+    ``kind`` and ``message`` are what the words-only stream (``EventFn``) carries. ``data`` is plain
+    values only. Kinds that have no words (``checks``, ``attempt-start``, ``end``) are sent here alone.
+    """
+
+    kind: str
+    message: str = ""
+    data: dict[str, Any] = field(default_factory=dict)
+    # Seconds since the run began.
+    at: float = 0.0
+
+    def as_json(self) -> dict[str, Any]:
+        """The event as one flat object: ``event``, ``at``, ``message`` when there is one, then its data."""
+        flat: dict[str, Any] = {"event": self.kind, "at": round(self.at, 2)}
+        if self.message:
+            flat["message"] = self.message
+        flat.update(self.data)
+        return flat
+
+
+DetailFn = Callable[[RunEvent], None]
 # A question for the person: an approval, or what to do next. Returns their answer.
 AskFn = Callable[[dict[str, Any]], dict[str, Any]]
 _RESULT_FILE = "run-result.json"
@@ -51,6 +77,7 @@ class RunContext:
     runner: CheckRunner
     on_event: EventFn
     repo: RepositoryContext | None = None
+    on_detail: DetailFn | None = None
     url: str | None = None
     model: BaseChatModel | None = None
     # A model for one agent by name, where the project chose one; the others use ``model``.
@@ -61,6 +88,8 @@ class RunContext:
     pending_correction: str | None = None
     # Whether this process has already asked if the [auth] sign-in works (it is asked once, before spending).
     signed_in_checked: bool = False
+    # The content hash of the contract whose checks were last announced to a view.
+    announced: str = ""
     guard: ContractGuard | None = None
     contract: Contract | None = None
     others: list[Contract] = field(default_factory=list)
@@ -85,8 +114,16 @@ class RunContext:
             return self.budget.exhausted() or "the run budget is used up"
         return ""
 
-    def event(self, kind: str, message: str) -> None:
+    def event(self, kind: str, message: str, **data: Any) -> None:
+        """Say what happened, in words for a log and with data for a view."""
         self.on_event(kind, message)
+        if self.on_detail is not None:
+            self.on_detail(RunEvent(kind, message, data, self.elapsed()))
+
+    def detail(self, kind: str, **data: Any) -> None:
+        """Something a view needs and a log does not: the list of checks, the start of an attempt, the end."""
+        if self.on_detail is not None:
+            self.on_detail(RunEvent(kind, "", data, self.elapsed()))
 
     def elapsed(self) -> float:
         return self.base_elapsed + (time.monotonic() - self.started)

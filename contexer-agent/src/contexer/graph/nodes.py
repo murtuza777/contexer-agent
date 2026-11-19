@@ -219,6 +219,8 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         n = state.get("n", 0) + 1
         fresh = state.get("fresh", True)
         doing = "implementing" if n == 1 else "repairing"
+        _announce_checks(ctx)
+        ctx.detail("attempt-start", n=n, doing=doing, fresh=bool(fresh and n > 1), agent=ctx.agent.describe())
         ctx.event("phase", f"Attempt {n}: {doing}{' (fresh session)' if fresh and n > 1 else ''} with {ctx.agent.describe()}")
         turn = await ctx.agent.run_turn(
             ctx.project,
@@ -255,7 +257,16 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             outcome="error",
             score=-(10**6),
         )
-        ctx.event("agent-done", turn_line(turn, changed))
+        ctx.event(
+            "agent-done",
+            turn_line(turn, changed),
+            n=n,
+            status=turn.status,
+            seconds=round(turn.duration_seconds, 1),
+            cost_usd=turn.cost_usd,
+            files=len(changed),
+            spent_usd=state.get("cost_usd", 0.0),
+        )
         updates: dict[str, Any] = {
             "snapshots": {**state.get("snapshots", {}), str(n): snapshot},
             "current": snapshot,
@@ -299,7 +310,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         folder = ctx.attempt_dir(n)
         error = state.get("app_error")
         if error is None and ctx.app is not None:
-            ctx.event("phase", f"Attempt {n}: proving {check_count(contracts)} checks in Chromium")
+            ctx.event("phase", f"Attempt {n}: proving {check_count(contracts)} checks in Chromium", n=n, proving=check_count(contracts))
             session = VerificationSession(ctx.project, folder, verifier=Verifier(llm_provider=None, runner=ctx.runner))
             result = await session.verify(ctx.app, contracts, judged_policy=ctx.settings.judged_policy)
         else:
@@ -331,7 +342,17 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         attempt.score = score(result, contract.id)
         sigs = signatures(result)
         attempt.signatures = sorted(sigs)
-        ctx.event("verdict", f"Attempt {n}: {result.decision.headline()}")
+        ctx.event(
+            "verdict",
+            f"Attempt {n}: {result.decision.headline()}",
+            n=n,
+            outcome=result.decision.outcome,
+            verified=result.decision.verified,
+            refuted=result.decision.refuted,
+            unverified=result.decision.unverified,
+            checks=_check_rows(result, contract.id),
+            others_failing=_others_failing(result, contract.id),
+        )
         updates: dict[str, Any] = {"elapsed": ctx.elapsed()}
 
         if result.decision.outcome == "pass":
@@ -424,7 +445,13 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         updates["review"] = [note.model_dump(mode="json") for note in found.notes]
         to_fix = found.blocking
         if found.notes:
-            ctx.event("review", f"Review: {len(found.notes)} note(s), {len(to_fix)} to fix")
+            ctx.event(
+                "review",
+                f"Review: {len(found.notes)} note(s), {len(to_fix)} to fix",
+                notes=len(found.notes),
+                to_fix=len(to_fix),
+                high=sum(1 for note in found.notes if note.severity == "high"),
+            )
 
         budget_left = ctx.settings.budget_usd is None or ctx.settings.budget_usd - state.get("cost_usd", 0.0) > 0
         if (
@@ -463,9 +490,11 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         if decision.rejected:
             ctx.event("strategy", decision.rejected)
         if decision.source == "model":
-            ctx.event("strategy", f"Triage: {MOVE_LABELS[decision.move]}. {decision.reason}")
+            ctx.event("strategy", f"Triage: {MOVE_LABELS[decision.move]}. {decision.reason}", move=decision.move, source="model", n=n)
         elif decision.move != "repair_same_session":
-            ctx.event("strategy", decision.reason)
+            ctx.event("strategy", decision.reason, move=decision.move, source="rules", n=n)
+        else:
+            ctx.detail("strategy", move=decision.move, source="rules", n=n)
 
         if decision.move == "stop":
             result = ctx.result(n)
@@ -604,6 +633,18 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         outcome.duration_seconds = ctx.elapsed()
         write_run_evidence(ctx.project, outcome, ctx.run)
         ctx.outcome = outcome
+        ctx.detail(
+            "end",
+            run_id=outcome.run_id,
+            terminal=terminal,
+            reason=reason,
+            attempts=len(attempts),
+            best_attempt=best,
+            cost_usd=outcome.cost_usd,
+            crew_cost_usd=outcome.crew_cost_usd,
+            seconds=round(outcome.duration_seconds, 1),
+            review_notes=len(outcome.review),
+        )
         return {"terminal": terminal, "reason": reason, "elapsed": outcome.duration_seconds}
 
     nodes: dict[str, Node] = {
@@ -772,6 +813,43 @@ def _attempts(state: LoopState) -> list[Attempt]:
 
 def _dump(attempts: list[Attempt]) -> list[dict[str, Any]]:
     return [a.model_dump(mode="json") for a in attempts]
+
+
+def _announce_checks(ctx: RunContext) -> None:
+    """Tell a view which checks decide this run, once for each version of the contract."""
+    contract = ctx.contract
+    if contract is None or ctx.announced == contract.content_hash():
+        return
+    ctx.announced = contract.content_hash()
+    ctx.detail(
+        "checks",
+        contract_id=contract.id,
+        goal=contract.goal,
+        checks=[{"id": c.id, "description": c.description, "executable": c.check is not None} for c in contract.criteria],
+        earlier_checks=check_count(ctx.others),
+    )
+
+
+def _check_rows(result: RunResult, contract_id: str) -> list[dict[str, Any]]:
+    """This run's own checks with their verdicts and what the browser saw, in the contract's order."""
+    rows: list[dict[str, Any]] = []
+    for outcome in result.contracts:
+        if outcome.contract.id != contract_id or outcome.verification is None:
+            continue
+        for r in outcome.verification.criteria_results:
+            rows.append({"id": r.criterion_id, "verdict": r.verdict, "evidence": " ".join(r.evidence.split())[:300]})
+    return rows
+
+
+def _others_failing(result: RunResult, contract_id: str) -> int:
+    """How many checks of earlier approved contracts did not hold: what this change broke elsewhere."""
+    return sum(
+        1
+        for outcome in result.contracts
+        if outcome.contract.id != contract_id and outcome.verification is not None
+        for r in outcome.verification.criteria_results
+        if r.verdict != "verified"
+    )
 
 
 def _cost(ctx: RunContext, used: Any) -> float | None:
