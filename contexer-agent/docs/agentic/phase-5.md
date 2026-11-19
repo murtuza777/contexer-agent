@@ -228,3 +228,8 @@ run as a separate review.
 The version is 0.5.0 in `pyproject.toml`. Not done: the tag, the PyPI
 upload under `contexer-agent`, a run on macOS, a run with Codex, and the
 rewrite of `docs/try-it.md` for the new flow.
+
+**After the phase: a readiness review.** An independent read of the code found
+several ways a secret could leak and a revert could lose files. What was
+fixed, what is open, the monitoring that exists and the agents worth adding
+next are in [readiness.md](readiness.md).

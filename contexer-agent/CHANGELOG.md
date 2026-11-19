@@ -5,6 +5,31 @@
 Work on the [agentic harness](docs/agentic/architecture.md) starts here.
 Phase 0 adds the foundations; no agent ships yet.
 
+### Security
+
+Found by an independent review of the code before release; details and what
+is still open are in [docs/agentic/readiness.md](docs/agentic/readiness.md).
+
+- A check step reads only `CONTEXER_TEST_*` and the variables `[auth]` names
+  from the environment, and a replayed `goto` cannot leave the app. **This
+  can break a hand-written contract** that types another `${NAME}`.
+- The dev server, the dependency install and `[app] reset` get no repository
+  token. The project `.env` is read once and cannot set the names that steer
+  git or the GitHub client.
+- What git ignored stays out of snapshots whatever happens to `.gitignore`;
+  a revert no longer deletes an ignored file.
+- A change that adds a secret is committed locally and never pushed.
+- Checks approved with `--yes` are recorded as not reviewed by a person, and
+  the pull request is a draft that says so.
+
+### Added (reliability)
+
+- `accept_dialog` and `dismiss_dialog` steps: a check can answer a browser
+  confirmation, and one nobody answered is named in the failure.
+- One run at a time per project; a plain message for a failed snapshot, a
+  missing git or a port already in use.
+- `contexer runs --stats`: how runs ended and what a proven run cost.
+
 ### Changed
 
 - **The graph engine is the default** for `contexer run` and `contexer
