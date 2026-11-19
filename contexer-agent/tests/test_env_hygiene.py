@@ -40,7 +40,8 @@ def test_the_dev_server_and_the_install_get_that_environment(monkeypatch: pytest
     server = DevServer.__new__(DevServer)
     server.plan = SimpleNamespace(env={"PORT": "5173"})  # type: ignore[assignment]
     env = server._env()
-    assert not (set(env) & REPOSITORY_TOKENS) and env["PORT"] == "5173" and env["CI"] == "1"
+    assert not (set(env) & REPOSITORY_TOKENS)
+    assert env["PORT"] == "5173" and env["CI"]  # CI is set, to whatever the machine already says (Actions: "true")
 
 
 def test_the_reset_command_gets_that_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
