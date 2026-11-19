@@ -26,10 +26,18 @@ from contexer.cli.gate_cli import (
     print_drafted_by,
     warn_if_weak_draft,
 )
-from contexer.config.project import AgentSettings, ProjectConfigError, load_project_config, load_project_env
+from contexer.config.project import (
+    CREW_AGENTS,
+    AgentSettings,
+    ProjectConfig,
+    ProjectConfigError,
+    load_project_config,
+    load_project_env,
+)
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.controller import Engine, RunController, RunOutcome, RunSettings
 from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
+from contexer.crew.estimate import RunEstimate, estimate_run
 from contexer.evidence import RunDir
 from contexer.gate import RunResult
 from contexer.gate.session import VerificationSession
@@ -41,7 +49,12 @@ from contexer.llm import discovery
 from contexer.riskscan import scan_project
 from contexer.workflow.criteria import GoalAnalyzer
 
-_VERDICT = {"PASS": ("pass", "green"), "FAIL": ("fail", "red"), "NEEDS ACTION": ("open", "yellow"), "ERROR": ("fail", "red")}
+_VERDICT = {
+    "PASS": ("pass", "green"),
+    "FAIL": ("fail", "red"),
+    "NEEDS ACTION": ("open", "yellow"),
+    "ERROR": ("fail", "red"),
+}
 
 
 def run(
@@ -56,16 +69,30 @@ def run(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve the checklist without asking."),
     no_replay: bool = typer.Option(False, "--no-replay", help="Skip re-checking other approved contracts."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
-    pr: bool = typer.Option(False, "--pr", help="Commit the result to a new branch and open a pull request with the evidence."),
-    issue: int | None = typer.Option(None, "--issue", min=1, help="Take the goal from this GitHub issue; the pull request closes it."),
+    pr: bool = typer.Option(
+        False, "--pr", help="Commit the result to a new branch and open a pull request with the evidence."
+    ),
+    issue: int | None = typer.Option(
+        None, "--issue", min=1, help="Take the goal from this GitHub issue; the pull request closes it."
+    ),
     engine: str | None = typer.Option(
         None, "--engine", help="graph (can wait for you, stop and resume) or classic (default). Also CONTEXER_ENGINE."
     ),
-    resume: str | None = typer.Option(None, "--resume", metavar="RUN", help="Continue a stopped run of the graph engine."),
+    resume: str | None = typer.Option(
+        None, "--resume", metavar="RUN", help="Continue a stopped run of the graph engine."
+    ),
+    max_usd: float | None = typer.Option(
+        None,
+        "--max-usd",
+        min=0.01,
+        help="Graph engine: one budget in USD for the coding agent and Contexer's agents together.",
+    ),
     no_review: bool = typer.Option(
         False, "--no-review", help="Graph engine: do not read the diff of a passing run before it ends."
     ),
-    correct: str | None = typer.Option(None, "--correct", help="With --resume: a correction to what done means, applied first."),
+    correct: str | None = typer.Option(
+        None, "--correct", help="With --resume: a correction to what done means, applied first."
+    ),
 ) -> None:
     """Turn a goal into approved checks, have a coding agent build it, prove it, and repair until it passes."""
     if sum((bool(goal), bool(contract_id), issue is not None, bool(resume))) != 1:
@@ -110,9 +137,20 @@ def run(
             judged_policy=config.gate.judged,
             replay_others=not no_replay,
             review=not no_review,
+            agent_steps={name: cap for name in CREW_AGENTS if (cap := config.agents.for_agent(name).max_steps)},
         )
-        crew_budget = Budget(max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=config.limits.cost_usd)
+        crew_budget = run_budget(config, max_usd)
         model_for_crew = crew_model(project)
+        models_for_crew = (
+            crew_models(
+                project,
+                config,
+                default_provider=config.compiler.provider,
+                on_problem=lambda text: term.note(console, "warn", escape(text)),
+            )
+            if model_for_crew is not None
+            else {}
+        )
         draft_id = None
         contract = None
         graph_preview: RunResult | None = None
@@ -140,6 +178,7 @@ def run(
             settings,
             url,
             model=model_for_crew,
+            models=models_for_crew,
             budget=crew_budget,
             yes=yes,
             contract=contract,
@@ -240,15 +279,91 @@ def crew_model(project: Path) -> Any:
         return None
 
 
+def run_budget(config: ProjectConfig, max_usd: float | None = None) -> Budget:
+    """The budget of one run: the token limit, the project's rates, and the one budget in dollars (the flag wins)."""
+    return Budget(
+        max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS,
+        max_cost_usd=config.limits.cost_usd,
+        max_total_usd=max_usd if max_usd is not None else config.agents.max_usd,
+        input_usd_per_mtok=config.agents.input_usd_per_mtok,
+        output_usd_per_mtok=config.agents.output_usd_per_mtok,
+    )
+
+
+def crew_models(
+    project: Path,
+    config: ProjectConfig,
+    *,
+    default_provider: str | None = None,
+    on_problem: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
+    """A model for each agent the project names one for. An agent whose model cannot be built uses the default."""
+    from contexer.cli import test_cli
+    from contexer.llm.base import LLMError
+
+    models: dict[str, Any] = {}
+    for name in CREW_AGENTS:
+        chosen = config.agents.for_agent(name)
+        if not chosen.model:
+            continue
+        try:
+            models[name] = test_cli.build_model(project, chosen.provider or default_provider, chosen.model)
+        except (LLMError, ValueError) as exc:
+            if on_problem is not None:
+                on_problem(
+                    f"The model '{chosen.model}' for {name} cannot be used ({exc}); {name} runs on the default model."
+                )
+    return models
+
+
+def bill_line(outcome: RunOutcome) -> str:
+    """What Contexer's own agents used, per agent, and what it cost when that is known. '' when none ran."""
+    if not outcome.agents:
+        return ""
+    parts = [f"{a.agent} {a.tokens_in + a.tokens_out:,} tokens" for a in outcome.agents]
+    if outcome.crew_cost_usd is None:
+        cost = "cost not reported by the provider (set [agents] input_usd_per_mtok to price it)"
+    else:
+        cost = f"${outcome.crew_cost_usd:.2f}" + (
+            " estimated from the configured rates" if outcome.crew_cost_estimated else ""
+        )
+    return " · ".join(parts) + f" · {cost}"
+
+
+def _run_budget_note(budget: Budget | None) -> str:
+    if budget is None or budget.max_total_usd is None:
+        return ""
+    return f" · one budget of ${budget.max_total_usd:.2f} for the coding agent and Contexer's agents"
+
+
+def _estimate(settings: RunSettings, budget: Budget | None, has_model: bool, drafts_checks: bool) -> RunEstimate:
+    return estimate_run(
+        rounds=settings.max_repair_rounds,
+        has_model=has_model,
+        drafts_checks=drafts_checks,
+        review=settings.review,
+        diagnoser_steps=settings.agent_steps.get("diagnoser", 15),
+        reviewer_steps=settings.agent_steps.get("reviewer", 12),
+        input_usd_per_mtok=budget.input_usd_per_mtok if budget is not None else None,
+        output_usd_per_mtok=budget.output_usd_per_mtok if budget is not None else None,
+    )
+
+
 def _limits_line(agent: CodingAgentAdapter, settings: RunSettings) -> str:
     limits = f"up to {settings.max_repair_rounds} repair round(s)"
     if settings.budget_usd:
         # Codex reports tokens, not cost: the round and time limits bound its runs instead.
-        limits += " · no spending limit (Codex reports no cost)" if agent.name == "codex" else f" · budget ${settings.budget_usd:.2f}"
+        limits += (
+            " · no spending limit (Codex reports no cost)"
+            if agent.name == "codex"
+            else f" · budget ${settings.budget_usd:.2f}"
+        )
     return limits
 
 
-def _progress(console: Console, activity: term.Activity, on_progress: Callable[[str, str], None] | None = None) -> Callable[[str, str], None]:
+def _progress(
+    console: Console, activity: term.Activity, on_progress: Callable[[str, str], None] | None = None
+) -> Callable[[str, str], None]:
     """Print a run's events as they happen."""
     tool_calls = 0
 
@@ -311,7 +426,9 @@ def _asker(console: Console, activity: term.Activity, yes: bool) -> Callable[[di
             if yes:
                 return {"approve": True}
             typed = typer.prompt(
-                "Approve these checks as the definition of done? [y/n, or type what to change]", default="n", show_default=False
+                "Approve these checks as the definition of done? [y/n, or type what to change]",
+                default="n",
+                show_default=False,
             ).strip()
             if typed.lower() in ("y", "yes"):
                 return {"approve": True}
@@ -325,7 +442,9 @@ def _asker(console: Console, activity: term.Activity, yes: bool) -> Callable[[di
         if failing:
             console.print(f"  [dim]Failing: {escape(', '.join(failing))}[/]")
         console.print()
-        typed = typer.prompt("Your answer (Enter lets the run decide, `stop` ends it)", default="", show_default=False).strip()
+        typed = typer.prompt(
+            "Your answer (Enter lets the run decide, `stop` ends it)", default="", show_default=False
+        ).strip()
         if typed.lower() == "stop":
             return {"stop": True}
         return {"answer": typed}
@@ -351,6 +470,7 @@ def execute_graph(
     correction: str | None = None,
     on_progress: Callable[[str, str], None] | None = None,
     origin: str = "",
+    models: dict[str, Any] | None = None,
 ) -> RunOutcome:
     """A run on the graph engine: it can wait for an approval or an answer, be stopped, and be resumed."""
     from contexer.cli.test_cli import is_interactive
@@ -370,7 +490,11 @@ def execute_graph(
             ("Agent", escape(agent.describe())),
             ("Engine", "graph"),
             ("Decisions", decides),
-            ("Limits", _limits_line(agent, settings)),
+            ("Limits", _limits_line(agent, settings) + _run_budget_note(budget)),
+            (
+                "Estimate",
+                escape(_estimate(settings, budget, model is not None, contract is None and not resume).describe()),
+            ),
         ],
     )
     activity = term.Activity(console)
@@ -385,6 +509,7 @@ def execute_graph(
         # Triage may stop to ask only when a person is at the terminal; an approval is always asked for.
         can_ask=not yes and is_interactive(),
         budget=budget,
+        models=models,
     )
     try:
         if resume:
@@ -392,7 +517,9 @@ def execute_graph(
         elif contract is not None:
             outcome = asyncio.run(controller.run(contract, others))
         else:
-            outcome = asyncio.run(controller.run_goal(goal or "", others=others, contract_id=contract_id, origin=origin))
+            outcome = asyncio.run(
+                controller.run_goal(goal or "", others=others, contract_id=contract_id, origin=origin)
+            )
     except ResumeError as exc:
         activity.stop()
         term.note(console, "fail", f"[red]Cannot resume:[/] {escape(str(exc))}")
@@ -420,7 +547,9 @@ def execute_run(
     on_progress: Callable[[str, str], None] | None = None,
 ) -> RunOutcome:
     """Drive the agent to the approved contract, printing progress; Ctrl+C ends in a "cancelled" outcome."""
-    others = [c for c in store.list() if c.id != contract.id and c.status == "approved"] if settings.replay_others else []
+    others = (
+        [c for c in store.list() if c.id != contract.id and c.status == "approved"] if settings.replay_others else []
+    )
     limits = _limits_line(agent, settings)
     term.header(console, "run", contract.goal.splitlines()[0] if contract.goal else contract.id)
     term.fields(
@@ -537,7 +666,11 @@ def _approve(
 def check_free_quota(console: Console, drafting: Any, agent: CodingAgentAdapter, yes: bool) -> None:
     """Say before the run, not halfway through it, when OpenRouter's free requests are about to run out."""
     users = []
-    if drafting is not None and getattr(drafting, "provider_name", "") == "openrouter" and discovery.is_free_model(drafting.model):
+    if (
+        drafting is not None
+        and getattr(drafting, "provider_name", "") == "openrouter"
+        and discovery.is_free_model(drafting.model)
+    ):
         users.append("drafting")
     if getattr(agent, "provider", "") == "openrouter" and discovery.is_free_model(getattr(agent, "model_id", "")):
         users.append("the coding agent")
@@ -552,7 +685,9 @@ def check_free_quota(console: Console, drafting: Any, agent: CodingAgentAdapter,
         f"(the count resets at 00:00 UTC). This run uses them for {' and '.join(users)}; a small change took "
         "about 15 in our runs, a larger one can take 40 or more."
     )
-    remedy = "Buying $10 of OpenRouter credit raises the limit to 1,000 a day, or `contexer setup` picks another provider."
+    remedy = (
+        "Buying $10 of OpenRouter credit raises the limit to 1,000 a day, or `contexer setup` picks another provider."
+    )
     console.print()
     if quota.remaining <= 0:
         term.note(console, "fail", "[bold red]No free requests left today[/]")
@@ -580,7 +715,16 @@ def choose_agent(project: AgentSettings, flag_name: str | None, flag_model: str 
 
 
 _RATE_LIMITED = ("rate limit", "too many requests", "429")
-_ACCOUNT_PROBLEMS = ("credit balance", "credits", "unauthorized", "401", "authentication", "api key", "not logged in", "login")
+_ACCOUNT_PROBLEMS = (
+    "credit balance",
+    "credits",
+    "unauthorized",
+    "401",
+    "authentication",
+    "api key",
+    "not logged in",
+    "login",
+)
 
 
 def agent_hint(outcome: RunOutcome) -> str | None:
@@ -623,14 +767,20 @@ def _render(
 
     rows: list[tuple[str, str]] = []
     for a in outcome.attempts:
-        counts = f"{a.verified} verified · {a.refuted} refuted · {a.unverified} unverified" if a.outcome != "error" else "the app did not run"
+        counts = (
+            f"{a.verified} verified · {a.refuted} refuted · {a.unverified} unverified"
+            if a.outcome != "error"
+            else "the app did not run"
+        )
         kept = " [dim](kept)[/]" if a.n == outcome.best_attempt and len(outcome.attempts) > 1 else ""
         fresh = " [dim](fresh session)[/]" if a.fresh_session and a.n > 1 else ""
         note = f" [dim]· {escape(a.note)}[/]" if a.note else ""
         rows.append((f"Attempt {a.n}", f"{a.kind}{fresh} · {counts}{kept}{note}"))
     if handoff is not None:
         if handoff.is_pull_request:
-            rows.append(("Draft pull request" if handoff.draft else "Pull request", f"[bold]{escape(handoff.url or '')}[/]"))
+            rows.append(
+                ("Draft pull request" if handoff.draft else "Pull request", f"[bold]{escape(handoff.url or '')}[/]")
+            )
         elif handoff.url:
             rows.append(("Pull request", f"open it at {escape(handoff.url)}"))
         rows.append(("Branch", f"{escape(handoff.branch)} [dim]({handoff.commit[:8]}, you are on it now)[/]"))
@@ -643,6 +793,9 @@ def _render(
     rows.append(("Report", escape(term.path(Path(outcome.run_dir, "report.html")))))
     spend = f" · ${outcome.cost_usd:.2f} agent spend" if outcome.cost_usd else ""
     rows.append(("Took", f"{term.duration(outcome.duration_seconds)}{spend}"))
+    bill = bill_line(outcome)
+    if bill:
+        rows.append(("Contexer's agents", escape(bill)))
     hint = agent_hint(outcome)
     if hint:
         rows.append(("Next", f"[yellow]{escape(hint)}[/]"))
