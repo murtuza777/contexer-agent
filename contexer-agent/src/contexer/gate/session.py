@@ -25,6 +25,7 @@ from contexer.gate.models import ContractOutcome, GateDecision, JudgedPolicy, Ru
 from contexer.observer.browser import browser_problem
 from contexer.observer.models import BrowserObservation
 from contexer.observer.playwright import PlaywrightObserver
+from contexer.verification.checks import allow_secret_names
 from contexer.verification.runner import SignInError
 from contexer.verification.verifier import Verifier
 from contexer.workflow.criteria import GoalAnalyzer
@@ -71,6 +72,8 @@ class VerificationSession:
         self.reset: str | None = config.app.reset if config else None
         self._app_env: dict[str, str] = dict(config.app.env) if config else {}
         load_project_env(self.project_dir)  # [auth] secrets can live in the project's .env
+        if self.auth is not None:
+            allow_secret_names(self.auth.as_check().secrets())  # what the person's own sign-in steps name
         self._started = time.monotonic()
         self._started_at = utc_now()
         self.load: BrowserObservation | None = None

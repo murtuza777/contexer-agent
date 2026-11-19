@@ -11,11 +11,12 @@ import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from contexer.observer.playwright import capture_ui_snapshot, record_console_error
 from contexer.verification.checks import (
     DIALOG_ACTIONS,
+    TEST_SECRET_PREFIX,
     UNANSWERED_DIALOG,
     Check,
     CheckResult,
@@ -24,8 +25,10 @@ from contexer.verification.checks import (
     Locator,
     MissingSecretError,
     Step,
+    allow_secret_names,
     expand_secrets,
     redact,
+    secret_allowed,
 )
 
 if TYPE_CHECKING:
@@ -139,6 +142,7 @@ class CheckRunner:
         :class:`SignInError` with the failure report when the flow's
         expectations do not hold.
         """
+        allow_secret_names(flow.secrets())  # the sign-in steps come from contexer.toml, which the person wrote
         from playwright.async_api import async_playwright
 
         async with async_playwright() as p:
@@ -262,6 +266,13 @@ class CheckRunner:
                 duration_seconds=time.monotonic() - started,
             ).redacted(secret_values)
 
+        refused = [name for name in check.secrets() if not secret_allowed(name)]
+        if refused:
+            return finish(
+                False,
+                failed_step=f"${{{refused[0]}}} may not be used in a check: only {TEST_SECRET_PREFIX}* and the names in "
+                "[auth] of contexer.toml are read from the environment",
+            ), None
         missing = [name for name in check.secrets() if name not in os.environ]
         if missing:
             return finish(False, failed_step=f"secret(s) not set: {', '.join(missing)} (set them in the environment or .env)"), None
@@ -372,7 +383,12 @@ class CheckRunner:
             await page.wait_for_timeout(int(value))
             return
         if step.action == "goto":
-            await page.goto(urljoin(base_url, value), wait_until="load", timeout=self.navigation_timeout * 1000)
+            address = urljoin(base_url, value)
+            if _site(address) != _site(base_url):
+                # A check proves the app it was started on. An address elsewhere proves nothing about it, and
+                # is how a check written by a steered model would send something out.
+                raise ValueError(f"goto would open another site ({_site(address)}); a check stays on the app under test")
+            await page.goto(address, wait_until="load", timeout=self.navigation_timeout * 1000)
             return
         if step.target is None:  # validation guarantees this is a target-less "press"
             await page.keyboard.press(value)
@@ -575,3 +591,12 @@ def _short(exc: BaseException) -> str:
 
 
 short_error = _short
+
+
+def _site(address: str) -> str:
+    """Scheme, host and port of an address; ``localhost`` and ``127.0.0.1`` are the same machine."""
+    parts = urlsplit(address)
+    host = (parts.hostname or "").lower()
+    host = "localhost" if host in ("127.0.0.1", "::1") else host
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    return f"{parts.scheme}://{host}:{port}"

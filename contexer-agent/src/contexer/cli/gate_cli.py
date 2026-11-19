@@ -216,6 +216,9 @@ async def preview_draft(session: VerificationSession, app: RunningApp, contract:
     """Run a draft's checks once on the app as it is now, so its reviewer sees how they fare."""
     if not any(c.check for c in contract.criteria):
         return None
+    if contract.origin.strip():
+        # Drafted from text anyone could write (an issue). Its steps are not run until a person has approved them.
+        return None
     try:
         return await session.verify(app, [contract], require_approval=False)
     except Exception:  # a preview must never cost the user their draft

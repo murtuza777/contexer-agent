@@ -160,6 +160,9 @@ async def test_typed_secrets_never_reach_the_evidence(tmp_path: Path, monkeypatc
     (tmp_path / "index.html").write_text(FORM, encoding="utf-8")
     monkeypatch.setenv("SNAP_PASSWORD", "hunter2-pass")
     monkeypatch.setenv("SNAP_TOKEN", "tok-9f8e7d")
+    from contexer.verification.checks import allow_secret_names
+
+    allow_secret_names(["SNAP_PASSWORD", "SNAP_TOKEN"])  # as a project that names them in [auth] would
     check = Check.model_validate(
         {
             "steps": [

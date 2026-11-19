@@ -64,3 +64,14 @@ def _isolated_user_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatc
     yield
     os.environ.clear()
     os.environ.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def _forget_allowed_secret_names():
+    """What one test let checks read from the environment must not carry over to the next."""
+    from contexer.verification import checks
+
+    before = set(checks._allowed_secret_names)
+    yield
+    checks._allowed_secret_names.clear()
+    checks._allowed_secret_names.update(before)

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -335,12 +336,42 @@ class MissingSecretError(ValueError):
     """A ``${NAME}`` placeholder refers to an environment variable that is not set."""
 
 
+class SecretNotAllowedError(MissingSecretError):
+    """A ``${NAME}`` placeholder names an environment variable a check may not read."""
+
+
+# Checks are also written by models, from goals that can come from an issue, and by the Tester while it reads
+# a page. A check that could read any variable could type a model key or a repository token into the page, or
+# put it in an address. So only these are expanded from the real environment: names that start with the
+# prefix, and the names the project's own sign-in steps use (added by ``allow_secret_names``).
+TEST_SECRET_PREFIX = "CONTEXER_TEST_"
+_allowed_secret_names: set[str] = set()
+
+
+def allow_secret_names(names: Iterable[str]) -> None:
+    """Let checks read these environment variables: the ones ``[auth]`` in contexer.toml names."""
+    _allowed_secret_names.update(names)
+
+
+def secret_allowed(name: str) -> bool:
+    return name.startswith(TEST_SECRET_PREFIX) or name in _allowed_secret_names
+
+
 def expand_secrets(value: str, env: dict[str, str] | None = None) -> str:
-    """Replace ``${NAME}`` with the environment variable's value (never stored in contracts)."""
+    """Replace ``${NAME}`` with the environment variable's value (never stored in contracts).
+
+    Against the real environment only the allowed names are read (see ``allow_secret_names``). A mapping
+    passed in is the caller's own and is used as it is.
+    """
     source = os.environ if env is None else env
 
     def lookup(match: re.Match[str]) -> str:
         name = match.group(1)
+        if env is None and not secret_allowed(name):
+            raise SecretNotAllowedError(
+                f"${{{name}}} may not be used in a check: only {TEST_SECRET_PREFIX}* and the names in [auth] of "
+                "contexer.toml are read from the environment"
+            )
         if name not in source:
             raise MissingSecretError(f"environment variable {name} is not set")
         return source[name]
