@@ -200,7 +200,7 @@ def changed_files(diff: str) -> list[str]:
     return list(dict.fromkeys(f.path for f in _parse(diff) if f.path))
 
 
-def _secret_in(line: str) -> str:
+def secret_kind(line: str) -> str:
     """What kind of secret ``line`` holds, or ''. The value itself is never returned."""
     for label, pattern in _KNOWN_SECRETS:
         if pattern.search(line):
@@ -236,7 +236,7 @@ def prescan(diff: str) -> list[ReviewNote]:
                 add(file.path, 0, "high", "security", "An environment file is part of the change. They hold secrets and do not belong in a commit.")
             continue
         for line, text in file.added:
-            found = _secret_in(text)
+            found = secret_kind(text)
             if found:
                 add(
                     file.path, line, "high", "security",

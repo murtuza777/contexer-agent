@@ -38,6 +38,7 @@ from contexer.github.handoff import Handoff, HandoffError, HandoffPlan, hand_off
 from contexer.github.issues import ISSUE_ORIGIN
 from contexer.graph import GraphController, ResumeError
 from contexer.llm import discovery
+from contexer.riskscan import scan_project
 from contexer.workflow.criteria import GoalAnalyzer
 
 _VERDICT = {"PASS": ("pass", "green"), "FAIL": ("fail", "red"), "NEEDS ACTION": ("open", "yellow"), "ERROR": ("fail", "red")}
@@ -81,6 +82,8 @@ def run(
     unsafe = unsafe_work_tree(project)
     if unsafe:
         raise typer.BadParameter(f"{unsafe}; run Contexer in your app's folder, or pass --dir")
+    for risk in scan_project(project):  # before anything is spent; a warning, never a refusal
+        term.note(console, "warn", escape(risk.message))
     pr = pr or issue is not None  # work on an issue ends in a pull request that closes it
     handoff_plan: HandoffPlan | None = None
     if pr:
