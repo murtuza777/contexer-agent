@@ -86,9 +86,26 @@ def command_for(event_name: str, event: dict[str, Any], label: str = DEFAULT_LAB
     return "ignore", number, ""
 
 
+_HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
+# Zero-width and direction characters: invisible on the page, read by a model.
+_INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+
+
+def visible_text(text: str) -> str:
+    """``text`` without what GitHub does not show: HTML comments and invisible characters."""
+    cleaned = _INVISIBLE.sub("", _HTML_COMMENT.sub("", text))
+    lines = [line.rstrip() for line in cleaned.splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
 def issue_goal(issue: dict[str, Any]) -> str:
-    title = str(issue.get("title") or "").strip()
-    body = str(issue.get("body") or "").strip()
+    """The goal an issue states: its title and text as a person reading the issue sees them.
+
+    The person who approves the checks reads the rendered issue. Text that does not render there
+    would reach the agents without anyone having seen it, so it is removed first.
+    """
+    title = visible_text(str(issue.get("title") or ""))
+    body = visible_text(str(issue.get("body") or ""))
     return f"{title}\n\n{body[:4000]}".strip()
 
 
@@ -147,6 +164,10 @@ def draft_comment(
     lines += [
         "Contexer drafted these checks from the issue. Each one runs in a real browser against the app.",
         "",
+        "The goal, exactly as the agents will read it (anything hidden in the issue was removed):",
+        "",
+        *[f"> {line}" if line.strip() else ">" for line in contract.goal.strip()[:3000].splitlines()],
+        "",
         "| | Check | On the app today |",
         "|---|---|---|",
     ]
@@ -178,12 +199,19 @@ def draft_comment(
     return "\n".join(lines) + "\n"
 
 
-def find_draft(comments: list[dict[str, Any]]) -> tuple[dict[str, Any], Contract, bool]:
-    """The newest Contexer draft on the issue: (comment, contract, edited since drafting)."""
+def find_draft(comments: list[dict[str, Any]], own: str = "") -> tuple[dict[str, Any], Contract, bool]:
+    """The newest Contexer draft on the issue: (comment, contract, edited since drafting).
+
+    ``own`` is the login Contexer's token posts as. Only that account's comment is a draft: with a
+    personal token that is a person, in Actions it is ``github-actions[bot]``. When the login is not
+    known, a comment by any bot is taken, as before.
+    """
     for comment in reversed(comments):
         body = str(comment.get("body") or "")
         marker = _DRAFT.search(body)
-        if marker is None or (comment.get("user") or {}).get("type") != "Bot":
+        author = comment.get("user") or {}
+        ours = (str(author.get("login") or "").lower() == own.lower()) if own else author.get("type") == "Bot"
+        if marker is None or not ours:
             continue
         block = _JSON_BLOCK.search(body, marker.end())
         if block is None:

@@ -111,6 +111,17 @@ class GitHubClient:
     def edit_comment(self, comment_id: int, body: str) -> dict[str, Any]:
         return self._request("PATCH", f"/repos/{self.repo}/issues/comments/{comment_id}", {"body": body})
 
+    def identity(self) -> str:
+        """The login this token posts as, or '' when it cannot be told.
+
+        A personal token answers ``/user``. The token Actions provides does not, and posts as
+        ``github-actions[bot]``.
+        """
+        try:
+            return str(self._request("GET", "/user").get("login") or "")
+        except GitHubError:
+            return "github-actions[bot]" if os.environ.get("GITHUB_ACTIONS") == "true" else ""
+
     def permission(self, user: str) -> str:
         """``admin``, ``maintain``, ``write``, ``triage``, ``read`` or ``none``."""
         data = self._request("GET", f"/repos/{self.repo}/collaborators/{user}/permission")

@@ -7,6 +7,9 @@ These are what CI and scripts call. Exit codes are part of the interface:
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+import subprocess
 import sys
 import webbrowser
 from pathlib import Path
@@ -128,12 +131,57 @@ def replay(
     )
 
 
+def changed_since_base(project_dir: Path, contracts: list[Contract], base_ref: str) -> list[str]:
+    """A warning for each contract whose approved content differs from the same file on ``base_ref``.
+
+    An approval is a hash of the goal and the checks, and whoever edits the file can recompute it. So a pull
+    request can drop a check and still show as approved. The gate cannot know whether the change was meant;
+    it can say that it happened, so that the person reviewing reads the contract's diff. A contract the base
+    does not have is not listed: a new contract weakens nothing.
+    """
+    project = Path(project_dir).resolve()
+    warnings: list[str] = []
+    try:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=project, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return warnings
+    if top.returncode != 0:
+        return warnings
+    root = Path(top.stdout.strip()).resolve()
+    store = ContractStore(project)
+    for contract in contracts:
+        try:
+            relative = store.path_for(contract.id).resolve().relative_to(root).as_posix()
+            shown = subprocess.run(
+                ["git", "show", f"{base_ref}:{relative}"], cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=30
+            )
+            if shown.returncode != 0:
+                continue  # not on the base, or no such base here
+            before = Contract.model_validate(json.loads(shown.stdout))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            continue
+        if before.content_hash() != contract.content_hash():
+            warnings.append(
+                f"[{contract.id}] changed in this pull request: {len(before.criteria)} check(s) on {base_ref}, "
+                f"{len(contract.criteria)} now. An approval can be recomputed by whoever edits the file, so read the "
+                "contract's diff before relying on this result."
+            )
+    return warnings
+
+
 def _report_to_github(result: RunResult, console: Console, project_dir: Path, *, post: bool) -> None:
     from contexer.github import GitHubReportError, detect_target, post_status, write_step_summary
 
     summary = write_step_summary(result)
     if summary is not None:
         console.print(f"[dim]Job summary written to {escape(str(summary))}[/]")
+    base = os.environ.get("GITHUB_BASE_REF", "").strip()
+    changed = changed_since_base(project_dir, [o.contract for o in result.contracts], f"origin/{base}") if base else []
+    for warning in changed:
+        term.note(console, "warn", escape(warning))
+    if changed and summary is not None:
+        with open(summary, "a", encoding="utf-8") as fh:
+            fh.write("\n### Contracts changed in this pull request\n\n" + "\n".join(f"- {w}" for w in changed) + "\n")
     if not post:
         return
     try:

@@ -11,6 +11,7 @@ import asyncio
 import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -121,6 +122,9 @@ def build(
     rounds: int | None = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
     budget: float | None = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
     engine: str | None = typer.Option(None, "--engine", help="graph (default) or classic. Also CONTEXER_ENGINE."),
+    approved_at: str | None = typer.Option(
+        None, "--approved-at", help="When the approval was given (ISO time). Checks that changed after it are not built."
+    ),
 ) -> None:
     """Approve the checks drafted on an issue in BY's name, build them, and open a pull request that closes it."""
     console = Console()
@@ -140,7 +144,12 @@ def build(
         if role not in WRITE_ROLES:
             _stop(console, client, number, f"@{by}, only people with write access can approve Contexer's checks.", 2)
         try:
-            _comment, contract, edited = find_draft(client.comments(number))
+            draft_at, contract, edited = find_draft(client.comments(number), own=client.identity())
+            if changed_after(draft_at, approved_at):
+                raise IssueFlowError(
+                    f"The checks changed after @{by} approved them, so that approval does not cover what is here now. "
+                    "Read the current draft, then reply `/contexer approve` again."
+                )
             plan = plan_handoff(project)
             agent = create_agent(*choose_agent(config.agent, agent_name, model))
         except (IssueFlowError, HandoffError, ValueError) as exc:
@@ -216,10 +225,22 @@ def event(
     if command == "draft":
         draft(number, project_dir, None)
     else:
-        build(number, who, project_dir, agent_name, model, None, None, None)
+        said_at = str((payload.get("comment") or {}).get("created_at") or "") or None
+        build(number, who, project_dir, agent_name, model, None, None, None, said_at)
 
 
 # -- helpers --------------------------------------------------------------------------------
+
+
+def changed_after(draft: dict[str, Any], approved_at: str | None) -> bool:
+    """Whether the draft comment was created or edited after the approval was given. Unknown times: no."""
+    stamp = str(draft.get("updated_at") or draft.get("created_at") or "")
+    if not approved_at or not stamp:
+        return False
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")) > datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
 
 
 def _answers(client: GitHubClient, number: int) -> list[Answer]:

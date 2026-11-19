@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -201,7 +202,7 @@ def pull_request_body(
                 "The checks passed; a person should look at it before this is merged.",
             ]
     else:
-        lines.append(f"⚠️ **Not done yet:** {outcome.reason}")
+        lines.append(f"⚠️ **Not done yet:** {_inert(outcome.reason)}")
     if contract.approval is not None and contract.approval.by == AUTOMATIC_APPROVAL:
         lines += [
             "",
@@ -338,11 +339,25 @@ def _evidence_link(outcome: RunOutcome) -> str:
 
 
 def _quote(text: str) -> str:
-    return "\n".join(f"> {line}" if line.strip() else ">" for line in text.strip()[:3000].splitlines())
+    return "\n".join(f"> {_inert(line)}" if line.strip() else ">" for line in text.strip()[:3000].splitlines())
 
 
 def _md(text: str) -> str:
-    return " ".join(str(text).split()).replace("|", "\\|")
+    return _inert(" ".join(str(text).split())).replace("|", "\\|")
+
+
+_MENTION = re.compile(r"@(?=[A-Za-z0-9])")
+_ISSUE_REF = re.compile(r"#(?=\d)")
+
+
+def _inert(text: str) -> str:
+    """Text from the app, an issue or a model, so that GitHub shows it and does nothing with it.
+
+    No mention notifies anyone, no ``#12`` links or closes an issue, and no link or image is live. The only
+    issue reference a pull request body acts on is the ``Closes #N`` Contexer writes itself.
+    """
+    text = _MENTION.sub("@\u200b", _ISSUE_REF.sub("#\u200b", text))
+    return text.replace("](", "]\u200b(").replace("![", "!\u200b[").replace("<", "&lt;")
 
 
 def _duration(seconds: float) -> str:
