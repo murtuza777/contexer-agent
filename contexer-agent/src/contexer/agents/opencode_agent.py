@@ -9,6 +9,7 @@ If no server answers at the configured URL, the adapter starts
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import time
@@ -134,7 +135,7 @@ class OpenCodeAgent(CodingAgentAdapter):
             if exe is None:
                 raise RuntimeError("the opencode CLI is not installed")
             port = self.base_url.rsplit(":", 1)[-1]
-            self._server = spawn_tree([exe, "serve", "--port", port], workdir, agent_env())
+            self._server = spawn_tree([exe, "serve", "--port", port], workdir, opencode_env())
             deadline = time.monotonic() + 60
             while not _healthy(self.base_url):
                 if self._server.poll() is not None or time.monotonic() > deadline:
@@ -142,6 +143,36 @@ class OpenCodeAgent(CodingAgentAdapter):
                 time.sleep(0.5)
         self._adapter = OpenCodeAdapter(base_url=self.base_url, model_provider=self.provider, model_id=self.model_id)
         return self._adapter
+
+
+# Edits OpenCode is told to refuse: the approved contract, the intent and the run evidence live there.
+# The rule is the first layer. A shell command can still write there, and the tamper guard catches that.
+PROTECTED_EDIT_PATTERNS = (".contexer/**", "**/.contexer/**")
+
+
+def opencode_env() -> dict[str, str]:
+    """The environment for `opencode serve`: the agent environment, plus a rule that denies edits under .contexer/."""
+    env = agent_env()
+    raw = env.get("OPENCODE_CONFIG_CONTENT", "").strip()
+    try:
+        config = json.loads(raw) if raw else {}
+    except ValueError:
+        return env  # not ours to repair; OpenCode reports it
+    if not isinstance(config, dict):
+        return env
+    permission = config.get("permission")
+    permission = dict(permission) if isinstance(permission, dict) else {}
+    edit = permission.get("edit")
+    rules: dict[str, str] = {"*": edit if isinstance(edit, str) else "allow"}
+    if isinstance(edit, dict):
+        rules = {"*": "allow", **{str(k): str(v) for k, v in edit.items()}}
+    for pattern in PROTECTED_EDIT_PATTERNS:
+        rules.pop(pattern, None)
+        rules[pattern] = "deny"  # last, because the last rule that matches wins
+    permission["edit"] = rules
+    config["permission"] = permission
+    env["OPENCODE_CONFIG_CONTENT"] = json.dumps(config)
+    return env
 
 
 _TARGET_KEYS = ("filePath", "path", "command", "pattern", "url")
