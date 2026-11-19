@@ -173,13 +173,14 @@ def restore(
     attempt: int | None = typer.Option(None, "--attempt", "-a", min=0, help="An attempt (0 is the project before the run)."),
     stopped: bool = typer.Option(False, "--stopped", help="The unfinished work of a run you stopped."),
     undo: bool = typer.Option(False, "--undo", help="The files as they were before the last restore from this run."),
+    before_resume: bool = typer.Option(False, "--before-resume", help="The files as they were when the run was last resumed."),
     project_dir: Path = typer.Option(Path("."), "--dir", "-d", help="Project directory.", file_okay=False),
 ) -> None:
     """Put the files back to a snapshot a run took. Ignored files such as .env and node_modules are not touched."""
-    if sum((attempt is not None, stopped, undo)) != 1:
-        raise typer.BadParameter("choose one of --attempt N, --stopped or --undo")
+    if sum((attempt is not None, stopped, undo, before_resume)) != 1:
+        raise typer.BadParameter("choose one of --attempt N, --stopped, --before-resume or --undo")
     console = Console()
-    name = "stopped" if stopped else "undo" if undo else str(attempt)
+    name = "stopped" if stopped else "undo" if undo else "before-resume" if before_resume else str(attempt)
     shadow = ShadowRepo(project_dir.resolve())
     commit = shadow.resolve(f"{run_id}/{name}")
     if commit is None:

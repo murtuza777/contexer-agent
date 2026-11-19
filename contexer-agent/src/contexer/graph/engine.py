@@ -190,13 +190,18 @@ class GraphController:
             raise ResumeError(f"Run '{ctx.run.run_id}' cannot be continued: its contract is no longer approved.")
         ctx.base_elapsed = float(values.get("elapsed") or 0.0)
         ctx.mirror = dict(values)
+        if ctx.budget is not None:
+            # A new process builds a new budget. What the run's agents had spent is in the state.
+            for row in values.get("agents") or []:
+                ctx.budget.spend(int(row.get("tokens_in") or 0), int(row.get("tokens_out") or 0), row.get("cost_usd"))
+            ctx.budget.other_usd = float(values.get("cost_usd") or 0.0)
         marker = ctx.run.path / STOPPED_FILE
         stopped_work = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
         marker.unlink(missing_ok=True)
         current = values.get("current")
         if not current:
             return
-        ctx.shadow.snapshot(f"{ctx.run.run_id}/before-resume", "the files as they were when the run was resumed")
+        found = ctx.shadow.snapshot(f"{ctx.run.run_id}/before-resume", "the files as they were when the run was resumed")
         if "guard_snapshot" in next_nodes:
             # The coding agent's turn had returned and only its snapshot was missing. That work is what the
             # next node must see: after an orderly stop it is in the `stopped` snapshot, after a kill it is
@@ -205,7 +210,17 @@ class GraphController:
                 ctx.shadow.restore(stopped_work)
             return
         # Whatever a cut-off turn left behind was kept above; the files go back to the state the next node expects.
+        put_back = ctx.shadow.changed_paths(found, current)
         ctx.shadow.restore(current)
+        if put_back:
+            # It may be what a cut-off turn left, or what the person changed since. Code cannot tell which, so it
+            # says what it did and where the files are.
+            listed = ", ".join(put_back[:8]) + (f" and {len(put_back) - 8} more" if len(put_back) > 8 else "")
+            ctx.event(
+                "revert",
+                f"Resuming put {len(put_back)} file(s) back to where the run left off: {listed}. What was there is "
+                f"kept: `contexer restore {ctx.run.run_id} --before-resume`.",
+            )
 
     # -- the loop ----------------------------------------------------------------------------------
 
