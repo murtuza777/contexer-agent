@@ -1217,6 +1217,33 @@ the help.
   computed at each refresh; nothing is drawn when the output is not a
   terminal.
 
+**The run view** (`cli/runview.py`, graph engine). A run is drawn from its
+events (`graph/context.py: RunEvent`: the words the log always had, plus
+the values a view needs). Two things come from the same events:
+
+- *Lines that stay.* `› Attempt 1 · implementing with claude-code`, then
+  `1 file changed · 23s · $0.65`, then the verdict (`✗ 5 of 7 checks proven
+  · 2 failed`) with each check that did not hold and what the browser saw
+  under it, with a hanging indent. Triage's decision, a revert and the
+  review are one line each. They are printed once, so a terminal, a CI
+  log and a pasted issue show the same thing. The coding agent's tool
+  calls are not printed unless `--verbose`.
+- *A block redrawn in place*, in a terminal only: the attempt, every check
+  with its state (the ones that failed first, with the short reason, at
+  most 12 lines), a status line (`Agent working · 0:41 · 2 tool calls ·
+  Edit src/app.js`), and a footer with the time and the money so far. It
+  is taken away for a question to the person and at the end.
+
+The summary at the end of a graph run does not repeat the attempts.
+
+`contexer run --json` prints the events instead, one JSON object per line
+and nothing else: `run-start`, `checks`, `attempt-start`, `agent`,
+`agent-done`, `phase`, `verdict`, `strategy`, `review`, `revert`, `app`,
+and a last `end` with `terminal`, `reason`, `exit_code`, `attempts`,
+`cost_usd`, `report`, `pull_request` and `draft`. It needs `--yes`, since
+it cannot stop to ask. The classic engine keeps the older line-by-line
+output and has no `--json`.
+
 `contexer doctor` checks Python, Chromium (launching it), git, Node, saved
 settings, the drafting model, coding agents, OpenRouter's free requests, the
 GitHub token, how the project starts, its contracts and its sign-in secrets,
