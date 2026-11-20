@@ -6,5 +6,5 @@ in a real browser, and repairs failures in a bounded loop. It never writes
 application code itself.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __app_name__ = "contexer"

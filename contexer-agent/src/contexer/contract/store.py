@@ -31,6 +31,10 @@ class ContractError(Exception):
     """A contract could not be found, read or written."""
 
 
+# Who approved, when the checks were approved by --yes and no person read them. Shown wherever the approval is.
+AUTOMATIC_APPROVAL = "--yes (not reviewed by a person)"
+
+
 class ContractStore:
     """Loads and saves the contracts of one project."""
 
@@ -77,6 +81,7 @@ class ContractStore:
         return candidate
 
     def approve(self, ref: str, by: str | None = None) -> Contract:
+        """Approve at the current content. ``by`` defaults to the git user; ``AUTOMATIC_APPROVAL`` when nobody read it."""
         contract = self.load(ref).approved_by(by or current_user(self.project_dir))
         self.save(contract)
         return contract

@@ -199,3 +199,30 @@ async def test_adapter_model_config_passed(mock_client: MagicMock):
         model={"providerID": "opencode", "modelID": "big-pickle"},
         agent="build",
     )
+
+
+def test_the_server_is_started_with_a_rule_that_denies_edits_under_dot_contexer(monkeypatch) -> None:
+    import json
+
+    from contexer.agents.opencode_agent import PROTECTED_EDIT_PATTERNS, opencode_env
+
+    monkeypatch.delenv("OPENCODE_CONFIG_CONTENT", raising=False)
+    edit = json.loads(opencode_env()["OPENCODE_CONFIG_CONTENT"])["permission"]["edit"]
+    assert list(edit)[0] == "*" and edit["*"] == "allow"  # the last rule that matches wins, so the denials come after
+    assert all(edit[pattern] == "deny" for pattern in PROTECTED_EDIT_PATTERNS)
+    assert any(".contexer" in pattern for pattern in PROTECTED_EDIT_PATTERNS)
+
+
+def test_the_deny_rule_is_added_to_a_config_the_user_already_passes(monkeypatch) -> None:
+    import json
+
+    from contexer.agents.opencode_agent import PROTECTED_EDIT_PATTERNS, opencode_env
+
+    mine = {"theme": "dark", "permission": {"bash": "ask", "edit": "allow"}}
+    monkeypatch.setenv("OPENCODE_CONFIG_CONTENT", json.dumps(mine))
+    merged = json.loads(opencode_env()["OPENCODE_CONFIG_CONTENT"])
+    assert merged["theme"] == "dark" and merged["permission"]["bash"] == "ask"
+    assert merged["permission"]["edit"][PROTECTED_EDIT_PATTERNS[0]] == "deny"
+    # Something that is not JSON is the user's mistake to see: it is passed on untouched.
+    monkeypatch.setenv("OPENCODE_CONFIG_CONTENT", "{not json")
+    assert opencode_env()["OPENCODE_CONFIG_CONTENT"] == "{not json"

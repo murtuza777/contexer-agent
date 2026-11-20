@@ -11,8 +11,8 @@ dev server never becomes ready.
 from __future__ import annotations
 
 import collections
-import os
 import re
+import socket
 import subprocess
 import threading
 import time
@@ -23,13 +23,24 @@ from typing import IO
 import httpx
 
 from contexer.appserver.detect import StartPlan
-from contexer.procutil import ProcessTree, spawn_tree, without_agent_session
+from contexer.procutil import ProcessTree, child_env, spawn_tree
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _ANNOUNCED_URL = re.compile(r"https?://(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0):(\d{2,5})")
 _READY_STATUSES = set(range(200, 400)) | {400, 401, 402, 403}
 _LOG_LINES = 400
 _INSTALL_TIMEOUT = 900.0
+
+
+def port_in_use(port: int) -> bool:
+    """Whether something accepts connections on ``port`` of this machine right now."""
+    for host in ("127.0.0.1", "::1"):
+        try:
+            with socket.create_connection((host, port), timeout=0.5):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 class DevServerError(Exception):
@@ -66,6 +77,15 @@ class DevServer:
             self._log_file = open(self.log_path, "a", encoding="utf-8")  # noqa: SIM115 - closed in stop()
         if self.plan.install_argv and (install or not (self.plan.cwd / "node_modules").is_dir()):
             self._install()
+        # Something already answering on the port would be taken for the app, and every check would run against it.
+        deadline = time.monotonic() + 5  # a server just stopped may hold the port for a moment
+        while port_in_use(self.plan.port):
+            if time.monotonic() > deadline:
+                raise DevServerError(
+                    f"port {self.plan.port} is already in use, so `{self.plan.display}` cannot start there. Stop what is "
+                    "running on it (your own dev server?), or pass --url to check an app you already run."
+                )
+            time.sleep(0.25)
         self.on_status(f"Starting `{self.plan.display}` on port {self.plan.port}")
         self._spawn()
         self.url = self._wait_until_ready()
@@ -191,8 +211,8 @@ class DevServer:
     def _env(self) -> dict[str, str]:
         # Dev tooling behaves differently when it thinks an agent is driving it (Next.js stops to show
         # an upgrade notice); the app is started the way the person's own terminal would start it.
-        env = without_agent_session(dict(os.environ))
-        env.update(self.plan.env)
+        # No repository token either: this runs code the coding agent may have just written.
+        env = child_env(self.plan.env)
         env.setdefault("FORCE_COLOR", "0")
         env.setdefault("CI", "1")  # no interactive prompts from dev tooling
         return env

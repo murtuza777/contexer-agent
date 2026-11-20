@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterable
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -113,7 +114,12 @@ class Locator(BaseModel):
         return f"css `{self.css}`"
 
 
-StepAction = Literal["click", "fill", "press", "select", "check", "uncheck", "hover", "wait", "goto"]
+StepAction = Literal[
+    "click", "fill", "press", "select", "check", "uncheck", "hover", "wait", "goto", "accept_dialog", "dismiss_dialog"
+]  # fmt: skip
+# Steps that answer the browser dialog (confirm, alert, prompt) the NEXT step opens. They act on nothing themselves.
+DIALOG_ACTIONS = {"accept_dialog": "accept", "dismiss_dialog": "dismiss"}
+UNANSWERED_DIALOG = "dismissed: no step of the check answered it"
 
 _TARGET_REQUIRED = {"click", "fill", "select", "check", "uncheck", "hover"}
 _VALUE_REQUIRED = {"fill", "select", "press", "wait", "goto"}
@@ -152,6 +158,8 @@ class Step(BaseModel):
             return f"wait {self.value}ms"
         if self.action == "goto":
             return f"go to {self.value}"
+        if self.action in DIALOG_ACTIONS:
+            return f"{DIALOG_ACTIONS[self.action]} the dialog the next step opens"
         return f"{self.action} {target}"
 
 
@@ -328,12 +336,42 @@ class MissingSecretError(ValueError):
     """A ``${NAME}`` placeholder refers to an environment variable that is not set."""
 
 
+class SecretNotAllowedError(MissingSecretError):
+    """A ``${NAME}`` placeholder names an environment variable a check may not read."""
+
+
+# Checks are also written by models, from goals that can come from an issue, and by the Tester while it reads
+# a page. A check that could read any variable could type a model key or a repository token into the page, or
+# put it in an address. So only these are expanded from the real environment: names that start with the
+# prefix, and the names the project's own sign-in steps use (added by ``allow_secret_names``).
+TEST_SECRET_PREFIX = "CONTEXER_TEST_"
+_allowed_secret_names: set[str] = set()
+
+
+def allow_secret_names(names: Iterable[str]) -> None:
+    """Let checks read these environment variables: the ones ``[auth]`` in contexer.toml names."""
+    _allowed_secret_names.update(names)
+
+
+def secret_allowed(name: str) -> bool:
+    return name.startswith(TEST_SECRET_PREFIX) or name in _allowed_secret_names
+
+
 def expand_secrets(value: str, env: dict[str, str] | None = None) -> str:
-    """Replace ``${NAME}`` with the environment variable's value (never stored in contracts)."""
+    """Replace ``${NAME}`` with the environment variable's value (never stored in contracts).
+
+    Against the real environment only the allowed names are read (see ``allow_secret_names``). A mapping
+    passed in is the caller's own and is used as it is.
+    """
     source = os.environ if env is None else env
 
     def lookup(match: re.Match[str]) -> str:
         name = match.group(1)
+        if env is None and not secret_allowed(name):
+            raise SecretNotAllowedError(
+                f"${{{name}}} may not be used in a check: only {TEST_SECRET_PREFIX}* and the names in [auth] of "
+                "contexer.toml are read from the environment"
+            )
         if name not in source:
             raise MissingSecretError(f"environment variable {name} is not set")
         return source[name]
@@ -375,6 +413,8 @@ class CheckResult(BaseModel):
     ui_at_failure: str = ""
     page_errors: list[str] = Field(default_factory=list)
     console_errors: list[str] = Field(default_factory=list)
+    # Every browser dialog the page opened during the check, with how it was answered.
+    dialogs: list[str] = Field(default_factory=list)
     duration_seconds: float = 0.0
     # Evidence files, when the runner was given an artifacts directory.
     screenshot: str | None = None
@@ -399,6 +439,7 @@ class CheckResult(BaseModel):
                 "ui_at_failure": redact(self.ui_at_failure, values),
                 "page_errors": [redact(e, values) for e in self.page_errors],
                 "console_errors": [redact(e, values) for e in self.console_errors],
+                "dialogs": [redact(d, values) for d in self.dialogs],
                 "outcomes": [
                     o.model_copy(update={"actual": redact(o.actual, values), "description": redact(o.description, values)})
                     for o in self.outcomes
@@ -421,4 +462,17 @@ class CheckResult(BaseModel):
                 lines.append(f"  actual:   {o.actual}")
         for err in self.page_errors[:3]:
             lines.append(f"  uncaught exception: {err}")
+        lines.extend(self.dialog_lines())
         return "\n".join(lines)
+
+    def dialog_lines(self) -> list[str]:
+        """What to say about a dialog the check did not answer: the check is what has to change, not the app."""
+        unanswered = [d for d in self.dialogs if UNANSWERED_DIALOG in d]
+        if not unanswered:
+            return []
+        return [
+            *[f"  the page asked: {d}" for d in unanswered[:3]],
+            "  A dialog nobody answers is dismissed, so what it guards did not happen. If the question belongs in the "
+            'app, the check needs {"action": "accept_dialog"} before the step that opens it. Do not remove the '
+            "question from the app to make the check pass.",
+        ]

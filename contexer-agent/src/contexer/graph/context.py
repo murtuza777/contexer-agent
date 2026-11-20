@@ -53,10 +53,14 @@ class RunContext:
     repo: RepositoryContext | None = None
     url: str | None = None
     model: BaseChatModel | None = None
+    # A model for one agent by name, where the project chose one; the others use ``model``.
+    models: dict[str, BaseChatModel] = field(default_factory=dict)
     budget: Budget | None = None
     can_ask: bool = False
     corrections: Callable[[], str | None] | None = None
     pending_correction: str | None = None
+    # Whether this process has already asked if the [auth] sign-in works (it is asked once, before spending).
+    signed_in_checked: bool = False
     guard: ContractGuard | None = None
     contract: Contract | None = None
     others: list[Contract] = field(default_factory=list)
@@ -68,6 +72,18 @@ class RunContext:
     started: float = field(default_factory=time.monotonic)
     base_elapsed: float = 0.0
     _results: dict[int, RunResult] = field(default_factory=dict)
+
+    def model_for(self, agent: str) -> BaseChatModel | None:
+        return self.models.get(agent) or self.model
+
+    def spent(self, coding_usd: float) -> str:
+        """Tell the budget what the coding agent has spent; returns why the whole run must stop, or ''."""
+        if self.budget is None:
+            return ""
+        self.budget.other_usd = coding_usd
+        if self.budget.max_total_usd is not None and self.budget.total_left() == 0.0:
+            return self.budget.exhausted() or "the run budget is used up"
+        return ""
 
     def event(self, kind: str, message: str) -> None:
         self.on_event(kind, message)

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from contexer.agents.base import AgentTurn, CodingAgentAdapter, ProgressFn
-from contexer.procutil import AGENT_SESSION_PREFIXES, AGENT_SESSION_VARS, ProcessTree, spawn_tree
+from contexer.procutil import AGENT_SESSION_PREFIXES, AGENT_SESSION_VARS, REPOSITORY_TOKENS, ProcessTree, spawn_tree
 
 DEFAULT_ALLOWED_TOOLS = (
     "Read",
@@ -65,14 +65,7 @@ _PARENT_SESSION_PREFIXES = AGENT_SESSION_PREFIXES
 _PARENT_SESSION_VARS = AGENT_SESSION_VARS
 # Contexer pushes and opens the pull request itself. The agent edits files and needs no way into the
 # repository: text from an issue reaches its prompt, and in Actions these tokens can push and comment.
-_REPOSITORY_TOKENS = {
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-    "CONTEXER_GITHUB_TOKEN",
-    "ACTIONS_RUNTIME_TOKEN",
-    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
-    "ACTIONS_ID_TOKEN_REQUEST_URL",
-}
+_REPOSITORY_TOKENS = REPOSITORY_TOKENS
 
 _EDIT_TOOLS = {"Edit", "MultiEdit", "Write", "NotebookEdit"}
 

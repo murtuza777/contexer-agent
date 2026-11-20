@@ -211,3 +211,23 @@ async def test_the_read_tools_are_confined_to_the_project_and_keep_out_of_contex
         assert hidden not in everywhere
     assert (await _call(project, "grep", pattern="no-such-text-anywhere")).startswith("No match")
     assert (await _call(project, "grep", pattern="(unclosed")).startswith("Error:")
+
+
+def test_the_search_tool_does_not_walk_closed_folders_or_run_a_pattern_that_can_hang(tmp_path: Path) -> None:
+    import time
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.js").write_text("const total = 1;\n" + "a" * 5000 + "!\n", encoding="utf-8")
+    deep = tmp_path / "node_modules" / "pkg"
+    deep.mkdir(parents=True)
+    for n in range(300):
+        (deep / f"f{n}.js").write_text("const total = 2;\n", encoding="utf-8")
+    grep = next(tool for tool in project_tools(tmp_path) if tool.name == "grep")
+
+    assert grep.invoke({"pattern": "total"}) == "src/app.js:1: const total = 1;"  # node_modules is never opened
+
+    started = time.monotonic()
+    hung = grep.invoke({"pattern": "(a+)+$"})  # catastrophic on a long line of a's that does not end in one
+    assert time.monotonic() - started < 5
+    assert "Error" in hung and "nested" in hung
+    assert "Error" in grep.invoke({"pattern": "x" * 600})  # and a pattern is not a place to put a novel

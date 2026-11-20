@@ -476,3 +476,60 @@ async def test_a_killed_process_whose_turn_had_finished_keeps_that_work_on_resum
 
     assert resumed.terminal == "succeeded" and agent.prompts == []
     assert [(a.n, a.outcome) for a in resumed.attempts] == [(1, "fail"), (2, "pass")]
+
+
+# -- what a person changed while the run was stopped is said, and kept ----------------------------------
+
+
+async def test_resuming_says_which_files_it_put_back_and_they_can_be_had_again(tmp_path: Path) -> None:
+    from typer.testing import CliRunner
+
+    from contexer.cli import app
+
+    project = copy_todo(tmp_path, "edited")
+    stopped = await _stop_in_turn(project, [{"app.js": COUNT_BUG_JS}], stuck=2)
+    # The person fixes something by hand, and adds a file, before resuming the next day.
+    (project / "app.js").write_text(COUNT_BUG_JS + "// my own fix\n", encoding="utf-8")
+    (project / "notes.md").write_text("remember this\n", encoding="utf-8")
+
+    events: list[tuple[str, str]] = []
+    agent = RecordingAgent([{"app.js": GOOD_JS}])
+    resumed = await _graph(project, agent, on_event=lambda kind, message: events.append((kind, message))).resume(stopped.run_id)
+    assert resumed.terminal == "succeeded"
+
+    said = " ".join(message for _kind, message in events)
+    assert "app.js" in said and "notes.md" in said and "--before-resume" in said  # not silently
+    assert not (project / "notes.md").exists()
+
+    result = CliRunner().invoke(app, ["restore", stopped.run_id, "--before-resume", "--dir", str(project)])
+    assert result.exit_code == 0, result.output
+    assert (project / "app.js").read_text(encoding="utf-8") == COUNT_BUG_JS + "// my own fix\n"
+    assert (project / "notes.md").read_text(encoding="utf-8") == "remember this\n"
+
+
+async def test_a_resume_that_changes_no_file_says_nothing_about_files(tmp_path: Path) -> None:
+    project = copy_todo(tmp_path, "untouched")
+    stopped = await _stop_in_turn(project, [{"app.js": COUNT_BUG_JS}], stuck=2)
+    events: list[tuple[str, str]] = []
+    await _graph(project, RecordingAgent([{"app.js": GOOD_JS}]), on_event=lambda k, m: events.append((k, m))).resume(stopped.run_id)
+    assert not any("--before-resume" in message for _kind, message in events)
+
+
+async def test_what_the_agents_spent_before_the_stop_still_counts_after_a_resume(tmp_path: Path) -> None:
+    from contexer.crew.budget import Budget
+
+    project = copy_todo(tmp_path, "budget")
+    agent = _StuckOnTurn([{"app.js": COUNT_BUG_JS}], stuck=2)
+    first = Budget(max_tokens=10_000)
+    controller = _graph(project, agent, model=AgentScript(), budget=first)  # Triage and the Diagnoser run before turn 2
+    task = asyncio.create_task(controller.run(contract(project)))
+    await asyncio.wait_for(agent.started.wait(), 60)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert first.tokens > 0
+
+    second = Budget(max_tokens=10_000)  # a new process builds a new budget
+    assert controller.last_outcome is not None
+    await _graph(project, RecordingAgent([{"app.js": GOOD_JS}]), model=AgentScript(), budget=second).resume(controller.last_outcome.run_id)
+    assert second.tokens >= first.tokens  # it starts from what was already spent, not from zero

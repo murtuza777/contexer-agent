@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -70,6 +71,54 @@ class LimitSettings(BaseModel):
 
     tokens: int | None = Field(default=None, gt=0)
     cost_usd: float | None = Field(default=None, gt=0)
+
+
+CREW_AGENTS = ("intent", "tester", "challenger", "triage", "diagnoser", "reviewer")
+
+
+class CrewAgentSettings(BaseModel):
+    """One of Contexer's own agents: the model it runs on and how many steps it may take."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str | None = None
+    model: str | None = None
+    max_steps: int | None = Field(default=None, gt=0)
+
+
+class AgentsSettings(BaseModel):
+    """Cost controls for a run, and a model per agent.
+
+    ```toml
+    [agents]
+    max_usd = 5.00              # one budget: the coding agent and Contexer's agents together
+    input_usd_per_mtok = 2.50   # prices, for a provider that reports none (Azure, most others)
+    output_usd_per_mtok = 15.00
+
+    [agents.triage]             # intent, tester, challenger, triage, diagnoser, reviewer
+    model = "gpt-5.4-mini"      # a cheaper model for a small decision
+
+    [agents.reviewer]
+    max_steps = 8
+    ```
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_usd: float | None = Field(default=None, gt=0)
+    input_usd_per_mtok: float | None = Field(default=None, ge=0)
+    output_usd_per_mtok: float | None = Field(default=None, ge=0)
+    intent: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    tester: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    challenger: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    triage: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    diagnoser: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    reviewer: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+
+    def for_agent(self, name: str) -> CrewAgentSettings:
+        if name not in CREW_AGENTS:
+            raise KeyError(f"there is no agent named '{name}'")
+        return getattr(self, name)
 
 
 class AgentSettings(BaseModel):
@@ -133,6 +182,7 @@ class ProjectConfig(BaseModel):
     compiler: CompilerSettings = Field(default_factory=CompilerSettings)
     gate: GateSettings = Field(default_factory=GateSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    agents: AgentsSettings = Field(default_factory=AgentsSettings)
     limits: LimitSettings = Field(default_factory=LimitSettings)
 
 
@@ -140,13 +190,29 @@ class ProjectConfigError(Exception):
     """``contexer.toml`` exists but cannot be used."""
 
 
-def load_project_env(project_dir: str | Path) -> None:
-    """Load ``<project>/.env`` into the environment.
+# Names that steer Contexer's own tools (git, the GitHub client, the interpreters it starts). A project's .env
+# never sets them: the coding agent can write that file.
+_ENV_NEVER_FROM_PROJECT = ("GIT_", "LD_", "DYLD_", "PYTHON")
+_ENV_NAMES_NEVER_FROM_PROJECT = {"PATH", "PATHEXT", "COMSPEC", "SHELL", "NODE_OPTIONS", "GITHUB_API_URL", "GITHUB_SERVER_URL"}
+# Projects whose .env this process has read. It is read once, before any coding agent runs.
+_env_loaded: set[str] = set()
+
+
+def load_project_env(project_dir: str | Path, on_refused: Callable[[str], None] | None = None) -> None:
+    """Load ``<project>/.env`` into the environment, once per process.
 
     Model and agent keys and ``[auth]`` test credentials can live there, and
     the coding agent Contexer starts inherits them. An exported variable wins
     over the file; the file wins over what ``contexer setup`` saved.
+
+    Once, because the coding agent can write ``.env`` and git usually ignores
+    it: what appears there after the run began is not configuration. And a
+    few names are never taken from it at all (see ``_ENV_NEVER_FROM_PROJECT``).
     """
+    key = str(Path(project_dir).resolve())
+    if key in _env_loaded:
+        return
+    _env_loaded.add(key)
     env_file = Path(project_dir) / ".env"
     if env_file.is_file():
         from dotenv import dotenv_values
@@ -154,6 +220,10 @@ def load_project_env(project_dir: str | Path) -> None:
         from contexer.config.user import from_user_settings
 
         for name, value in dotenv_values(env_file).items():
+            if name.upper() in _ENV_NAMES_NEVER_FROM_PROJECT or name.upper().startswith(_ENV_NEVER_FROM_PROJECT):
+                if on_refused is not None:
+                    on_refused(name)
+                continue
             if value is not None and (name not in os.environ or from_user_settings(name)):
                 os.environ[name] = value
 

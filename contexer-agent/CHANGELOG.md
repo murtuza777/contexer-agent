@@ -5,8 +5,75 @@
 Work on the [agentic harness](docs/agentic/architecture.md) starts here.
 Phase 0 adds the foundations; no agent ships yet.
 
+### Security
+
+Found by an independent review of the code before release; details and what
+is still open are in [docs/agentic/readiness.md](docs/agentic/readiness.md).
+
+- A check step reads only `CONTEXER_TEST_*` and the variables `[auth]` names
+  from the environment, and a replayed `goto` cannot leave the app. **This
+  can break a hand-written contract** that types another `${NAME}`.
+- The dev server, the dependency install and `[app] reset` get no repository
+  token. The project `.env` is read once and cannot set the names that steer
+  git or the GitHub client.
+- What git ignored stays out of snapshots whatever happens to `.gitignore`;
+  a revert no longer deletes an ignored file.
+- A change that adds a secret is committed locally and never pushed.
+- Checks approved with `--yes` are recorded as not reviewed by a person, and
+  the pull request is a draft that says so.
+
+### Added (reliability)
+
+- The issue flow: an approval given before the draft last changed is
+  refused; the draft is found with a personal token too; hidden text in an
+  issue does not reach the agents; pull request text from the app or a
+  model is inert.
+- The gate names a contract that the pull request itself changed.
+- `--resume` lists the files it put back, and `contexer restore RUN
+  --before-resume` returns them. The budget carries over a resume.
+- `accept_dialog` and `dismiss_dialog` steps: a check can answer a browser
+  confirmation, and one nobody answered is named in the failure.
+- One run at a time per project; a plain message for a failed snapshot, a
+  missing git or a port already in use.
+- `contexer runs --stats`: how runs ended and what a proven run cost.
+
+### Changed
+
+- **The graph engine is the default** for `contexer run` and `contexer
+  issue`. `--engine classic` or `CONTEXER_ENGINE=classic` runs the 0.4
+  loop. The version is 0.5.0.
+- A pull request is opened as a draft when the review holds a
+  high-severity note of any kind, not only a security one.
+
 ### Added
 
+- **Cost controls** (Phase 5). `[agents]` in `contexer.toml`: `max_usd`,
+  one budget for the coding agent and Contexer's agents together
+  (`--max-usd` on the command line); prices for a provider that reports
+  none; a model and a step cap per agent. A run prints what it can use at
+  most before it starts and what each agent used when it ends, and ends
+  `budget_exhausted` on its best attempt when the budget runs out.
+- **A sign-in check before anything is spent.** With `[auth]` configured,
+  a sign-in that does not work ends the run before the first coding turn.
+- **Checks are drafted from the signed-in app** and from the pages the
+  goal names, not from the landing page.
+- **A run behind a sign-in on a real project.**
+  [HealthCare.Ai pull request #6](https://github.com/murtuza777/HealthCare.Ai/pull/6):
+  a change across the frontend and the Worker, 2 attempts, 4 of 4 checks
+  proven, $3.35. The Reviewer found that the change had removed a delete
+  confirmation to make a check pass.
+- **Security pass, first part** (Phase 5).
+  - An injection suite: twelve hostile strings through every channel to
+    every agent. It found that the repair prompt for the coding agent
+    carried what the app printed unquoted; that is fixed.
+  - OpenCode is denied edits under `.contexer/`, as Claude Code is.
+  - `contexer run` and `contexer doctor` warn about an environment file
+    git does not ignore and about a secret in a committed file.
+- **First runs on a real project.** `contexer test` and `contexer run --pr`
+  on [HealthCare.Ai](https://github.com/murtuza777/HealthCare.Ai), an app
+  Contexer had not seen. The run opened
+  [pull request #4](https://github.com/murtuza777/HealthCare.Ai/pull/4)
+  there: one attempt, 3 of 3 checks proven, $0.85 of Claude Code.
 - **The Reviewer: a passing run is read before it is handed over** (Phase 4
   of the agentic harness, graph engine).
   - A scan of the diff by code finds secrets, focused or skipped tests,

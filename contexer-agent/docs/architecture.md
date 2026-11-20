@@ -2,7 +2,7 @@
 
 This is the technical reference for how Contexer works, module by module: what
 each part does, the data it reads and writes, the decisions it makes, and the
-constants that govern them. It describes version 0.4.0 as it is in the code.
+constants that govern them. It describes version 0.5.0 as it is in the code.
 Product reasoning is in [product-plan.md](product/product-plan.md), the build history
 in [roadmap.md](roadmap.md), and day-to-day use in [try-it.md](try-it.md).
 
@@ -518,8 +518,35 @@ push or rewrite history; no uncaught exceptions; reply with a short summary.
 ### The graph engine (`graph/`, `contexer run --engine graph`)
 
 The same job as `RunController`, as a LangGraph graph with a checkpoint
-after every node. It is opt-in (`--engine graph` or `CONTEXER_ENGINE=graph`)
-until it is measured to repair at least as well as the classic loop.
+after every node. Since 0.5.0 it is the default; `--engine classic` or
+`CONTEXER_ENGINE=classic` runs the 0.4 loop, which has no review, no
+sign-in check before spending and no run budget. The two were measured
+equal on the seeded bugs ([phase-3.md](agentic/phase-3.md)); the graph is
+the default because of what only it does, not because it repairs better.
+
+- **Before anything is spent.** With `[auth]` configured, the sign-in flow
+  is tried once before the first coding turn and before checks are
+  drafted. If it does not work the run ends `needs_human` with nothing
+  built: a coding agent cannot repair the person's test account. The
+  first run behind a sign-in on a real app paid for three turns before
+  this existed.
+- **One budget.** `Budget.max_total_usd` (`[agents] max_usd`, `--max-usd`)
+  covers the coding agent and Contexer's agents together. The engine tells
+  the budget what the coding agent has spent; each turn is told what is
+  left; a run that runs out ends `budget_exhausted` on its best attempt.
+  A provider that reports no price is priced from `[agents]
+  input_usd_per_mtok` and `output_usd_per_mtok`, and the total is marked
+  as an estimate. With neither, cost is unknown and only tokens are
+  limited. A coding agent can overshoot within one turn: Claude Code
+  checks its budget between its own steps, and one turn went from $2.42
+  to $6.26 against a $5 limit.
+- **A model per agent.** `[agents.<name>] model`, `provider` and
+  `max_steps` for intent, tester, challenger, triage, diagnoser and
+  reviewer. An agent that is not named uses the default model. A model
+  that cannot be built is reported and the default is used.
+- **The estimate** (`crew/estimate.py`) is printed before a run: the most
+  coding-agent turns and model calls it can make, from the caps in code.
+  It is a ceiling, not a prediction.
 
 ```text
 intent → approve → coder_turn → guard_snapshot → ensure_app → test → score ─ pass ─► review ─► finalize
@@ -555,8 +582,10 @@ intent → approve → coder_turn → guard_snapshot → ensure_app → test →
   `attempt-<n>/run-result.json`, because a resumed run needs the failures to
   write the next repair prompt.
 - **Drafting looks at the app first.** Before the Intent agent is asked,
-  the `intent` node starts the app and passes it the page's roles, labels,
-  placeholders and test ids (`ui_snapshot`, marked as untrusted). Checks
+  the `intent` node starts the app, signs in when `[auth]` is configured,
+  and passes it the roles, labels, placeholders and test ids of the page
+  it lands on and of up to three pages the goal names by path
+  (`/app/symptoms`), all marked as untrusted (`ui_snapshot`). Checks
   drafted without it name things the app does not have, and a coding agent
   told to make them pass renames the app to fit; a live run did exactly
   that. When nothing runs yet the checks are drafted from the goal alone.
@@ -681,7 +710,7 @@ informational only. Process-based adapters track their running trees
 | --- | --- |
 | Claude Code (`claude_code.py`) | `claude -p --output-format stream-json --verbose --permission-mode acceptEdits` with an allowed-tools list (Read, Edit, MultiEdit, Write, Glob, Grep, LS, TodoWrite, package installs, `npx tsc`, `npm run build/lint`, `ls`, `git status/diff`) and denied tools (`Edit/MultiEdit/Write(.contexer/**)`, `git commit/push/reset/checkout`, `rm -rf`); `--max-budget-usd`, `--model`, `--resume <session>`. The prompt goes to stdin; NDJSON events are parsed for progress, cost and the final `result` |
 | Codex (`codex_agent.py`) | `codex exec --json --skip-git-repo-check --sandbox workspace-write --config approval_policy="never" --config sandbox_workspace_write.network_access=true --cd <dir> [--model] -`, and `resume <thread_id> -` for repairs. Only `turn.completed` / `turn.failed` end a turn. Codex reports no cost, so `--budget` does not apply |
-| OpenCode (`opencode_agent.py`) | Talks to `opencode serve` over HTTP (`OPENCODE_SERVER_URL`, default `http://127.0.0.1:4096`), starting it if `/global/health` does not answer (60 s). A session per run; tool calls are polled every 2 s for progress. On a timeout or Ctrl+C the session is aborted. With `OPENROUTER_API_KEY` and no model chosen it uses `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` |
+| OpenCode (`opencode_agent.py`) | Talks to `opencode serve` over HTTP (`OPENCODE_SERVER_URL`, default `http://127.0.0.1:4096`), starting it if `/global/health` does not answer (60 s). A session per run; tool calls are polled every 2 s for progress. The server is started with `OPENCODE_CONFIG_CONTENT` carrying `permission.edit` rules that deny `.contexer/**`, added to any config the user passes (checked live on OpenCode 1.4.3; a shell command can still write there, which the tamper guard catches). On a timeout or Ctrl+C the session is aborted. With `OPENROUTER_API_KEY` and no model chosen it uses `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` |
 | Scripted (`scripted.py`) | Applies queued file writes per turn (`None` deletes). `--agent scripted --model turns.json` reads them from a JSON list; used by tests and to try a setup without a model |
 
 Claude Code and Codex run in a worker thread; on cancellation the tree is
@@ -1087,7 +1116,7 @@ tampered or cancelled, and only when files changed:
    `.git/config`.
 5. Open the pull request: ready for review when the run succeeded, a draft
    otherwise, and also a draft when the run succeeded but the review holds
-   a high-severity security note (from the scan or from the model); where drafts are not supported, a normal one titled
+   a high-severity note of any kind (from the scan or from the model); where drafts are not supported, a normal one titled
    `[Draft] ...`; an existing one for the branch is reused. Without a token,
    the result is the compare link.
 
@@ -1215,6 +1244,9 @@ and prints the fix under each problem.
 | `[agent] max_repair_rounds` | 2 | Repair rounds after the first attempt |
 | `[agent] budget_usd` | none | Stop when the agent has spent this much |
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
+| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together (graph engine); `--max-usd` wins |
+| `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens, used when the provider reports no cost |
+| `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer` |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
 | `[limits] cost_usd` | none | Cost limit for the same, where the provider reports prices |
 
@@ -1229,7 +1261,7 @@ and prints the fix under each problem.
 | `OPENROUTER_MODEL`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, `ANTHROPIC_MODEL` | Per-provider model overrides |
 | `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | OpenRouter attribution headers |
 | `CONTEXER_AGENT`, `CONTEXER_AGENT_MODEL` | Coding agent and its model (from setup) |
-| `CONTEXER_ENGINE` | `graph` or `classic` (default) for `contexer run`; `--engine` wins |
+| `CONTEXER_ENGINE` | `graph` (default) or `classic` for `contexer run` and `contexer issue`; `--engine` wins |
 | `OPENCODE_SERVER_URL`, `OPENCODE_MODEL_PROVIDER`, `OPENCODE_MODEL_ID` | OpenCode server and model |
 | `CONTEXER_HOME` | Where user settings live (default `~/.contexer`) |
 | `CONTEXER_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` | Pull requests, issues, commit statuses |
@@ -1241,7 +1273,7 @@ and prints the fix under each problem.
 
 | Risk | Protection |
 | --- | --- |
-| The agent moves the goalposts | Contracts are hashed at approval; Claude Code is denied writes to `.contexer/**`; the controller compares the contract files after every turn, puts them back and ends the run `tampered`; a modified contract never runs as approved |
+| The agent moves the goalposts | Contracts are hashed at approval; Claude Code and OpenCode are denied edits to `.contexer/**` (Codex has no per-path rule); the controller compares the contract files after every turn, puts them back and ends the run `tampered`; a modified contract never runs as approved |
 | The agent's claim is taken as proof | Only Contexer's own browser checks decide; changed files come from the shadow diff |
 | An attempt makes things worse | Every attempt is snapshotted; worse attempts are reverted; the run ends on the best attempt or the baseline |
 | Secrets leak into evidence or prompts | `${NAME}` values and password fields are masked in snapshots, `result.json`, `report.html` and repair prompts; signed-in checks keep no trace unless `--trace on`; the browser session lives only in memory |
@@ -1250,6 +1282,8 @@ and prints the fix under each problem.
 | Someone forges an approval | The workflow runs only for owners, members and collaborators; Contexer checks the approver's write access through the API; only the bot's own draft comment counts |
 | A required check passes on "neutral" | Contexer never reports neutral; undecided is `failure` |
 | Ctrl+C leaves an agent running | The agent's tree is killed (or its OpenCode session aborted) and the project restored |
+| A commit or pull request carries a secret | Before a run, `riskscan.py` warns about an environment file (`.env`, `.env.*`, `.dev.vars`) that git does not ignore or that is committed, and about a secret in a committed file; `contexer doctor` shows the same. After a run, the review's scan finds a secret the change added and keeps the pull request a draft. Both report and neither prints the value |
+| Text the app printed steers the coding agent | The failures, page errors and server log in a repair prompt are inside `<untrusted>` under a line that says they are evidence, not instructions. `tests/test_security.py` puts twelve hostile strings through every channel to every agent |
 | Snapshotting the wrong folder | A home folder or drive root is refused |
 | The PyPI package leaks local files | The sdist respects `.gitignore`; `.env` is never included |
 

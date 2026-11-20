@@ -37,6 +37,8 @@ class RunSettings(BaseModel):
     replay_others: bool = True
     # Graph engine: read the diff of a passing attempt before the run ends (crew/reviewer.py).
     review: bool = True
+    # Step caps for Contexer's own agents, by name ("diagnoser", "reviewer"); the agent's default when absent.
+    agent_steps: dict[str, int] = Field(default_factory=dict)
 
 
 class Attempt(BaseModel):
@@ -81,6 +83,10 @@ class RunOutcome(BaseModel):
     corrections: list[str] = Field(default_factory=list)
     # What the review of the final state found. Advice and facts about the diff; never part of the verdict.
     review: list[ReviewNote] = Field(default_factory=list)
+    # What Contexer's own agents cost in this run. None: the provider reports no price and no rates are configured.
+    crew_cost_usd: float | None = None
+    # True when any of it was worked out from tokens and the configured rates.
+    crew_cost_estimated: bool = False
 
     @property
     def exit_code(self) -> int:

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,8 +29,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from contexer.contract import Contract
-from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
-from contexer.crew.reviewer import holds_pull_request
+from contexer.contract.store import AUTOMATIC_APPROVAL, CONTEXER_DIR, CONTRACTS_DIR
+from contexer.crew.reviewer import holds_pull_request, prescan
 from contexer.crew.triage import MOVE_LABELS
 from contexer.github.api import GitHubClient, GitHubError, github_token, repo_of
 
@@ -114,10 +115,15 @@ def hand_off(
     branch = _free_branch(plan, f"contexer/{contract.id}")
     _git_or_fail(plan.root, "switch", "--quiet", "-c", branch)
     _git_or_fail(plan.root, "add", "--all", "--", *paths)
-    held = holds_pull_request(outcome.review)
+    automatic = contract.approval is not None and contract.approval.by == AUTOMATIC_APPROVAL
+    held = holds_pull_request(outcome.review) or automatic
     succeeded = outcome.terminal == "succeeded" and not held
     if held and outcome.terminal == "succeeded":
-        note += "Opened as a draft: the review found a high-severity security note. "
+        note += (
+            "Opened as a draft: the checks were approved with --yes and nobody read them. "
+            if automatic and not holds_pull_request(outcome.review)
+            else "Opened as a draft: the review has a high-severity note. "
+        )
     try:
         _git_or_fail(plan.root, *_identity(plan.root), "commit", "--quiet", "-m", _commit_message(outcome, contract))
     except HandoffError as exc:  # a pre-commit hook, usually
@@ -126,6 +132,15 @@ def hand_off(
 
     if plan.remote is None:
         return Handoff(branch, commit, False, None, False, not succeeded, note + "The repository has no remote to push to.")
+    # A draft is still a push. Whatever the outcome, a change that adds a secret stays on this machine.
+    leaked = [n for n in prescan(outcome.diff) if n.category == "security" and n.severity == "high"]
+    if leaked:
+        where = ", ".join(f"{n.file}:{n.line}" if n.line else n.file for n in leaked[:3])
+        return Handoff(
+            branch, commit, False, None, False, True,
+            note + f"Not pushed: the change adds what looks like a secret ({where}). The work is committed on the local "
+            f"branch {branch}. Remove the secret (and revoke it if it is real), amend the commit, then push it yourself.",
+        )  # fmt: skip
     pushed = _git(plan.root, *_push_auth(plan), "push", "--quiet", "--set-upstream", plan.remote, branch, timeout=180)
     if pushed is None:
         return Handoff(
@@ -183,11 +198,17 @@ def pull_request_body(
         if holds_pull_request(outcome.review):
             lines += [
                 "",
-                "⚠️ **Opened as a draft:** reading the diff found a high-severity security note (see Review below). "
+                "⚠️ **Opened as a draft:** reading the diff found a high-severity note (see Review below). "
                 "The checks passed; a person should look at it before this is merged.",
             ]
     else:
-        lines.append(f"⚠️ **Not done yet:** {outcome.reason}")
+        lines.append(f"⚠️ **Not done yet:** {_inert(outcome.reason)}")
+    if contract.approval is not None and contract.approval.by == AUTOMATIC_APPROVAL:
+        lines += [
+            "",
+            "⚠️ **The checks were approved automatically (`--yes`).** Nobody read them before the work was built "
+            "against them. Read the definition of done below as carefully as the code: a check can pass for the wrong reason.",
+        ]
     lines += ["", "### Goal", "", _quote(contract.goal), ""]
     if intent is not None and (intent.behaviours or intent.assumptions or intent.corrections):
         lines += ["### What was understood", ""]
@@ -318,11 +339,25 @@ def _evidence_link(outcome: RunOutcome) -> str:
 
 
 def _quote(text: str) -> str:
-    return "\n".join(f"> {line}" if line.strip() else ">" for line in text.strip()[:3000].splitlines())
+    return "\n".join(f"> {_inert(line)}" if line.strip() else ">" for line in text.strip()[:3000].splitlines())
 
 
 def _md(text: str) -> str:
-    return " ".join(str(text).split()).replace("|", "\\|")
+    return _inert(" ".join(str(text).split())).replace("|", "\\|")
+
+
+_MENTION = re.compile(r"@(?=[A-Za-z0-9])")
+_ISSUE_REF = re.compile(r"#(?=\d)")
+
+
+def _inert(text: str) -> str:
+    """Text from the app, an issue or a model, so that GitHub shows it and does nothing with it.
+
+    No mention notifies anyone, no ``#12`` links or closes an issue, and no link or image is live. The only
+    issue reference a pull request body acts on is the ``Closes #N`` Contexer writes itself.
+    """
+    text = _MENTION.sub("@\u200b", _ISSUE_REF.sub("#\u200b", text))
+    return text.replace("](", "]\u200b(").replace("![", "!\u200b[").replace("<", "&lt;")
 
 
 def _duration(seconds: float) -> str:

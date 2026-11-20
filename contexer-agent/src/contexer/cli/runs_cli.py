@@ -6,15 +6,18 @@
 from __future__ import annotations
 
 import json
+import statistics
 from pathlib import Path
 from typing import Any
 
 import typer
+from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
 from contexer.checkpoint import ShadowRepo
+from contexer.cli import term
 from contexer.contract.store import CONTEXER_DIR
 from contexer.evidence.rundir import RUNS_DIR
 
@@ -33,9 +36,13 @@ _STYLE = {
 def runs(
     project_dir: Path = typer.Option(Path("."), "--dir", "-d", help="Project directory.", file_okay=False),
     limit: int = typer.Option(15, "--limit", "-n", min=1, help="How many runs to show."),
+    stats: bool = typer.Option(False, "--stats", help="How the agent runs in this project ended, and what they cost."),
 ) -> None:
     """List recent verifications and agent runs with their outcome and report path."""
     console = Console()
+    if stats:
+        _print_stats(console, run_stats(project_dir.resolve()))
+        return
     root = project_dir.resolve() / CONTEXER_DIR / RUNS_DIR
     rows = [row for row in (_summarise(d) for d in sorted(root.glob("*"), reverse=True) if d.is_dir()) if row]
     if not rows:
@@ -55,6 +62,71 @@ def runs(
             escape(row["report"]),
         )
     console.print(table)
+
+
+class RunStats(BaseModel):
+    """What the agent runs kept in a project's ``.contexer/runs`` add up to. Read from files; nothing is sent anywhere."""
+
+    runs: int = 0
+    succeeded: int = 0
+    first_try: int = 0
+    endings: dict[str, int] = Field(default_factory=dict)
+    attempts_per_success: float = 0.0
+    # The coding agent's spend plus what Contexer's own agents cost, where that is known.
+    cost_usd: float = 0.0
+    cost_per_success: float | None = None
+    spent_without_proof: float = 0.0
+    runs_with_high_note: int = 0
+    median_seconds: float = 0.0
+
+
+def run_stats(project: Path) -> RunStats:
+    """Outcome numbers for every agent run (``run.json``) in the project. Verifications alone are not counted."""
+    found = [data for d in sorted((project / CONTEXER_DIR / RUNS_DIR).glob("*")) if d.is_dir() and (data := _load(d / "run.json"))]
+    stats = RunStats(runs=len(found))
+    if not found:
+        return stats
+    proven = [r for r in found if r.get("terminal") == "succeeded"]
+    stats.succeeded = len(proven)
+    for run in found:
+        ending = str(run.get("terminal") or "unknown")
+        stats.endings[ending] = stats.endings.get(ending, 0) + 1
+    stats.endings = dict(sorted(stats.endings.items(), key=lambda item: (-item[1], item[0])))
+    stats.first_try = sum(1 for r in proven if len(r.get("attempts") or []) == 1)
+    if proven:
+        stats.attempts_per_success = round(sum(len(r.get("attempts") or []) for r in proven) / len(proven), 2)
+
+    def spent(run: dict[str, Any]) -> float:
+        return float(run.get("cost_usd") or 0.0) + float(run.get("crew_cost_usd") or 0.0)
+
+    stats.cost_usd = round(sum(spent(r) for r in found), 2)
+    stats.cost_per_success = round(stats.cost_usd / len(proven), 2) if proven else None
+    stats.spent_without_proof = round(sum(spent(r) for r in found if r.get("terminal") != "succeeded"), 2)
+    stats.runs_with_high_note = sum(1 for r in found if any(n.get("severity") == "high" for n in r.get("review") or []))
+    stats.median_seconds = float(statistics.median(float(r.get("duration_seconds") or 0.0) for r in found))
+    return stats
+
+
+def _print_stats(console: Console, stats: RunStats) -> None:
+    if not stats.runs:
+        console.print("[dim]No agent runs in this project yet. Try:[/] contexer run \"what should be true\"")
+        return
+    console.print(f"[bold]{stats.succeeded} of {stats.runs} runs ended with every check proven[/]")
+    rows = [("How runs ended", " · ".join(f"{name} {count}" for name, count in stats.endings.items()))]
+    if stats.succeeded:
+        rows.append(
+            ("When proven", f"{stats.first_try} at the first attempt · {stats.attempts_per_success:g} attempts on average")
+        )
+    cost = f"${stats.cost_usd:.2f} in all"
+    if stats.cost_per_success is not None:
+        cost += f" · ${stats.cost_per_success:.2f} per proven run"
+    if stats.spent_without_proof:
+        cost += f" · ${stats.spent_without_proof:.2f} spent on runs that proved nothing"
+    rows.append(("Cost", cost))
+    rows.append(("Review", f"{stats.runs_with_high_note} run(s) with a high-severity note"))
+    rows.append(("Typical run", term.duration(stats.median_seconds)))
+    term.fields(console, rows)
+    console.print("[dim]Counted from run.json in .contexer/runs; a provider that reports no price counts as $0 unless rates are set.[/]")
 
 
 def _summarise(run_dir: Path) -> dict[str, str] | None:
@@ -101,13 +173,14 @@ def restore(
     attempt: int | None = typer.Option(None, "--attempt", "-a", min=0, help="An attempt (0 is the project before the run)."),
     stopped: bool = typer.Option(False, "--stopped", help="The unfinished work of a run you stopped."),
     undo: bool = typer.Option(False, "--undo", help="The files as they were before the last restore from this run."),
+    before_resume: bool = typer.Option(False, "--before-resume", help="The files as they were when the run was last resumed."),
     project_dir: Path = typer.Option(Path("."), "--dir", "-d", help="Project directory.", file_okay=False),
 ) -> None:
     """Put the files back to a snapshot a run took. Ignored files such as .env and node_modules are not touched."""
-    if sum((attempt is not None, stopped, undo)) != 1:
-        raise typer.BadParameter("choose one of --attempt N, --stopped or --undo")
+    if sum((attempt is not None, stopped, undo, before_resume)) != 1:
+        raise typer.BadParameter("choose one of --attempt N, --stopped, --before-resume or --undo")
     console = Console()
-    name = "stopped" if stopped else "undo" if undo else str(attempt)
+    name = "stopped" if stopped else "undo" if undo else "before-resume" if before_resume else str(attempt)
     shadow = ShadowRepo(project_dir.resolve())
     commit = shadow.resolve(f"{run_id}/{name}")
     if commit is None:

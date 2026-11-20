@@ -182,6 +182,9 @@ def project_findings(project: Path) -> list[Finding]:
     findings: list[Finding] = []
     if not project.is_dir():
         return [Finding("Project", "fail", f"{project} is not a directory")]
+    from contexer.riskscan import scan_project
+
+    findings += [Finding("Secrets", "warn", risk.message) for risk in scan_project(project)]
     try:
         settings = load_project_config(project)
     except ProjectConfigError as exc:

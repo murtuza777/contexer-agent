@@ -73,8 +73,11 @@ REPAIR = ({"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS})
 # -- choosing the engine ----------------------------------------------------------------------------
 
 
-def test_the_classic_engine_is_the_default(project: Path, tmp_path: Path) -> None:
+def test_the_graph_engine_is_the_default_and_classic_can_be_asked_for(project: Path, tmp_path: Path) -> None:
     result = _run(project, "--contract", CONTRACT_ID, "--model", _turns(tmp_path, *REPAIR))
+    assert result.exit_code == 0, result.output
+    assert _latest(project)["engine"] == "graph"
+    result = _run(project, "--contract", CONTRACT_ID, "--model", _turns(tmp_path, *REPAIR), "--engine", "classic")
     assert result.exit_code == 0, result.output
     assert _latest(project)["engine"] == "classic"
 

@@ -51,7 +51,7 @@ MAX_EXPLANATION_CHARS = 500
 DEFAULT_COMMAND_TIMEOUT = 180.0
 # The package.json scripts that count as the project's own checks, in the order they are run.
 COMMAND_SCRIPTS = ("test", "lint", "typecheck", "type-check")
-_MAX_STEPS = 12
+DEFAULT_REVIEW_STEPS = 12
 _TIMEOUT = 300.0
 _MAX_DIFF_CHARS = 30_000
 _MAX_OUTPUT_TAIL = 1_500
@@ -117,8 +117,13 @@ def blocking_notes(notes: Sequence[ReviewNote]) -> list[ReviewNote]:
 
 
 def holds_pull_request(notes: Sequence[ReviewNote]) -> bool:
-    """A high-severity security note, from any source, keeps a pull request a draft until a person has looked."""
-    return any(n.severity == "high" and n.category == "security" for n in notes)
+    """A high-severity note, from any source, keeps a pull request a draft until a person has looked.
+
+    It was security notes only, until a run on a real app passed every check by removing a "delete this?"
+    confirmation and the note that said so was high, about logic, and held nothing. A draft does not say
+    the work failed: the checks passed. It says: read this before merging.
+    """
+    return any(n.severity == "high" for n in notes)
 
 
 def reviewer_prompt() -> str:
@@ -142,6 +147,7 @@ _PLACEHOLDER = re.compile(r"(?i)example|placeholder|your[-_ ]|changeme|dummy|sam
 _FOCUSED = re.compile(r"\b(?:it|test|describe|context)\.only\s*\(|\b(?:fit|fdescribe)\s*\(")
 _SKIPPED = re.compile(r"\b(?:it|test|describe|context)\.skip\s*\(|\b(?:xit|xdescribe|xtest)\s*\(|@pytest\.mark\.skip|@unittest\.skip")
 _ASSERTION = re.compile(r"\bexpect\s*\(|\bassert\b|\bassert[A-Z]\w*\s*\(|\.should\b")
+_CONFIRM = re.compile(r"\bconfirm\s*\(")
 _DEBUG = re.compile(r"\bconsole\.(log|debug|trace)\s*\(|^\s*debugger\s*;?\s*$|\bbreakpoint\(\)|\bpdb\.set_trace\(\)")
 
 
@@ -200,7 +206,7 @@ def changed_files(diff: str) -> list[str]:
     return list(dict.fromkeys(f.path for f in _parse(diff) if f.path))
 
 
-def _secret_in(line: str) -> str:
+def secret_kind(line: str) -> str:
     """What kind of secret ``line`` holds, or ''. The value itself is never returned."""
     for label, pattern in _KNOWN_SECRETS:
         if pattern.search(line):
@@ -236,7 +242,7 @@ def prescan(diff: str) -> list[ReviewNote]:
                 add(file.path, 0, "high", "security", "An environment file is part of the change. They hold secrets and do not belong in a commit.")
             continue
         for line, text in file.added:
-            found = _secret_in(text)
+            found = secret_kind(text)
             if found:
                 add(
                     file.path, line, "high", "security",
@@ -250,6 +256,15 @@ def prescan(diff: str) -> list[ReviewNote]:
                 add(file.path, line, "medium", "tests", "A test is switched off with `skip`.")
             elif not tests and _DEBUG.search(text):
                 add(file.path, line, "low", "debug", f"Leftover debug code: `{text.strip()[:80]}`.")
+        if not tests:
+            asked_before = sum(1 for text in file.removed if _CONFIRM.search(text))
+            asks_now = sum(1 for _line, text in file.added if _CONFIRM.search(text))
+            if asked_before > asks_now:
+                add(
+                    file.path, 0, "medium", "logic",
+                    "A confirmation the app asked before an action was removed. If a check could not get past it, the "
+                    'check needs {"action": "accept_dialog"} before the step that opens it; put the confirmation back.',
+                )  # fmt: skip
         if tests:
             removed = sum(1 for text in file.removed if _ASSERTION.search(text))
             added = sum(1 for _line, text in file.added if _ASSERTION.search(text))
@@ -390,6 +405,7 @@ async def review(
     run_dir: Path | None = None,
     budget: Budget | None = None,
     secrets: Sequence[str] = (),
+    max_steps: int = DEFAULT_REVIEW_STEPS,
 ) -> ReviewResult:
     """Review ``diff`` (the change from the baseline to the project as it is now in ``project_dir``)."""
     result = ReviewResult()
@@ -419,7 +435,7 @@ async def review(
             args_schema=_NoArgs,
         ),
     ]
-    spec = AgentSpec(name="reviewer", system_prompt=reviewer_prompt(), output_schema=Review, max_steps=_MAX_STEPS, timeout=_TIMEOUT)
+    spec = AgentSpec(name="reviewer", system_prompt=reviewer_prompt(), output_schema=Review, max_steps=max_steps, timeout=_TIMEOUT)
     ran = await run_agent(
         spec, model, tools, _task(diff, intent, checks, result), run_dir=run_dir, secrets=list(secrets), budget=budget
     )
