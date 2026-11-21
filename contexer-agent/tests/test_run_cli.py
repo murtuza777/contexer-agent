@@ -88,8 +88,7 @@ def test_engine_graph_runs_the_same_job_on_the_graph(project: Path, tmp_path: Pa
     assert result.exit_code == 0, result.output
     run = _latest(project)
     assert run["engine"] == "graph" and run["terminal"] == "succeeded" and len(run["attempts"]) == 2
-    assert "Engine graph" in out
-    assert "the rules decide" in out  # no model is configured for triage, and the run says so
+    assert "fixed rules decide" in out  # no model is configured for triage, and the run says so
 
 
 def test_the_environment_can_choose_the_engine_and_the_flag_wins(project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -120,7 +119,7 @@ def test_a_triage_decision_by_a_model_is_printed_with_its_reason(project: Path, 
     out = _plain(result.output)
     assert result.exit_code == 0, result.output
     assert "fresh approach" in out.lower() and "The first idea was a dead end." in out
-    assert "the rules decide" not in out
+    assert "fixed rules decide" not in out
 
 
 # -- a goal, drafted and approved inside the run -------------------------------------------------

@@ -83,7 +83,7 @@ def test_the_bill_names_each_agent_and_says_when_it_is_an_estimate() -> None:
     assert "intent 3,869 tokens" in line and "reviewer 5,371 tokens" in line
     assert "$0.02" in line and "estimated" in line
     unknown = outcome.model_copy(update={"crew_cost_usd": None, "crew_cost_estimated": False})
-    assert "cost not reported" in bill_line(unknown)
+    assert "cost unknown" in bill_line(unknown)
     assert bill_line(outcome.model_copy(update={"agents": []})) == ""
 
 
@@ -99,3 +99,21 @@ def test_a_run_says_what_it_can_use_at_most_before_it_starts(project: Path, tmp_
     shown = " ".join(result.output.split())
     assert "at most 3 coding-agent turn(s)" in shown  # two repair rounds by default
     assert "one budget of $3.00" in shown
+
+
+def test_the_summary_says_what_the_review_found_not_only_how_many() -> None:
+    from rich.console import Console
+
+    from contexer.cli.run_cli import _render
+    from contexer.crew.reviewer import ReviewNote
+
+    notes = [
+        ReviewNote(file="src/Symptoms.tsx", line=41, severity="high", category="logic", explanation="The delete button no longer asks for confirmation."),
+        ReviewNote(file="app.js", line=3, severity="low", category="debug", explanation="Leftover debug code.", source="scan", backed=True),
+    ]
+    outcome = RunOutcome(run_id="r", contract_id="c", agent="scripted", terminal="succeeded", engine="graph", review=notes, run_dir=".")
+    console = Console(record=True, width=110, force_terminal=False, color_system=None)
+    _render(console, outcome)
+    text = console.export_text()
+    assert "Review" in text and "src/Symptoms.tsx:41" in text and "no longer asks for confirmation" in text
+    assert text.index("high") < text.index("low")  # the one that needs a person first

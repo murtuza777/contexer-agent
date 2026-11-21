@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
+import sys
 import webbrowser
 from collections.abc import Callable
 from contextlib import ExitStack
@@ -28,6 +30,7 @@ from contexer.cli.gate_cli import (
     print_drafted_by,
     warn_if_weak_draft,
 )
+from contexer.cli.runview import RunView
 from contexer.config.project import (
     CREW_AGENTS,
     AgentSettings,
@@ -48,6 +51,7 @@ from contexer.github.api import GitHubClient, GitHubError, github_token
 from contexer.github.handoff import Handoff, HandoffError, HandoffPlan, hand_off, plan_handoff
 from contexer.github.issues import ISSUE_ORIGIN
 from contexer.graph import GraphController, ResumeError
+from contexer.graph.context import RunEvent
 from contexer.llm import discovery
 from contexer.riskscan import scan_project
 from contexer.workflow.criteria import GoalAnalyzer
@@ -72,6 +76,10 @@ def run(
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve the checklist without asking."),
     no_replay: bool = typer.Option(False, "--no-replay", help="Skip re-checking other approved contracts."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Print the run as one JSON event per line and nothing else (needs --yes). For CI and other tools."
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Keep every tool call of the coding agent in the output."),
     pr: bool = typer.Option(
         False, "--pr", help="Commit the result to a new branch and open a pull request with the evidence."
     ),
@@ -107,7 +115,11 @@ def run(
         chosen = "graph"
     elif correct:
         raise typer.BadParameter("--correct goes with --resume RUN: it corrects a run that was stopped")
-    console = Console()
+    if json_output and not (yes or resume):
+        raise typer.BadParameter("--json cannot stop to ask for an approval: add --yes, or approve the contract first")
+    if json_output and chosen != "graph":
+        raise typer.BadParameter("--json is for the graph engine; drop --engine classic")
+    console = Console(quiet=True) if json_output else Console()
     project = project_dir.resolve()
     if shutil.which("git") is None:
         raise typer.BadParameter("git is not installed. Contexer snapshots your project with git before an agent touches it.")
@@ -192,9 +204,11 @@ def run(
             resume=resume,
             correction=correct,
             origin=ISSUE_ORIGIN.format(number=issue) if issue is not None else "",
+            json_output=json_output,
+            verbose=verbose,
         )
         final = store.load(outcome.contract_id) if outcome.contract_id and store.exists(outcome.contract_id) else None
-        _finish(console, outcome, final, handoff_plan, pr, issue, open_report)
+        _finish(console, outcome, final, handoff_plan, pr, issue, open_report, json_output)
         return
 
     draft_id: str | None = None
@@ -236,6 +250,7 @@ def _finish(
     pr: bool,
     issue: int | None,
     open_report: bool,
+    json_output: bool = False,
 ) -> None:
     """Hand the result off if asked, print it, and exit with the outcome's code."""
     handoff: Handoff | None = None
@@ -247,6 +262,26 @@ def _finish(
             except HandoffError as exc:
                 handoff_error = str(exc)
     _render(console, outcome, handoff, handoff_error, pr)
+    if json_output:
+        emit_json(
+            {
+                "event": "end",
+                "at": round(outcome.duration_seconds, 2),
+                "run_id": outcome.run_id,
+                "terminal": outcome.terminal,
+                "reason": outcome.reason,
+                "exit_code": outcome.exit_code,
+                "attempts": len(outcome.attempts),
+                "best_attempt": outcome.best_attempt,
+                "cost_usd": outcome.cost_usd,
+                "crew_cost_usd": outcome.crew_cost_usd,
+                "review_notes": len(outcome.review),
+                "report": str(Path(outcome.run_dir, "report.html")),
+                "pull_request": handoff.url if handoff is not None else None,
+                "draft": handoff.draft if handoff is not None else None,
+                "handoff_note": (handoff.note.strip() if handoff is not None else handoff_error) or None,
+            }
+        )
     if open_report:
         webbrowser.open(Path(outcome.run_dir, "report.html").resolve().as_uri())
     raise typer.Exit(code=outcome.exit_code)
@@ -308,6 +343,12 @@ def _snapshot_failed(console: Console, activity: Any, exc: Exception) -> NoRetur
     raise typer.Exit(code=3) from None
 
 
+def emit_json(event: dict[str, Any]) -> None:
+    """One event as one line on stdout. ASCII only, so no terminal's encoding can break a line."""
+    sys.stdout.write(json.dumps(event, ensure_ascii=True, default=str) + "\n")
+    sys.stdout.flush()
+
+
 def run_budget(config: ProjectConfig, max_usd: float | None = None) -> Budget:
     """The budget of one run: the token limit, the project's rates, and the one budget in dollars (the flag wins)."""
     return Budget(
@@ -351,7 +392,7 @@ def bill_line(outcome: RunOutcome) -> str:
         return ""
     parts = [f"{a.agent} {a.tokens_in + a.tokens_out:,} tokens" for a in outcome.agents]
     if outcome.crew_cost_usd is None:
-        cost = "cost not reported by the provider (set [agents] input_usd_per_mtok to price it)"
+        cost = "cost unknown (the provider reports none; set prices under [agents] to see it)"
     else:
         cost = f"${outcome.crew_cost_usd:.2f}" + (
             " estimated from the configured rates" if outcome.crew_cost_estimated else ""
@@ -436,7 +477,7 @@ def _progress(
     return on_event
 
 
-def _asker(console: Console, activity: term.Activity, yes: bool) -> Callable[[dict[str, Any]], dict[str, Any]]:
+def _asker(console: Console, activity: Any, yes: bool) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """How a run on the graph engine puts its questions to the person at the terminal."""
 
     def ask(request: dict[str, Any]) -> dict[str, Any]:
@@ -500,6 +541,8 @@ def execute_graph(
     on_progress: Callable[[str, str], None] | None = None,
     origin: str = "",
     models: dict[str, Any] | None = None,
+    json_output: bool = False,
+    verbose: bool = False,
 ) -> RunOutcome:
     """A run on the graph engine: it can wait for an approval or an answer, be stopped, and be resumed."""
     from contexer.cli.test_cli import is_interactive
@@ -509,16 +552,15 @@ def execute_graph(
     subject = f"Resuming {resume}" if resume else (contract.goal if contract is not None else goal or "")
     term.header(console, "run", subject.splitlines()[0] if subject else "")
     decides = (
-        f"{escape(describe_model(model))} [dim](Intent, Triage, Diagnoser, Reviewer)[/]"
+        f"{escape(describe_model(model))} [dim]for Contexer's own agents[/]"
         if model is not None
-        else "the rules decide [dim](no model is configured for Contexer's own agents; `contexer setup` adds one)[/]"
+        else "[dim]none for Contexer's own agents, so fixed rules decide each next step (`contexer setup` adds one)[/]"
     )
     term.fields(
         console,
         [
             ("Agent", escape(agent.describe())),
-            ("Engine", "graph"),
-            ("Decisions", decides),
+            ("Model", decides),
             ("Limits", _limits_line(agent, settings) + _run_budget_note(budget)),
             (
                 "Estimate",
@@ -526,13 +568,36 @@ def execute_graph(
             ),
         ],
     )
-    activity = term.Activity(console)
+    # The run is drawn from its events: lines that stay, and in a terminal a block that is redrawn (cli/runview.py).
+    # With --json the same events are printed, one object per line, and nothing is drawn.
+    activity = RunView(console, verbose=verbose, project=project)
+
+    def on_detail(event: RunEvent) -> None:
+        if not json_output:
+            activity.handle(event)
+        elif event.kind != "end":  # the last line is written when the hand-off is known too
+            emit_json(event.as_json())
+
+    if json_output:
+        emit_json(
+            {
+                "event": "run-start",
+                "at": 0.0,
+                "agent": agent.describe(),
+                "engine": "graph",
+                "goal": subject,
+                "resume": resume,
+                "repair_rounds": settings.max_repair_rounds,
+                "model": describe_model(model) if model is not None else None,
+            }
+        )
     controller = GraphController(
         project,
         agent,
         settings,
         url=url,
-        on_event=_progress(console, activity, on_progress),
+        on_event=on_progress,
+        on_detail=on_detail,
         model=model,
         ask=_asker(console, activity, yes),
         # Triage may stop to ask only when a person is at the terminal; an approval is always asked for.
@@ -803,7 +868,12 @@ def _render(
     console.print(f"{term.mark(mark)} [bold {style}]{escape(title)}[/] [dim]·[/] {escape(outcome.reason)}")
 
     rows: list[tuple[str, str]] = []
-    for a in outcome.attempts:
+    # A graph run has already shown each attempt as it happened; the summary does not say it twice.
+    listed = [] if outcome.engine == "graph" else outcome.attempts
+    if outcome.engine == "graph" and len(outcome.attempts) > 1:
+        kept = f" · attempt {outcome.best_attempt} kept" if outcome.best_attempt else ""
+        rows.append(("Attempts", f"{len(outcome.attempts)}{kept}"))
+    for a in listed:
         counts = (
             f"{a.verified} verified · {a.refuted} refuted · {a.unverified} unverified"
             if a.outcome != "error"
@@ -827,6 +897,15 @@ def _render(
         rows.append(("Pull request", f"[red]not opened:[/] {escape(handoff_error)}"))
     elif pr and outcome.terminal not in ("tampered", "cancelled"):
         rows.append(("Pull request", "[dim]none: the run left no changes[/]"))
+    # What reading the diff found: the notes themselves, the ones that need a person first.
+    order = {"high": 0, "medium": 1, "low": 2}
+    for index, note in enumerate(sorted(outcome.review, key=lambda n: order.get(n.severity, 3))[:4]):
+        where = f"{note.file}:{note.line}" if note.file and note.line else note.file
+        style = "red" if note.severity == "high" else "yellow" if note.severity == "medium" else "dim"
+        text = f"[{style}]{note.severity}[/] {escape(where)} [dim]·[/] {escape(note.explanation)}" if where else f"[{style}]{note.severity}[/] {escape(note.explanation)}"
+        rows.append(("Review" if index == 0 else " ", text))
+    if len(outcome.review) > 4:
+        rows.append((" ", f"[dim]and {len(outcome.review) - 4} more in the report[/]"))
     rows.append(("Report", escape(term.path(Path(outcome.run_dir, "report.html")))))
     spend = f" · ${outcome.cost_usd:.2f} agent spend" if outcome.cost_usd else ""
     rows.append(("Took", f"{term.duration(outcome.duration_seconds)}{spend}"))

@@ -91,8 +91,36 @@ Took        9.2s
 ```
 
 The exit code is 1. Colour only means something: green proven, red refuted,
-yellow needs a person. While a coding agent works, a live line shows the
-elapsed time and its tool calls so far.
+yellow needs a person.
+
+### While `contexer run` works
+
+A block is redrawn in place while the coding agent works: every check that
+decides the run with its state, what is happening now, and the time and
+money so far. This frame is from a real run with Claude Code:
+
+<img src="contexer-agent/docs/img/run-live.svg" alt="contexer run while the agent works: seven checks waiting, the agent editing app.js, 28 seconds in" width="760">
+
+On a repair, the check that failed is at the top with what the browser saw:
+
+<img src="contexer-agent/docs/img/run-live-repair.svg" alt="contexer run repairing: one check failed with got 2 left, six proven" width="760">
+
+What stays in the terminal, in a CI log and in a pasted issue is one line
+per attempt, one for what the agent did, and one for the verdict. This is
+the whole output of that run with Claude Code (one attempt, 46 seconds,
+$0.23), with the note the review left:
+
+<img src="contexer-agent/docs/img/run-pass.svg" alt="the whole output of a contexer run that passed at the first attempt" width="760">
+
+When a check fails, it is named under the verdict with what was expected
+and what was there, and the next attempt follows. (The bundled todo example;
+a scripted agent stands in for the coding agent, which is why its turns
+take no time.)
+
+<img src="contexer-agent/docs/img/run-repair.svg" alt="a contexer run where one check fails, the agent repairs it, and the second attempt passes" width="760">
+
+`--verbose` keeps every tool call of the agent in the output. `--json`
+prints the run as one event per line instead, for CI and other tools.
 
 Each run also writes a self-contained `report.html`. It contains:
 

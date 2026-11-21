@@ -22,6 +22,17 @@ is still open are in [docs/agentic/readiness.md](docs/agentic/readiness.md).
 - Checks approved with `--yes` are recorded as not reviewed by a person, and
   the pull request is a draft that says so.
 
+### Added (terminal)
+
+- **A new run view.** One line per attempt, one for what the agent did, one
+  for the verdict, with the checks that failed and what the browser saw
+  under it. In a terminal, a block redrawn in place shows every check with
+  its state, what is happening now, and the time and money so far. Tool
+  calls stay out of the log unless `--verbose`.
+- **`contexer run --json`**: the run as one JSON event per line, for CI and
+  other tools. The last event has the exit code, the report and the pull
+  request.
+
 ### Added (reliability)
 
 - The issue flow: an approval given before the draft last changed is
