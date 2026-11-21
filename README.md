@@ -13,10 +13,16 @@ and OpenCode. It works in four steps:
 1. It turns a goal into checks you approve.
 2. It has the agent build against them.
 3. It proves every check in a real browser.
-4. It repairs failures in a bounded loop.
+4. It repairs failures in a bounded loop, then reads the diff for what a
+   check cannot see.
 
 After that, it re-checks everything you ever approved on every later change,
 and blocks the merge when behaviour regresses.
+
+It also works on what an agent has already built. `contexer test "what the
+app should do"` uses your running app the way a person would, reports only
+what a replay by code confirms, and writes the fix prompt to paste into any
+coding tool.
 
 You make two decisions per task: **what "done" means**, and **whether to
 merge**. Everything between is Contexer's job.
@@ -137,9 +143,17 @@ different project); the command it installs is `contexer`.
 
 ```bash
 uv tool install contexer-agent   # or: pipx install contexer-agent, or: pip install contexer-agent
-contexer setup         # bring your own key, pick models (tested live), install Chromium
+contexer demo          # no key needed: a todo app with a bug, caught in about ten seconds
+contexer setup         # bring your own key, pick models (tested live)
 contexer doctor        # checks Chromium, git, Node, model keys and agents, with the fix for each
+
+cd contexer-demo
+contexer test "Users can add tasks and complete them, and the remaining count stays correct"
 ```
+
+The last command is your first result: the bugs a replay confirmed, and a
+fix prompt. A new install has no browser yet; the demo offers to download
+Chromium, and `contexer setup --browser` does it on its own.
 
 Until the first PyPI release is out, install from GitHub:
 `uv tool install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"`.
@@ -381,96 +395,96 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 
 ## Status
 
-What works today, with tests (307 passing) and CI on Linux:
+Version 0.5.0. What works today, with tests (987 passing) and CI on Linux:
 
-- **Live end-to-end runs** with a real coding agent (OpenCode on a free
-  OpenRouter model, 2026-10-26 and 27):
-  - "delete a project" in a signed-in app: built, and proven on the first
-    attempt;
-  - "edit an expense" in React + Vite: the agent hung until the turn limit,
-    and Contexer proved its change anyway (9/9 checks, including the 6 that
-    already existed);
-  - from a clean `pip install` + `contexer setup`: the first attempt missed 2
-    of 8 checks, Contexer sent the evidence back, and the repair passed 8/8
-    in 111 s;
-  - the todo app's counting bug with `--pr`: the agent found and fixed it in
-    81 s, Contexer proved 7/7 checks, and committed only `app.js` to a new
-    branch and pushed it, in 91 s.
-- Bring your own key (`contexer setup`, `contexer models`) for 15 providers.
-- Contracts, approval and hashing; `verify`, `replay`, `contract`, `run`,
-  `doctor` and `bench` (including `--live`).
-- Drafts that are tried on the running app before approval.
-- Starting the project's dev server (static, Vite, Next.js, or a command in
-  `contexer.toml`): `npm ci` from the lockfile, a reinstall when an agent
-  changes dependencies, and killing the whole process tree on Windows.
-- Apps behind a login (`[auth]`), with secrets masked in all evidence.
-- Apps that keep data on a server: `[app] reset` before every check.
-- Coding agents: Claude Code, Codex and OpenCode.
-- The repair controller: snapshots, keep-best, revert, fresh session on a
-  repeated failure, tamper guard and regression replay.
-- GitHub: the commit status, the job summary, and a reusable action that
-  takes about 40 s on a pull request.
-- Hand-off as a pull request (`--pr`), work from an issue (`--issue`), and the
-  issue workflow: checks posted on a labelled issue, `/contexer approve`, a
-  live status comment, and a pull request that closes the issue.
-- Ctrl+C stops the agent at once and puts the project back; any attempt can
-  be restored (`contexer restore`).
-- One terminal design across commands: no boxes, colour only for outcomes,
-  aligned summaries, and a live line while the agent works.
-- OpenRouter's free-request count is checked before a run starts.
-- A landing page ([`website/`](website)) that shows real output, built as
-  static pages.
+- **`contexer test`**: an agent uses the running app against what you said
+  it should do; every finding is replayed by code; a fix prompt names the
+  cause in the code. `--again` replays the saved checks with no model.
+- **`contexer run`**: what was understood and the checks, for you to
+  approve; the coding agent builds; every check is proven in Chromium;
+  failures go back with what the browser saw; an attempt that makes things
+  worse is undone; the diff of a passing run is read once. It can wait for
+  an answer, be stopped with Ctrl+C, and continue with `--resume`.
+- **Five agents of Contexer's own**, on any of 15 providers with your key:
+  Intent, Tester, Diagnoser, Triage and Reviewer. None of them decides
+  whether the work is done. With no model configured, fixed rules decide
+  each next step and the run still works.
+- **Limits you set**: repair rounds, one budget in dollars for the coding
+  agent and Contexer's agents together, a model and a step cap per agent.
+  A run says what it can cost at most before it starts.
+- **Coding agents**: Claude Code, Codex and OpenCode.
+- **Your app**: static files, Vite, Next.js, or a start command in
+  `contexer.toml`; apps behind a login (`[auth]`, secrets masked in all
+  evidence); apps that keep data on a server (`[app] reset`).
+- **GitHub**: the merge gate, a pull request with the evidence (`--pr`), and
+  the issue workflow (label an issue, `/contexer approve`).
+- **Safety**: approved checks are hashed and an agent that edits them has
+  its run refuted; every attempt is snapshotted and can be restored; text
+  from a page, an issue or a model is quoted as data, never followed; a
+  change that adds a secret is never pushed.
+
+**Live runs** (2026-11-19, Claude Code, Contexer's agents on Azure
+`gpt-5.4`), on [HealthCare.Ai](https://github.com/murtuza777/HealthCare.Ai),
+a React and Cloudflare Worker app Contexer had never seen:
+
+| Run | Outcome |
+| --- | --- |
+| `contexer test` on the public pages | No confirmed bugs, 5 working behaviours confirmed, 1 question |
+| `contexer run --pr`, one screen | 1 attempt, 3 of 3 checks, $0.85, 4 minutes |
+| `contexer run --pr` behind sign-in, frontend and Worker, first try | **Failed**: the test account stopped at a consent screen, and $6.26 was spent before the run ended |
+| The same change, second try | 2 attempts, 4 of 4 checks, $3.35, 7 minutes. The review found that the agent had removed a delete confirmation to make a check pass |
+
+The failed run is why a sign-in is now tried before anything is spent.
+
+**Measured** on the seeded bugs
+([results](contexer-agent/bench/RESULTS.md)): replaying hand-written checks
+catches 40 of 40 with no false failure. The Tester, from a one-line intent,
+finds 25 of 40 on the seven apps it was developed on and 3 of 6 on an app
+written afterwards; that app first showed two false alarms in four runs,
+and none after a rule in code was added for them. A coding agent driven by
+Contexer (OpenCode on `gpt-5.4`) fixed 46 of 46. The Reviewer flagged 10 of
+10 planted problems and raised one false high-severity note on 10 clean
+diffs.
 
 Honest gaps:
 
-- Live runs so far used OpenCode with a free OpenRouter model. Claude Code and
-  Codex are tested against their real stream protocols with fake binaries, and
-  the real Codex CLI accepts Contexer's exact invocations up to authentication.
-  A run on either awaits an account with credit.
-- The pull-request hand-off has committed and pushed in a live run, to a
-  local remote; it and the issue workflow have not yet opened a real pull
-  request on GitHub. Their GitHub calls are tested against a simulated API,
-  and the read calls against the real one.
-- No GitHub App (check runs, approve button) yet; not on PyPI yet.
-- No visual-design checks. Sign-in sessions kept only in `sessionStorage`
-  are not carried into checks (cookie and local-storage sessions are).
-- Draft quality depends on the model. The pinned free model caught 82% of
-  seeded bugs from one-line goals; the random free router varies from 25% to
-  83%. Free models take 1–2 minutes per draft and allow about 50 requests a
-  day. A paid model has not been benchmarked yet, for lack of a paid key on
-  the development machine. Replays never call a model.
+- **Not on PyPI yet.** Until the first release, install from GitHub.
+- **Not run on macOS**, and not with Codex against a real account. The
+  issue workflow has not been run against a real GitHub issue.
+- **The checks of the live runs were approved with `--yes`**, not read by a
+  person first. The removed confirmation above is what that costs.
+- **Web apps only**, in Chromium. No visual-design checks. Sign-in sessions
+  kept only in `sessionStorage` are not carried into checks.
+- **Project skills show no saving.** Over twelve runs the Tester took as
+  many steps with saved skills as without
+  ([phase-2](contexer-agent/docs/agentic/phase-2.md)).
+- **One model was measured** for Contexer's agents (`gpt-5.4`). A cheaper
+  model per agent is a setting, and its effect is not measured.
+- The budget cannot stop a coding agent in the middle of a turn, so one
+  turn can overshoot it.
+- The rest is in
+  [readiness.md](contexer-agent/docs/agentic/readiness.md).
 
 ## What's next
 
-Today Contexer proves a change and repairs it from fixed templates. The next
-versions add agents that do the rest of the human's work in the loop, while
-code keeps the verdict:
+In order, and why, in
+[launch.md](contexer-agent/docs/agentic/launch.md):
 
-| Agent | Takes over |
+| Next | What it is for |
 | --- | --- |
-| Intent | Understanding what you meant, and remembering every correction |
-| Tester | Clicking through the running app like a user |
-| Reviewer | Reading the coding agent's diff |
-| Diagnoser | Working out the cause and writing the fix prompt |
-| Triage | Choosing the next move: repair, start over, roll back, or ask you |
+| The release | The tag and PyPI, so the install is one line |
+| A plugin for Claude Code and Codex | The agent calls Contexer itself and is told what failed |
+| Evidence in the pull request | Screenshots and a trace a reviewer can see without your machine |
+| More agents, each measured before it ships | A regression guard, an access prober, a dependency checker, a scope guard |
 
-Every finding the Tester reports is turned into a recorded check and replayed
-by code. A bug or a pass counts only when the replay confirms it.
-
-| Phase | Result | Tickets |
-| --- | --- | --- |
-| 0 | Foundations: models with tools, the agent loop, the tester benchmark | [phase-0](contexer-agent/docs/agentic/phase-0.md) |
-| 1 | `contexer test`: explore an app, report confirmed findings | [phase-1](contexer-agent/docs/agentic/phase-1.md) |
-| 2 | Intent memory, project skills, a fix prompt to paste into any tool | [phase-2](contexer-agent/docs/agentic/phase-2.md) |
-| 3 | The closed loop: `contexer run` driven by the agents | [phase-3](contexer-agent/docs/agentic/phase-3.md) |
-| 4 | Diff review; pull requests and issues on the new engine | [phase-4](contexer-agent/docs/agentic/phase-4.md) |
-| 5 | Security pass, cost controls, live runs, release | [phase-5](contexer-agent/docs/agentic/phase-5.md) |
-
-The design is in
+How 0.5.0 was built, phase by phase with tickets and results:
+[0](contexer-agent/docs/agentic/phase-0.md),
+[1](contexer-agent/docs/agentic/phase-1.md),
+[2](contexer-agent/docs/agentic/phase-2.md),
+[3](contexer-agent/docs/agentic/phase-3.md),
+[4](contexer-agent/docs/agentic/phase-4.md),
+[5](contexer-agent/docs/agentic/phase-5.md). The design is in
 [docs/agentic/architecture.md](contexer-agent/docs/agentic/architecture.md).
-Work is tracked in
-[GitHub issues](https://github.com/murtuza777/contexer-agent/issues), one
-milestone per phase.
 
 ## Docs
 
@@ -481,7 +495,7 @@ The full index is in [contexer-agent/docs](contexer-agent/docs/README.md).
 | [Try it yourself](contexer-agent/docs/try-it.md) | Install, set up and use it on your app, step by step |
 | [Developer guide](contexer-agent/README.md) | Setup, commands, `contexer.toml` and tests |
 | [Architecture](contexer-agent/docs/architecture.md) | What exists today: every module, data format, algorithm and security measure |
-| [Agentic harness](contexer-agent/docs/agentic/architecture.md) | What comes next, with tickets per phase |
+| [Agentic harness](contexer-agent/docs/agentic/architecture.md) | The design of Contexer's agents, with tickets and results per phase |
 | [Changelog](contexer-agent/CHANGELOG.md) | What changed in each release |
 | [Contributing](CONTRIBUTING.md) | How to set up, test, commit and open a pull request |
 | [Security](SECURITY.md) | How to report a vulnerability |
