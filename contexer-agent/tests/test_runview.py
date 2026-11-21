@@ -37,7 +37,7 @@ def _first_attempt(view: RunView) -> None:
     _send(view, "phase", "Attempt 1: implementing with claude-code")
     _send(view, "agent", "Read app.js")
     _send(view, "agent", "Edit app.js")
-    _send(view, "agent-done", "Agent done — 1 file(s) changed (23s, $0.65)", at=23, n=1, status="completed", seconds=23.0, cost_usd=0.65, files=1, spent_usd=0.0)
+    _send(view, "agent-done", "Agent done — 1 file(s) changed (23s, $0.65)", at=23, n=1, status="completed", seconds=23.0, cost_usd=0.65, files=1, spent_usd=0.65)
     _send(view, "phase", "Attempt 1: proving 3 checks in Chromium", n=1, proving=3)
     _send(
         view, "verdict", "Attempt 1: FAIL: 2 verified, 1 refuted, 0 unverified", at=31, n=1, outcome="fail", verified=2, refuted=1, unverified=0,
@@ -151,3 +151,38 @@ def test_many_checks_are_summarised_so_the_block_stays_on_one_screen() -> None:
     block.print(view.live_block(now=1.0))
     text = block.export_text()
     assert len(text.splitlines()) <= 20 and "more" in text
+
+
+def test_the_footer_shows_what_the_run_has_spent_not_the_last_turn_twice() -> None:
+    view, _ = _view()
+    _first_attempt(view)  # one turn at $0.65; the event carries the run's total so far
+    _send(view, "attempt-start", at=40, n=2, doing="repairing", fresh=False, agent="claude-code")
+    _send(view, "agent-done", "x", at=80, n=2, status="completed", seconds=30.0, cost_usd=0.50, files=1, spent_usd=1.15)
+    block = Console(record=True, width=100, force_terminal=False, color_system=None)
+    block.print(view.live_block(now=81.0))
+    assert "$1.15" in block.export_text()
+
+
+def test_a_tool_call_names_a_file_by_its_path_in_the_project(tmp_path) -> None:
+    console = Console(record=True, width=100, force_terminal=False, color_system=None)
+    view = RunView(console, project=tmp_path)
+    _send(view, "checks", contract_id="todo", goal="g", checks=CHECKS, earlier_checks=0)
+    _send(view, "attempt-start", n=1, doing="implementing", fresh=False, agent="claude-code")
+    _send(view, "agent", f"Edit {tmp_path / 'src' / 'app.js'}")
+    block = Console(record=True, width=100, force_terminal=False, color_system=None)
+    block.print(view.live_block(now=2.0))
+    text = block.export_text()
+    assert "Edit src/app.js" in text and str(tmp_path) not in text
+
+
+def test_while_the_checks_run_the_status_line_does_not_repeat_the_agents_last_tool_call() -> None:
+    view, _ = _view()
+    _send(view, "checks", contract_id="todo", goal="g", checks=CHECKS, earlier_checks=0)
+    _send(view, "attempt-start", n=1, doing="implementing", fresh=False, agent="claude-code")
+    _send(view, "agent", "Edit app.js")
+    _send(view, "agent-done", "x", at=20, n=1, status="completed", seconds=20.0, cost_usd=0.5, files=1, spent_usd=0.5)
+    _send(view, "phase", "Attempt 1: proving 3 checks in Chromium", at=21, n=1, proving=3)
+    block = Console(record=True, width=100, force_terminal=False, color_system=None)
+    block.print(view.live_block(now=25.0))
+    text = block.export_text()
+    assert "Proving 3 checks in Chromium" in text and "Edit app.js" not in text and "tool call" not in text

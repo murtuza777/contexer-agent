@@ -21,6 +21,7 @@ colour for meaning only, one set of marks.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console, Group, RenderableType
@@ -45,9 +46,11 @@ _STATE_WORD = {"verified": "", "refuted": "", "unverified": "could not be checke
 class RunView:
     """Turns a run's events into the lines that stay and the block that is redrawn."""
 
-    def __init__(self, console: Console, *, verbose: bool = False) -> None:
+    def __init__(self, console: Console, *, verbose: bool = False, project: Path | None = None) -> None:
         self.console = console
         self.verbose = verbose
+        # Paths in tool calls are shown from here: `Edit src/app.js`, not the whole way from the drive.
+        self._roots = _roots(project)
         self.checks: list[dict[str, Any]] = []
         self.earlier_checks = 0
         # Verdicts of the last attempt that was checked, by check id.
@@ -83,12 +86,13 @@ class RunView:
             self._now("Agent working", event.at)
         elif kind == "agent":
             self.tool_calls += 1
-            self.last_tool = event.message
+            shown = self._local(event.message)
+            self.last_tool = shown
             if self.verbose:
-                self._line(f"    [dim]{escape(event.message)}[/]")
+                self._line(f"    [dim]{escape(shown)}[/]")
         elif kind == "agent-done":
             cost = data.get("cost_usd")
-            self.spent_usd = float(data.get("spent_usd") or 0.0) + float(cost or 0.0)
+            self.spent_usd = float(data.get("spent_usd") or 0.0)  # the run's total so far, this turn included
             files = int(data.get("files") or 0)
             parts = [f"{files} file{'' if files == 1 else 's'} changed", term.duration(float(data.get("seconds") or 0.0))]
             if cost:
@@ -96,6 +100,7 @@ class RunView:
             if data.get("status") not in (None, "completed"):
                 parts.insert(0, f"[yellow]{escape(str(data.get('status')))}[/]")
             self._line("  " + " [dim]·[/] ".join(parts))
+            self.tool_calls, self.last_tool = 0, ""  # the turn is over; what runs next is not the agent
             self._now("", event.at)
         elif kind == "phase" and data.get("proving"):
             self._now(f"Proving {data['proving']} checks in Chromium", event.at)
@@ -149,6 +154,13 @@ class RunView:
             self.console.print(Padding(table, (0, 0, 0, 6), expand=False), highlight=False)
         if len(wrong) > MAX_FAILED_LINES:
             self._line(f"      [dim]and {len(wrong) - MAX_FAILED_LINES} more; all of them are in the report[/]")
+
+    def _local(self, text: str) -> str:
+        for root in self._roots:
+            if root in text:
+                # What is left is a path inside the project: written one way on every system.
+                text = text.replace(root, "").replace("\\", "/")
+        return text
 
     # -- the lines that stay --------------------------------------------------------------------
 
@@ -255,3 +267,12 @@ def _short_reason(evidence: str) -> str:
     text = " ".join(evidence.split())
     head, found, tail = text.rpartition(", got ")
     return f"got {tail}" if found and tail else text
+
+
+def _roots(project: Path | None) -> list[str]:
+    """The project folder as an agent may write it, with either kind of slash, longest first."""
+    if project is None:
+        return []
+    base = str(project.resolve())
+    forms = {base + "\\", base.replace("\\", "/") + "/", base + "/"}
+    return sorted(forms, key=len, reverse=True)

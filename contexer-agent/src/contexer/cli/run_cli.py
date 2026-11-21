@@ -392,7 +392,7 @@ def bill_line(outcome: RunOutcome) -> str:
         return ""
     parts = [f"{a.agent} {a.tokens_in + a.tokens_out:,} tokens" for a in outcome.agents]
     if outcome.crew_cost_usd is None:
-        cost = "cost not reported by the provider (set [agents] input_usd_per_mtok to price it)"
+        cost = "cost unknown (the provider reports none; set prices under [agents] to see it)"
     else:
         cost = f"${outcome.crew_cost_usd:.2f}" + (
             " estimated from the configured rates" if outcome.crew_cost_estimated else ""
@@ -570,7 +570,7 @@ def execute_graph(
     )
     # The run is drawn from its events: lines that stay, and in a terminal a block that is redrawn (cli/runview.py).
     # With --json the same events are printed, one object per line, and nothing is drawn.
-    activity = RunView(console, verbose=verbose)
+    activity = RunView(console, verbose=verbose, project=project)
 
     def on_detail(event: RunEvent) -> None:
         if not json_output:
@@ -897,6 +897,15 @@ def _render(
         rows.append(("Pull request", f"[red]not opened:[/] {escape(handoff_error)}"))
     elif pr and outcome.terminal not in ("tampered", "cancelled"):
         rows.append(("Pull request", "[dim]none: the run left no changes[/]"))
+    # What reading the diff found: the notes themselves, the ones that need a person first.
+    order = {"high": 0, "medium": 1, "low": 2}
+    for index, note in enumerate(sorted(outcome.review, key=lambda n: order.get(n.severity, 3))[:4]):
+        where = f"{note.file}:{note.line}" if note.file and note.line else note.file
+        style = "red" if note.severity == "high" else "yellow" if note.severity == "medium" else "dim"
+        text = f"[{style}]{note.severity}[/] {escape(where)} [dim]·[/] {escape(note.explanation)}" if where else f"[{style}]{note.severity}[/] {escape(note.explanation)}"
+        rows.append(("Review" if index == 0 else " ", text))
+    if len(outcome.review) > 4:
+        rows.append((" ", f"[dim]and {len(outcome.review) - 4} more in the report[/]"))
     rows.append(("Report", escape(term.path(Path(outcome.run_dir, "report.html")))))
     spend = f" · ${outcome.cost_usd:.2f} agent spend" if outcome.cost_usd else ""
     rows.append(("Took", f"{term.duration(outcome.duration_seconds)}{spend}"))

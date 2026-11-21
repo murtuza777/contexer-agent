@@ -236,7 +236,7 @@ def _handle_event(event: dict[str, Any], state: _StreamState, on_progress: Progr
                 if name in _EDIT_TOOLS and params.get("file_path"):
                     state.files.append(str(params["file_path"]))
                 if on_progress:
-                    on_progress(f"{name} {str(target)[:100]}" if target else name)
+                    on_progress(f"{name} {str(target)[:400]}" if target else name)
             elif block.get("type") == "text" and block.get("text"):
                 state.last_text = str(block["text"])
     elif kind == "result":
