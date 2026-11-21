@@ -195,12 +195,13 @@ async def test_a_run_that_does_not_exist_cannot_be_resumed(project: Path) -> Non
         await _graph(project, ScriptedAgent([])).resume("20260101-000000-abcd")
 
 
-async def test_a_classic_run_cannot_be_resumed(project: Path) -> None:
-    from contexer.controller import RunController
+async def test_a_run_folder_without_a_checkpoint_cannot_be_resumed(project: Path) -> None:
+    """A run of 0.4, or a `contexer verify`: there is a folder, and nothing to continue from."""
+    from contexer.evidence.rundir import RunDir
 
-    classic = await RunController(project, ScriptedAgent([{"app.js": GOOD_JS}]), runner=fast_runner()).run(contract(project))
+    old = RunDir.create(project)
     with pytest.raises(ResumeError, match="checkpoint"):
-        await _graph(project, ScriptedAgent([])).resume(classic.run_id)
+        await _graph(project, ScriptedAgent([])).resume(old.run_id)
 
 
 async def test_a_run_is_not_resumed_when_what_defines_done_changed_while_it_was_stopped(project: Path) -> None:

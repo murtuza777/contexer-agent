@@ -28,9 +28,8 @@ from contexer.cli.run_cli import (
     _render,
     check_free_quota,
     choose_agent,
-    choose_engine,
     execute_graph,
-    execute_run,
+    one_engine,
 )
 from contexer.config.project import ProjectConfigError, load_project_config, load_project_env
 from contexer.contract import Contract, ContractStore
@@ -82,9 +81,10 @@ def draft(
         store = ContractStore(project)
         origin = ISSUE_ORIGIN.format(number=number)
         contract_id = store.unique_id(f"issue {number} {issue.get('title', '')}")
-        model = run_cli.crew_model(project) if choose_engine(None) == "graph" else None
+        one_engine(None)
+        model = run_cli.crew_model(project)
         if model is not None:
-            # The graph engine's way: the Intent agent writes what it understood, the checks, and its questions.
+            # The Intent agent writes what it understood, the checks, and its questions.
             answers = _answers(client, number)
             with console.status("[dim]Drafting the checks from the issue, then trying them on the app as it is...[/dim]"):
                 contract, preview, result = asyncio.run(
@@ -121,7 +121,7 @@ def build(
     model: str | None = typer.Option(None, "--model", help="Model for the coding agent."),
     rounds: int | None = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
     budget: float | None = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
-    engine: str | None = typer.Option(None, "--engine", help="graph (default) or classic. Also CONTEXER_ENGINE."),
+    engine: str | None = typer.Option(None, "--engine", hidden=True, help="Removed in 0.5.0: there is one run loop."),
     approved_at: str | None = typer.Option(
         None, "--approved-at", help="When the approval was given (ISO time). Checks that changed after it are not built."
     ),
@@ -129,7 +129,7 @@ def build(
     """Approve the checks drafted on an issue in BY's name, build them, and open a pull request that closes it."""
     console = Console()
     project = project_dir.resolve()
-    chosen = choose_engine(engine)
+    one_engine(engine)
     load_project_env(project)
     try:
         config = load_project_config(project)
@@ -170,21 +170,18 @@ def build(
             turn_timeout=config.agent.turn_timeout,
             judged_policy=config.gate.judged,
         )
-        if chosen == "graph":
-            outcome = execute_graph(
-                console,
-                project,
-                agent,
-                store,
-                settings,
-                model=run_cli.crew_model(project),
-                budget=Budget(max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=config.limits.cost_usd),
-                yes=True,  # nobody is at a terminal in a workflow: Triage does not stop to ask
-                contract=contract,
-                on_progress=live.event,
-            )
-        else:
-            outcome = execute_run(console, project, agent, contract, store, settings, on_progress=live.event)
+        outcome = execute_graph(
+            console,
+            project,
+            agent,
+            store,
+            settings,
+            model=run_cli.crew_model(project),
+            budget=Budget(max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=config.limits.cost_usd),
+            yes=True,  # nobody is at a terminal in a workflow: Triage does not stop to ask
+            contract=contract,
+            on_progress=live.event,
+        )
         handoff: Handoff | None = None
         handoff_error: str | None = None
         if outcome.terminal not in ("tampered", "cancelled"):

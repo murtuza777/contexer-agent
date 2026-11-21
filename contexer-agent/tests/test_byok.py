@@ -229,7 +229,7 @@ def test_setup_offers_chromium_only_when_it_is_missing(monkeypatch) -> None:
     states = iter([(False, "Chromium is not installed.")])
     console = Console(record=True)
     assert not setup_cli.ensure_browser(console, ask=False)  # --yes never downloads 150 MB unasked
-    assert "python -m playwright install chromium" in console.export_text()
+    assert "contexer setup --browser" in console.export_text()
     assert len(calls) == 1
 
 

@@ -1,13 +1,12 @@
-"""The graph engine: the same job as ``RunController``, able to wait, stop and continue.
+"""The run loop: implement, prove, repair; able to wait, stop and continue.
 
-``run`` takes an approved contract, like the classic controller. ``run_goal``
-starts one step earlier: the Intent agent drafts the checks and the run waits
-for a person to approve them. ``resume`` continues a run whose process ended,
-from the checkpoint in its run folder.
+``run`` takes an approved contract. ``run_goal`` starts one step earlier:
+the Intent agent drafts the checks and the run waits for a person to approve
+them. ``resume`` continues a run whose process ended, from the checkpoint in
+its run folder.
 
-With no model configured the graph applies the 0.4 rules and writes the 0.4
-prompts, so the two engines agree; ``tests/test_controller.py`` runs every
-case on both.
+With no model configured the graph applies fixed rules and writes plain
+prompts; ``tests/test_controller.py`` pins what those produce.
 """
 
 from __future__ import annotations

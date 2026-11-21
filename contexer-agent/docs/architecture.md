@@ -19,7 +19,7 @@ Paths are relative to `contexer-agent/src/contexer/` unless they start with
 6. [Proving checks in a browser](#6-proving-checks-in-a-browser)
 7. [Starting the app](#7-starting-the-app)
 8. [Drafting checks from a goal](#8-drafting-checks-from-a-goal)
-9. [The run controller](#9-the-run-controller)
+9. [The run loop](#9-the-run-loop)
 10. [Snapshots](#10-snapshots)
 11. [Coding agent adapters](#11-coding-agent-adapters)
 12. [Models and bring your own key](#12-models-and-bring-your-own-key)
@@ -81,7 +81,7 @@ A `contexer run "GOAL" --pr`, end to end:
    is (`preview_draft`).
 3. **Approve** (`_approve`): show the checklist and the preview, ask, and on
    yes store the approval with the contract's sha256.
-4. **Run** (`execute_run` → `RunController.run`): snapshot, implement, prove,
+4. **Run** (`execute_graph` → `GraphController.run`): snapshot, implement, prove,
    repair up to the limit, keep the best attempt, write the evidence.
 5. **Hand off** (`hand_off`): branch, commit, push, pull request.
 6. **Report** (`_render`): one aligned summary, exit code from the outcome.
@@ -115,7 +115,7 @@ A `contexer run "GOAL" --pr`, end to end:
 | `agents/` | `CodingAgentAdapter` and the Claude Code, Codex, OpenCode and scripted adapters |
 | `opencode/` | HTTP client and adapter for `opencode serve` |
 | `checkpoint/` | Shadow-git snapshots and restores |
-| `controller/` | The classic run loop (`run.py`), what both engines share (`shared.py`: scoring, failure signatures, the tamper guard, the evidence), the run's models and the agent prompts |
+| `controller/` | What a run is made of: scoring, failure signatures, the tamper guard and the evidence (`shared.py`), the run's models, and the prompts for the coding agent. The loop itself is `graph/` |
 | `graph/` | The run loop as a LangGraph graph that can wait for a person, stop and resume: state, nodes, routing, the compiled graph, `GraphController` |
 | `evidence/` | Run directories, `report.html`, `result.json` |
 | `github/` | Commit status and job summary, the REST client, the pull-request hand-off, the issue flow |
@@ -358,7 +358,7 @@ always stopped on exit.
   semantics), polled every 0.5 s up to `ready_timeout` (120 s), on both
   `127.0.0.1` and `localhost`, also trying any port the log announces. An
   early exit raises with the log tail.
-- The run controller restarts with a reinstall when an attempt (or a revert)
+- The run loop restarts with a reinstall when an attempt (or a revert)
   changes `package.json` or a lockfile (`_DEPENDENCY_FILES`).
 
 ### `[app] reset` (`appserver/reset.py`)
@@ -427,11 +427,18 @@ is warned the checks may not test anything new.
 excerpt of up to 8,000 characters (entry points first; `.html`, `.js`,
 `.mjs`, `.jsx`, `.ts`, `.tsx`, `.vue`, `.svelte`).
 
-## 9. The run controller
+## 9. The run loop
 
-`controller/run.py: RunController.run(contract, others)`. The contract must be
+`graph/engine.py: GraphController.run(contract, others)`. The contract must be
 approved; `others` are the other approved contracts, replayed as regression
-checks unless `--no-replay`.
+checks unless `--no-replay`. There is one loop. Until 0.5.0 there were two:
+the loop of 0.4 (`--engine classic`) was removed once the graph had fixed the
+same 46 of 46 seeded bugs ([phase-3.md](agentic/phase-3.md)). `--engine graph`
+is still accepted; any other name is refused with a message that says so.
+
+This part describes what every run does, with or without a model. What a
+model adds, and waiting, stopping and resuming, follow under
+[The graph](#the-graph-graph).
 
 | Setting (`RunSettings`) | Default | Source |
 | --- | --- | --- |
@@ -515,14 +522,11 @@ checks reference; do not start a dev server; do not install Playwright or
 browsers or write end-to-end tests; do not touch `.contexer/`; do not commit,
 push or rewrite history; no uncaught exceptions; reply with a short summary.
 
-### The graph engine (`graph/`, `contexer run --engine graph`)
+### The graph (`graph/`)
 
-The same job as `RunController`, as a LangGraph graph with a checkpoint
-after every node. Since 0.5.0 it is the default; `--engine classic` or
-`CONTEXER_ENGINE=classic` runs the 0.4 loop, which has no review, no
-sign-in check before spending and no run budget. The two were measured
-equal on the seeded bugs ([phase-3.md](agentic/phase-3.md)); the graph is
-the default because of what only it does, not because it repairs better.
+The loop is a LangGraph graph with a checkpoint after every node. With no
+model configured it applies the fixed rules above and writes the plain
+prompts; `tests/test_controller.py` pins what those produce.
 
 - **Before anything is spent.** With `[auth]` configured, the sign-in flow
   is tried once before the first coding turn and before checks are
@@ -656,11 +660,11 @@ intent → approve → coder_turn → guard_snapshot → ensure_app → test →
 - **Stopping.** Ctrl+C, or leaving a prompt, stops the app, kills the
   agent's process tree, snapshots the unfinished work as `stopped`, restores
   the best attempt or the baseline, writes the evidence as `cancelled` and
-  exits 130, as on the classic engine.
+  exits 130.
 - **Resuming** (`GraphController.resume`, `contexer run --resume RUN`). The
   checkpoint is `checkpoint.sqlite` in the run folder, written with
-  `durability="sync"`. Resume refuses a run with no checkpoint (a classic
-  run), reports a finished run without running anything, and refuses when a
+  `durability="sync"`. Resume refuses a run with no checkpoint (one made
+  before 0.5.0, or a verification), reports a finished run without running anything, and refuses when a
   file that defines done differs from the hash in the state: those files are
   not in the snapshots, so a change made while the run was down was approved
   by nobody. Otherwise the files as they are are kept as
@@ -1051,8 +1055,8 @@ result.json            the RunResult, without the page's HTML, text and base64 s
 run.json               contexer run only: the whole RunOutcome (attempts, agent turns, diff, cost)
 server.log             the dev server's output
 checks/<contract>/     per-check screenshots (and traces when kept)
-attempt-<n>/           contexer run: the same, per attempt (graph engine: plus run-result.json)
-checkpoint.sqlite      contexer run --engine graph: the state after every node; what --resume reads
+attempt-<n>/           contexer run: the same, per attempt (plus run-result.json)
+checkpoint.sqlite      contexer run: the state after every node; what --resume reads
 agents/<name>.jsonl    one transcript per Contexer agent (crew/), secrets masked
 replay/                contexer test: a screenshot per replayed finding
 screens/               contexer test: screenshots the Tester took
@@ -1126,7 +1130,7 @@ attempts, repair rounds, cost and duration, the contract and its approval
 hash, where the evidence is (the workflow run's artifact in Actions), and
 `Closes #N` for issue runs. You are left on the new branch.
 
-For a run on the graph engine it adds: **What was understood** (the
+It also carries: **What was understood** (the
 intent's behaviours, corrections and assumptions, when the run wrote an
 intent), **Attempts** (each attempt's result and what was decided after
 it, by a model or by the rules, when there was more than one), and
@@ -1165,17 +1169,15 @@ sequenceDiagram
   checks with how each fares on the app today, and the contract as JSON inside
   `<details>`. A maintainer may edit the JSON; the build notices
   (`edited since drafting`).
-- **Drafting with the Intent agent** (graph engine, `CONTEXER_ENGINE=graph`,
-  and a model configured): the comment also shows what the agent
+- **Drafting with the Intent agent** (when a model is configured): the comment also shows what the agent
   understood (behaviours, assumptions) and its questions, each with the
   reading the checks take and the other one. `/contexer answer <text>`
   drafts again; every answer on the issue from someone with write access
   is written into the intent as a correction before the model is called,
   and answers from anyone else are ignored. Nothing is kept between
-  workflow runs: the issue and its comments are the state. The classic
-  engine, or no model, drafts as before.
-- **Build**: `--engine` or `CONTEXER_ENGINE` chooses the engine. On the
-  graph, the contract from the comment is approved in the approver's name
+  workflow runs: the issue and its comments are the state. With no model,
+  the checks are drafted the 0.4 way.
+- **Build**: the contract from the comment is approved in the approver's name
   and the graph starts at its approval point, which passes; the checks are
   not drafted a second time, because a second draft could differ from what
   was approved. Triage does not stop to ask (nobody is at a terminal).
@@ -1217,7 +1219,7 @@ the help.
   computed at each refresh; nothing is drawn when the output is not a
   terminal.
 
-**The run view** (`cli/runview.py`, graph engine). A run is drawn from its
+**The run view** (`cli/runview.py`). A run is drawn from its
 events (`graph/context.py: RunEvent`: the words the log always had, plus
 the values a view needs). Two things come from the same events:
 
@@ -1241,8 +1243,7 @@ and nothing else: `run-start`, `checks`, `attempt-start`, `agent`,
 `agent-done`, `phase`, `verdict`, `strategy`, `review`, `revert`, `app`,
 and a last `end` with `terminal`, `reason`, `exit_code`, `attempts`,
 `cost_usd`, `report`, `pull_request` and `draft`. It needs `--yes`, since
-it cannot stop to ask. The classic engine keeps the older line-by-line
-output and has no `--json`.
+it cannot stop to ask.
 
 `contexer doctor` checks Python, Chromium (launching it), git, Node, saved
 settings, the drafting model, coding agents, OpenRouter's free requests, the
@@ -1271,7 +1272,7 @@ and prints the fix under each problem.
 | `[agent] max_repair_rounds` | 2 | Repair rounds after the first attempt |
 | `[agent] budget_usd` | none | Stop when the agent has spent this much |
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
-| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together (graph engine); `--max-usd` wins |
+| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins |
 | `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens, used when the provider reports no cost |
 | `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer` |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
@@ -1288,7 +1289,7 @@ and prints the fix under each problem.
 | `OPENROUTER_MODEL`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, `ANTHROPIC_MODEL` | Per-provider model overrides |
 | `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | OpenRouter attribution headers |
 | `CONTEXER_AGENT`, `CONTEXER_AGENT_MODEL` | Coding agent and its model (from setup) |
-| `CONTEXER_ENGINE` | `graph` (default) or `classic` for `contexer run` and `contexer issue`; `--engine` wins |
+| `CONTEXER_ENGINE` | Chose between two run loops until 0.5.0. `graph` is accepted; any other value is refused with a message |
 | `OPENCODE_SERVER_URL`, `OPENCODE_MODEL_PROVIDER`, `OPENCODE_MODEL_ID` | OpenCode server and model |
 | `CONTEXER_HOME` | Where user settings live (default `~/.contexer`) |
 | `CONTEXER_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN` | Pull requests, issues, commit statuses |
@@ -1339,15 +1340,15 @@ FILE] [--suite gate|tester|repair|reviewer] [--agent NAME]` (run from `contexer-
 - A workspace per app keeps `node_modules` between variants.
 
 **Repair suite** (`bench/repair.py`, `contexer bench --suite repair --agent
-NAME [--model M] [--engine classic|graph] [--bug app/bug] [--limit N]
+NAME [--model M] [--bug app/bug] [--limit N]
 [--rounds N] [--repair-only]`): measures the run loop. For each bug the
 workspace is laid out afresh (the good app, the bug on top), and
-`RunController` or `GraphController` runs the app's approved contract with a
+`GraphController` runs the app's approved contract with a
 new agent session. **Fixed** means the run ended `succeeded`. `--repair-only`
 wraps the agent so its first turn carries the job and an instruction to
 change nothing, and allows one more round, so every fix is a repair. The
-report has a row per engine (fixed, attempts, minutes, cost when the agent
-reports one) and lists the bugs on which the engines differ. A run that
+report has the totals (fixed, attempts, minutes, cost when the agent
+reports one) and lists the bugs that were not fixed. A run that
 raises is recorded as `error` and the benchmark goes on. Results:
 `bench/repair-results/`.
 

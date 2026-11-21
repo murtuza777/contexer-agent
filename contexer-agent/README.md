@@ -12,6 +12,7 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
 pip install -e ".[dev]"
 contexer setup        # a provider, your key and models, tested live; offers to install Chromium
+contexer setup --browser   # only Chromium, with no key
 ```
 
 Then run `contexer doctor`. It checks Python, Chromium, git, Node, the
@@ -60,7 +61,7 @@ The same groups as `contexer --help`:
 | `contexer test --again` | Replays the checks the last run saved, with no model; explores further only when they pass |
 | `contexer test --correct "..."` | Records what you meant ("deleting should ask first") in the intent and tests again |
 | `contexer run "GOAL"` / `--contract ID` | Approve the checklist, drive the coding agent, prove, repair, and keep the best attempt |
-| `contexer run --resume RUN` | Continue a run that was stopped; `--correct "..."` changes what done means first. `--max-usd N` is one budget for the whole run, `--no-review` skips the review of the diff, `--json` prints the run as one event per line for CI, `--verbose` keeps the agent's tool calls in the output, `--engine classic` runs the 0.4 loop |
+| `contexer run --resume RUN` | Continue a run that was stopped; `--correct "..."` changes what done means first. `--max-usd N` is one budget for the whole run, `--no-review` skips the review of the diff, `--json` prints the run as one event per line for CI, `--verbose` keeps the agent's tool calls in the output |
 | `contexer run ... --pr` / `--issue N` | End in a pull request with the evidence; with `--issue` the goal comes from the issue and the PR closes it |
 | `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
 | `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |
@@ -180,14 +181,18 @@ correct app fails "shows 2 entries" because an earlier check added one.
 | --- | --- |
 | `cli/` | The commands. `term.py` is the terminal design they all share: no boxes, colour only for outcomes, aligned summaries, a live line while work runs |
 | `config/` | `contexer.toml`, and the user's settings and keys in `~/.contexer/` |
-| `llm/` | The 14-provider catalog, model discovery, key checks and OpenRouter's free-request count, and the drafting model clients |
+| `llm/` | The 15-provider catalog, model discovery, key checks and OpenRouter's free-request count, and the drafting model clients |
 | `contract/` | Contract model, canonical sha256, approval, file store |
 | `verification/` | The closed check DSL, the Playwright runner (screenshots, traces), and the verifier. Verdicts are `verified`, `refuted` or `unverified`, each labelled `proven`, `LLM-judged` or `heuristic` |
 | `gate/` | Fail-safe gate decision and the `VerificationSession` |
 | `appserver/` | Start-plan detection, the dev-server lifecycle, and Windows Job Objects |
 | `agents/` | The `CodingAgentAdapter` interface: Claude Code, Codex, OpenCode and a scripted agent |
 | `checkpoint/` | Shadow-git snapshots and exact restores |
-| `controller/` | Implement → prove → repair: keep-best, revert, repeated-failure detection, tamper guard |
+| `graph/` | The run loop: implement → prove → repair → review, as a graph that can wait for a person, stop and resume |
+| `controller/` | What the loop is made of: scoring and keep-best, repeated-failure detection, the tamper guard, the prompts for the coding agent |
+| `crew/` | Contexer's own agents (Intent, Tester, Challenger, Diagnoser, Triage, Reviewer), their budget, and the marker that quotes untrusted text |
+| `browser/` | The browser the Tester uses, and the replay of what it found |
+| `intent/`, `skills/` | What was understood about a feature, and advice saved about operating the app: files in `.contexer/` |
 | `evidence/` | Run directories and the self-contained HTML report |
 | `github/` | Commit status and job summary; the pull-request hand-off; the issue flow (draft comment, approval, live status) |
 | `bench/` | Seeded-bug benchmark, including `--live` scoring of LLM-compiled contracts |
@@ -197,7 +202,7 @@ correct app fails "shows 2 entries" because an earlier check added one.
 | `demo/` | The todo app with a seeded bug behind `contexer demo` |
 
 The full technical reference is [docs/architecture.md](docs/architecture.md).
-What comes next, with tickets, is in
+The design of the agents, with tickets and results per phase, is in
 [docs/agentic/architecture.md](docs/agentic/architecture.md). All documents
 are listed in [docs/README.md](docs/README.md).
 
@@ -213,7 +218,7 @@ python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integrati
 contexer bench --repeats 2
 ```
 
-The suite (about 500 tests, 8 to 12 minutes) runs real Chromium against fixture apps, real Node process trees
+The suite (987 tests, about half an hour on a laptop) runs real Chromium against fixture apps, real Node process trees
 for the dev-server tests, and real git for snapshots. It needs no network and
 no model. The benchmark's React + Vite fixture runs `npm ci` once, so the
 benchmark needs network the first time. Live-service tests skip themselves when their prerequisites are
