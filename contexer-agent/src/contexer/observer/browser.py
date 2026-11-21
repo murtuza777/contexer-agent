@@ -6,8 +6,16 @@ message; surfaced naively it reads as "application unreachable".
 
 from __future__ import annotations
 
-INSTALL_HINT = "Chromium for Playwright is not installed. Run: python -m playwright install chromium"
-LINUX_DEPS_HINT = "Chromium cannot start: system libraries are missing. Run: python -m playwright install-deps chromium"
+import sys
+
+# Playwright has to be run with the Python that Contexer is installed in. After `uv tool install` or `pipx`
+# that is not the `python` on PATH, so the hints never say `python -m playwright`.
+INSTALL_COMMAND = "contexer setup --browser"
+INSTALL_HINT = f"Chromium for Playwright is not installed. Run: {INSTALL_COMMAND}"
+LINUX_DEPS_HINT = (
+    "Chromium cannot start: system libraries are missing. Run: "
+    f'"{sys.executable}" -m playwright install-deps chromium'
+)
 
 _MISSING_MARKERS = (
     "executable doesn't exist",
