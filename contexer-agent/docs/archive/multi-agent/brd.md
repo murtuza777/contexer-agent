@@ -1,13 +1,13 @@
 # BRD: multi-agent Contexer
 
-> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
+> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
 
 Status: draft, 2026-11-03. Owner: murtuza777.
 Product requirements: [prd.md](prd.md). Design: [design.md](design.md).
 
 Figures marked *assumption* are hypotheses to test, not data. The market
 reasoning behind Contexer as a whole is in
-[product-plan.md](../product/product-plan.md) §2.
+[product-plan.md](../../product/product-plan.md) §2.
 
 ## 1. Summary
 

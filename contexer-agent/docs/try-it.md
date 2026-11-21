@@ -6,17 +6,21 @@ you can tell when something is wrong.
 
 ## As a user
 
+The first four steps take about ten minutes and end with your first
+`contexer test` result, on a small app that Contexer creates for you. Step 5
+is your own app.
+
 ### 1. Install (2 minutes)
 
-Python 3.11 or newer, git, and Node.js if your app is JavaScript.
+You need Python 3.11 or newer and git. Node.js is needed only if your own app
+is JavaScript with a dev server.
 
 ```bash
 uv tool install contexer-agent
-contexer --help
+contexer --version
 ```
 
-You should see the commands grouped under *Get started*, *Build and prove*,
-*CI and GitHub* and *More*.
+You should see `contexer 0.5.0` or newer.
 
 - `uv tool install` (or `pipx install contexer-agent`) puts Contexer in its
   own environment and the `contexer` command on your PATH. No uv? On Windows:
@@ -41,42 +45,118 @@ You should see the commands grouped under *Get started*, *Build and prove*,
   `uv tool install` or `pipx`, which put it on PATH, or run it as
   `py -m contexer`. Open a new terminal after changing PATH.
 
-### 2. Set up a model and a coding agent (2 minutes)
+### 2. Watch it catch a bug, with no key (1 minute)
 
 ```bash
-npm install -g opencode-ai     # the free coding agent; or use Claude Code or Codex
-contexer setup
+contexer demo
 ```
 
-`contexer setup` asks for a provider, your key (hidden as you type) and a
-model. It checks the key, sends one real request to the model, and offers to
-install Chromium. Nothing is saved unless the model answers. For free use,
-pick **openrouter** with a key from https://openrouter.ai/keys.
+A new install has no browser yet. The demo offers to download Chromium
+(about 150 MB, once); say yes. `contexer setup --browser` does the same on
+its own.
+
+It creates `contexer-demo/`, a todo app that a coding agent "finished" with a
+bug left in, and runs the app's 7 approved checks in Chromium. Expect
+`FAIL: 6 verified, 1 refuted, 0 unverified`, with `expected ... "1 left"`
+and `actual: "2 left"` under the check that failed. No model was called:
+replaying approved checks never needs one.
+
+### 3. Set up a model (2 minutes)
+
+`contexer test` and `contexer run` use a model of your choice, with your key.
 
 ```bash
+contexer setup
 contexer doctor
 ```
 
-Every line should be ✓ or !; a ✗ prints its fix underneath. It also shows how
-many free OpenRouter requests are left today (50 a day; a small change takes
-about 15).
+`contexer setup` asks for a provider, your key (hidden as you type) and a
+model. It sends one real request to the model. Nothing is saved unless the
+model answers. `contexer models --providers` lists
+the 15 providers; for free use, pick **openrouter** with a key from
+https://openrouter.ai/keys. A stronger model tests better.
 
-### 3. Watch it catch a bug, with no key (1 minute)
+In `contexer doctor` every line should be ✓ or !; a ✗ prints its fix
+underneath. It also says whether your model can call tools, which
+`contexer test` needs.
+
+Prefer not to save a key? Export it instead (`ANTHROPIC_API_KEY`,
+`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or `AZURE_OPENAI_API_KEY` with
+`AZURE_OPENAI_ENDPOINT`) and pass `--provider` and `--model` to the command.
+
+### 4. Your first `contexer test` (3 to 5 minutes)
+
+Say what the app should do, in your own words. Contexer uses the app like a
+person would and tells you what does not hold.
 
 ```bash
-contexer demo --fix
+cd contexer-demo
+contexer test "Users can add tasks and complete them, and the remaining count stays correct"
 ```
 
-It creates `contexer-demo/`, a todo app with a bug, and proves its 7 checks in
-Chromium. Expect `FAIL: 6 verified, 1 refuted` with `expected "1 left"`,
-`actual "2 left"`. Then a simulated agent applies the fix and the run ends
-`✓ Succeeded`. Open `contexer-demo/.contexer/runs/*/report.html` to see the
-evidence report.
+What happens, in order:
 
-### 4. Use it on your own app
+1. If the sentence can be read two ways, Contexer asks which you meant
+   (at most a few questions; `--yes` takes the likeliest reading and says
+   which it took).
+2. The tester uses the app in Chromium. This is the slow part: a few
+   minutes, and it is where the model's tokens go.
+3. Every finding is replayed by code in a fresh browser. Only findings that
+   replay are reported; a finding that does not is counted as unconfirmed
+   and never called a bug.
 
-In your app's folder (a git repository with no uncommitted changes, if you
-want a pull request):
+You should see, in this order:
+
+- **Confirmed bugs**, each with the steps that reproduce it and what the
+  browser saw. On this app: ticking a task throws `refesh is not defined`,
+  and the count stays at `2 left` where `1 left` was expected.
+- The behaviours that work, and anything the sentence did not settle, as a
+  question for you and not as a bug.
+- A **fix prompt**, printed in full and saved as `fix-prompt.md` in the
+  run's folder. Add `--copy` to the command to put it on the clipboard.
+- The paths of the intent Contexer wrote down and of the report.
+
+The exit code is 1 because there are confirmed bugs. No application code was
+changed. When this guide was last followed from a clean install (Windows 11,
+`gpt-5.4`), this step found both bugs in 20 tester steps.
+
+Then close the loop. Paste the fix prompt into your coding agent (Claude
+Code, Codex, Cursor, any of them) in the `contexer-demo` folder. When it
+says it is done:
+
+```bash
+contexer test --again
+```
+
+`--again` replays the checks the last run saved, with no model. You should
+see the checks that failed now pass. If one still fails it says which and
+stops; nothing is taken on the agent's word.
+
+Things worth trying:
+
+- **It got your meaning wrong:** `contexer test --correct "deleting should
+  ask first"` records what you meant and tests again.
+- **Keep the checks:** `--save` writes them as a draft contract you can
+  approve and replay in CI.
+- **Limit the spend:** `--steps N` caps the tester's model calls,
+  `--max-tokens N` caps the whole run.
+
+### 5. Use it on your own app
+
+In your app's folder:
+
+```bash
+contexer test "what your app should do, in a sentence or two"
+```
+
+Contexer starts the app itself (static files, Vite, Next.js, or `[app]
+start` in `contexer.toml`), or uses one you already run with `--url`. For an
+app behind a login, add `[auth]` to `contexer.toml` and keep the credentials
+in environment variables named `CONTEXER_TEST_...`
+([how](../README.md#apps-behind-a-login)).
+
+To have a coding agent build something and have Contexer prove it, you need
+one of Claude Code, Codex or OpenCode installed, and a git repository:
 
 ```bash
 contexer run "Users can export their data as CSV" --pr
@@ -84,40 +164,46 @@ contexer run "Users can export their data as CSV" --pr
 
 What happens, in order:
 
-1. Contexer starts your app (static, Vite, Next.js, or `[app] start` in
-   `contexer.toml`), drafts checks from the goal, and tries each one on the app
-   as it is today.
-2. It shows the checklist and asks **Approve these checks?** Read them; this
-   is your definition of done. Answer `y`.
-3. The coding agent works. You see each file it reads or edits, and a live
-   line with the elapsed time.
-4. Contexer proves every check in Chromium. Failures go back to the agent
-   with expected vs actual, up to 2 repair rounds.
-5. It ends with one summary: the outcome, the pull request (or a draft if
-   something still fails), the branch, and the report.
+1. Contexer starts your app, writes down what it understood, drafts checks
+   from the goal and the app as it is, and asks about anything unclear.
+2. It shows the checks and asks **Approve these checks?** Read them; this is
+   your definition of done. Answer `y`, `n`, or type what to change.
+3. Before the coding agent starts, a line says what the run can cost at
+   most. `--max-usd 5` sets one budget for everything.
+4. The coding agent works. A block in the terminal shows every check with
+   its state, what is happening now, and the time and money so far.
+5. Contexer proves every check in Chromium. What fails goes back to the
+   agent with what the browser saw, up to 2 repair rounds; an attempt that
+   makes things worse is undone.
+6. When the checks pass, the diff is read once for things a check cannot
+   see (a secret, a deleted test, a removed confirmation).
+7. It ends with one summary: the outcome, the pull request (a draft if
+   something still fails or the review found something serious), and the
+   report.
 
 Press Ctrl+C at any time: the agent stops at once and your files go back to
-the best attempt. `contexer restore <run> --stopped` brings the unfinished
-work back.
+the best attempt. `contexer run --resume <run>` continues from where it
+stopped; `contexer restore <run> --stopped` brings the unfinished work
+back instead.
 
 Things worth trying deliberately:
 
 - **A goal your app already meets:** the preview says every check already
   passes, which warns that the checks may not test anything new.
-- **Reject the checklist (`n`):** nothing changes; edit
-  `.contexer/contracts/<id>.json` and run `contexer run --contract <id>`.
+- **Reject the checks (`n`):** nothing changes.
 - **Replay later:** `contexer verify --all` re-runs every approved check with
   no model.
-- **An app behind a login:** add `[auth]` to `contexer.toml` (see the README).
+- **In CI:** `contexer run ... --yes --json` prints the run as one event
+  per line.
 
-### 5. Guard pull requests and take issues on GitHub
+### 6. Guard pull requests and take issues on GitHub
 
 ```bash
 contexer init --ci        # replays approved checks on every pull request
 contexer init --issues    # label an issue "contexer", reply /contexer approve
 ```
 
-Commit the workflow files. For `--issues`, add `OPENROUTER_API_KEY` as a
+Commit the workflow files. For `--issues`, add your model key as a
 repository secret, and allow GitHub Actions to create pull requests
 (Settings → Actions → General). Then label an issue `contexer`: a comment with
 the checks appears; reply `/contexer approve` to have it built.
@@ -133,8 +219,8 @@ pip install -e ".[dev]"
 python -m playwright install chromium
 ```
 
-Run the tests (about 8 minutes; real Chromium, Node and git, no network or
-model):
+Run the tests (about half an hour on a laptop; real Chromium, Node and git,
+no network or model):
 
 ```bash
 python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
@@ -155,17 +241,17 @@ echo '[{"app.js": "...the fixed file..."}]' > turns.json
 contexer run --contract todo-basics --agent scripted --model turns.json --pr
 ```
 
-To test with a real agent, put `OPENROUTER_API_KEY` in `contexer-agent/.env`
-(git ignores it) and run `contexer run ... --agent opencode` on a copy of a
-fixture app from `bench/fixtures/`. Check the free-request count with
-`contexer doctor` first.
+To test with a real agent, put your model key in `contexer-agent/.env` (git
+ignores it) and run `contexer run ... --agent claude-code` on a copy of a
+fixture app from `bench/fixtures/`.
 
 Where things live:
 
 | Path | What |
 | --- | --- |
-| `src/contexer/cli/` | Commands; `term.py` is the terminal design every command uses |
-| `src/contexer/controller/` | The run: implement, prove, repair, keep the best attempt |
+| `src/contexer/cli/` | Commands; `term.py` is the terminal design every command uses, `runview.py` draws a run |
+| `src/contexer/graph/` | The run loop: implement, prove, repair, review, keep the best attempt |
+| `src/contexer/crew/` | Contexer's own agents: Intent, Tester, Diagnoser, Triage, Reviewer |
 | `src/contexer/verification/` | The check language and the Playwright runner |
 | `src/contexer/github/` | Pull-request hand-off and the issue flow |
 | `bench/fixtures/` | The seeded-bug benchmark apps |

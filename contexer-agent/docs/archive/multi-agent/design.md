@@ -1,10 +1,10 @@
 # Multi-agent Contexer: design
 
-> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
+> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
 
 Status: proposal, 2026-11-03. Nothing here is built yet. The current product
 (0.4.0) is a single coding agent inside a hand-written loop; see
-[architecture.md](../architecture.md). This document describes how Contexer
+[architecture.md](../../architecture.md). This document describes how Contexer
 would work as a multi-agent system on LangGraph, node by node, and which
 agentic architecture fits it.
 
