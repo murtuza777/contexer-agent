@@ -1,4 +1,4 @@
-"""``contexer run`` on two engines (T3.4): `--engine`, `--resume`, and the questions a run can ask."""
+"""``contexer run`` at the command line: one run loop, `--resume`, and the questions a run can ask."""
 
 from __future__ import annotations
 
@@ -73,16 +73,11 @@ REPAIR = ({"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS})
 # -- choosing the engine ----------------------------------------------------------------------------
 
 
-def test_the_graph_engine_is_the_default_and_classic_can_be_asked_for(project: Path, tmp_path: Path) -> None:
+def test_there_is_one_run_loop_and_naming_it_still_works(project: Path, tmp_path: Path) -> None:
     result = _run(project, "--contract", CONTRACT_ID, "--model", _turns(tmp_path, *REPAIR))
     assert result.exit_code == 0, result.output
     assert _latest(project)["engine"] == "graph"
-    result = _run(project, "--contract", CONTRACT_ID, "--model", _turns(tmp_path, *REPAIR), "--engine", "classic")
-    assert result.exit_code == 0, result.output
-    assert _latest(project)["engine"] == "classic"
-
-
-def test_engine_graph_runs_the_same_job_on_the_graph(project: Path, tmp_path: Path) -> None:
+    # A script written for 0.4 that names the graph engine keeps working.
     result = _run(project, "--contract", CONTRACT_ID, "--model", _turns(tmp_path, *REPAIR), "--engine", "graph")
     out = _plain(result.output)
     assert result.exit_code == 0, result.output
@@ -91,25 +86,29 @@ def test_engine_graph_runs_the_same_job_on_the_graph(project: Path, tmp_path: Pa
     assert "fixed rules decide" in out  # no model is configured for triage, and the run says so
 
 
-def test_the_environment_can_choose_the_engine_and_the_flag_wins(project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CONTEXER_ENGINE", "graph")
-    assert _run(project, "--contract", CONTRACT_ID, "--model", _turns(tmp_path, {"app.js": GOOD_JS})).exit_code == 0
-    assert _latest(project)["engine"] == "graph"
-    result = _run(project, "--contract", CONTRACT_ID, "--model", _turns(tmp_path, {"app.js": GOOD_JS}), "--engine", "classic")
-    assert result.exit_code == 0 and _latest(project)["engine"] == "classic"
+def test_the_classic_loop_is_gone_from_the_package() -> None:
+    import importlib
+
+    import contexer.controller as controller
+
+    assert not hasattr(controller, "RunController")
+    with pytest.raises(ImportError):
+        importlib.import_module("contexer.controller.run")
 
 
+@pytest.mark.parametrize("name", ["classic", "langgraph"])
 @pytest.mark.parametrize("how", ["flag", "env"])
-def test_an_engine_that_does_not_exist_is_refused_before_anything_runs(
-    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str
+def test_another_engine_is_refused_before_anything_runs_and_the_message_says_classic_was_removed(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, how: str, name: str
 ) -> None:
     args = ["--contract", CONTRACT_ID, "--model", _turns(tmp_path, {"app.js": GOOD_JS})]
     if how == "flag":
-        args += ["--engine", "langgraph"]
+        args += ["--engine", name]
     else:
-        monkeypatch.setenv("CONTEXER_ENGINE", "langgraph")
+        monkeypatch.setenv("CONTEXER_ENGINE", name)
     result = _run(project, *args)
-    assert result.exit_code == 2 and "graph or classic" in _plain(result.output)
+    out = " ".join(_plain(result.output).replace("│", " ").split())
+    assert result.exit_code == 2 and "was removed" in out and name in out
     assert not (project / ".contexer" / "runs").exists()
 
 
@@ -233,7 +232,7 @@ def test_resume_of_a_run_that_does_not_exist_says_so(project: Path, tmp_path: Pa
     ("args", "message"),
     [
         (["--resume", "x", "--contract", CONTRACT_ID], "give a GOAL, --contract ID, --issue N or --resume RUN"),
-        (["--resume", "x", "--engine", "classic"], "graph engine"),
+        (["--resume", "x", "--engine", "classic"], "was removed"),
         (["--contract", CONTRACT_ID, "--correct", "Make it blue"], "--correct"),
     ],
 )

@@ -13,8 +13,9 @@ from contexer.agents import ScriptedAgent
 from contexer.cli import app
 from contexer.config.project import ProjectConfigError, load_project_config
 from contexer.contract import ContractStore
-from contexer.controller import RunController, RunSettings
+from contexer.controller import RunSettings
 from contexer.gate.models import RunResult
+from contexer.graph import GraphController
 from contexer.verification.checks import Check, MissingSecretError, expand_secrets
 from contexer.verification.runner import CheckRunner
 from contexer.workflow.app_server import StaticAppServer
@@ -140,7 +141,7 @@ async def test_an_agent_that_breaks_sign_in_is_told_why_and_not_kept(members_app
     forgets_session = good.replace("  localStorage.setItem(SESSION_KEY", "  // localStorage.setItem(SESSION_KEY")
     assert forgets_session != good
     agent = ScriptedAgent([{"auth.js": forgets_session}, {"auth.js": good}])
-    controller = RunController(
+    controller = GraphController(
         members_app, agent, RunSettings(max_repair_rounds=1), runner=CheckRunner(action_timeout=1.5, expect_timeout=1.0)
     )
     outcome = await controller.run(ContractStore(members_app).load("members-basics"))

@@ -35,7 +35,7 @@ class RunSettings(BaseModel):
     wall_clock: float = 3600.0
     judged_policy: JudgedPolicy = "advisory"
     replay_others: bool = True
-    # Graph engine: read the diff of a passing attempt before the run ends (crew/reviewer.py).
+    # Read the diff of a passing attempt before the run ends (crew/reviewer.py).
     review: bool = True
     # Step caps for Contexer's own agents, by name ("diagnoser", "reviewer"); the agent's default when absent.
     agent_steps: dict[str, int] = Field(default_factory=dict)
@@ -75,7 +75,8 @@ class RunOutcome(BaseModel):
     changed_files: list[str] = Field(default_factory=list)  # project-relative, baseline → what was left
     run_dir: str = ""
     contexer_version: str = __version__
-    # Which loop drove the run, and what only the graph engine records.
+    # Which loop drove the run. "classic" is what a run.json written before 0.5.0 holds (and what one without
+    # the field means); every run since is "graph". The fields below are the graph's.
     engine: Engine = "classic"
     triage: list[TriageDecision] = Field(default_factory=list)
     agents: list[AgentUsage] = Field(default_factory=list)  # Contexer's own agents: Intent, Triage, Diagnoser

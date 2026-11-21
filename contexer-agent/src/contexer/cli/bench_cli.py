@@ -3,7 +3,7 @@
 Three suites share the fixtures: ``gate`` replays each app's approved contract
 (the default), ``tester`` lets an agent explore each app from its goal and
 replays what it reports, and ``repair`` has a coding agent fix each seeded bug
-on each engine of ``contexer run``.
+with ``contexer run``'s loop.
 """
 
 from __future__ import annotations
@@ -33,13 +33,12 @@ def bench(
         "gate",
         "--suite",
         help="gate: replay each app's contract. tester: an agent explores each app from its goal. "
-        "repair: a coding agent fixes each seeded bug on each engine.",
+        "repair: a coding agent, driven by Contexer, fixes each seeded bug.",
     ),
     agent: str = typer.Option(
         "stub", "--agent", help="tester suite: the agent it measures (stub: reports nothing). repair suite: the coding agent."
     ),
     model: str | None = typer.Option(None, "--model", help="Repair suite: the coding agent's model."),
-    engine: list[str] = typer.Option([], "--engine", help="Repair suite: classic and/or graph (default: both)."),
     bug: list[str] = typer.Option([], "--bug", help="Repair suite: only these bugs, as app/bug (repeatable)."),
     limit: int | None = typer.Option(None, "--limit", min=1, help="Repair suite: only the first N bugs."),
     rounds: int = typer.Option(2, "--rounds", min=0, help="Repair suite: repair rounds per bug."),
@@ -63,7 +62,7 @@ def bench(
         _bench_reviewer(console, root, app, out, agent)
         return
     if suite == "repair":
-        _bench_repair(console, root, app, out, agent, model, engine, bug, limit, rounds, repair_only)
+        _bench_repair(console, root, app, out, agent, model, bug, limit, rounds, repair_only)
         return
     if suite == "tester":
         if live:
@@ -245,14 +244,13 @@ def _bench_repair(
     out: Path | None,
     agent: str,
     model: str | None,
-    engines: list[str],
     bugs: list[str],
     limit: int | None,
     rounds: int,
     repair_only: bool,
 ) -> None:
     from contexer.agents import create_agent
-    from contexer.bench.repair import ENGINES, RepairRun, results_markdown, run_repair_bench
+    from contexer.bench.repair import RepairRun, results_markdown, run_repair_bench
     from contexer.cli import run_cli
     from contexer.config.project import load_project_env
     from contexer.llm.chat import describe_model
@@ -271,19 +269,17 @@ def _bench_repair(
         cost = f" ${run.cost_usd:.2f}" if run.cost_usd else ""
         moves = f" [dim]({escape(', '.join(run.moves))})[/]" if run.moves else ""
         console.print(
-            f"  {mark} {escape(run.app)}/{escape(run.bug)} [dim]on[/] {run.engine} · {run.attempts} attempt(s){moves} "
+            f"  {mark} {escape(run.app)}/{escape(run.bug)} · {run.attempts} attempt(s){moves} "
             f"[dim]{run.duration_seconds:.0f}s{cost}[/]"
         )
 
-    chosen = engines or list(ENGINES)
     mode = "repair only" if repair_only else "from the first turn"
-    term.header(console, "bench", f"{term.path(root)} · repair suite · {agent} · {' and '.join(chosen)} · {mode}")
+    term.header(console, "bench", f"{term.path(root)} · repair suite · {agent} · {mode}")
     try:
         report = asyncio.run(
             run_repair_bench(
                 root,
                 lambda: create_agent(agent, model),
-                engines=chosen,
                 only=only or None,
                 bugs=bugs or None,
                 limit=limit,
@@ -299,19 +295,18 @@ def _bench_repair(
     report.crew_model = describe_model(crew) if crew is not None else ""
 
     table = Table(title="Repair benchmark", show_lines=False)
-    for column in ("Engine", "Bugs", "Fixed", "First try", "After a repair", "Attempts", "Minutes", "Agent cost"):
-        table.add_column(column, justify="right" if column != "Engine" else "left")
-    for score in report.scores:
-        table.add_row(
-            score.engine,
-            str(score.bugs),
-            str(score.fixed),
-            str(score.first_try),
-            str(score.after_repair),
-            str(score.attempts),
-            f"{score.seconds / 60:.1f}",
-            f"${score.cost_usd:.2f}" if score.cost_usd else "—",
-        )
+    for column in ("Bugs", "Fixed", "First try", "After a repair", "Attempts", "Minutes", "Agent cost"):
+        table.add_column(column, justify="right")
+    score = report.score
+    table.add_row(
+        str(score.bugs),
+        str(score.fixed),
+        str(score.first_try),
+        str(score.after_repair),
+        str(score.attempts),
+        f"{score.seconds / 60:.1f}",
+        f"${score.cost_usd:.2f}" if score.cost_usd else "—",
+    )
     console.print()
     console.print(table)
     if out:

@@ -1,7 +1,7 @@
 """The run controller end to end: scripted agent, real snapshots, real browser checks.
 
-Every test runs on both engines: the classic loop (`controller/run.py`) and the graph (`graph/`). With no
-model, the graph decides by the same rules, so the two must agree on every outcome, prompt and session.
+No model is given here, so fixed rules decide each next step. These are the outcomes, prompts and sessions
+the 0.4 loop produced; the graph has to keep producing them.
 """
 
 import shutil
@@ -11,7 +11,7 @@ import pytest
 
 from contexer.agents import ScriptedAgent
 from contexer.contract import ContractStore
-from contexer.controller import RunController, RunSettings
+from contexer.controller import RunSettings
 from contexer.graph import GraphController
 from contexer.verification.runner import CheckRunner
 
@@ -31,19 +31,9 @@ def project(tmp_path: Path) -> Path:
     return target
 
 
-_ENGINE = {"name": "classic"}
-
-
-@pytest.fixture(autouse=True, params=["classic", "graph"])
-def engine(request: pytest.FixtureRequest) -> str:
-    _ENGINE["name"] = request.param
-    return request.param
-
-
-def _controller(project: Path, agent: ScriptedAgent, rounds: int = 2) -> RunController | GraphController:
+def _controller(project: Path, agent: ScriptedAgent, rounds: int = 2) -> GraphController:
     fast = CheckRunner(action_timeout=1.5, expect_timeout=1.0)
-    cls = GraphController if _ENGINE["name"] == "graph" else RunController
-    return cls(project, agent, RunSettings(max_repair_rounds=rounds), runner=fast)
+    return GraphController(project, agent, RunSettings(max_repair_rounds=rounds), runner=fast)
 
 
 def _contract(project: Path):
@@ -58,7 +48,7 @@ async def test_repair_turns_a_failing_attempt_into_a_pass(project: Path) -> None
     assert [a.outcome for a in outcome.attempts] == ["fail", "pass"]
     assert outcome.best_attempt == 2
     assert outcome.exit_code == 0
-    assert outcome.engine == _ENGINE["name"]
+    assert outcome.engine == "graph"
     # The repair prompt carried browser evidence, and the session was resumed.
     assert "complete-decrements" in agent.prompts[1] and "expected" in agent.prompts[1]
     assert agent.sessions == [None, "scripted-1"]

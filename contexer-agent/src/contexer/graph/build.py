@@ -1,6 +1,6 @@
 """Compile the loop: the nodes, the edges from ``routing.py``, and a checkpointer.
 
-LangGraph was chosen for two things the classic loop cannot do: wait for a
+LangGraph was chosen for two things a plain loop cannot do: wait for a
 person in the middle of a run (``interrupt``) and continue in a later
 process (a checkpoint after every node). The spike behind that choice is
 recorded in ``docs/agentic/architecture.md`` §8.

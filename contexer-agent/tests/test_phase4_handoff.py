@@ -143,17 +143,11 @@ async def test_the_intent_agent_reads_an_issue_as_quoted_data_and_its_transcript
     assert result.spec.behaviours == ["The counter counts open tasks."]
 
 
-# -- the issue flow on both engines -------------------------------------------------------------
+# -- the issue flow, end to end ------------------------------------------------------------------
 
 
-@pytest.fixture(params=["classic", "graph"])
-def engine(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
-    monkeypatch.setenv("CONTEXER_ENGINE", request.param)
+def test_an_approved_issue_is_built_and_handed_over(github, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
     monkeypatch.setattr("contexer.cli.run_cli.crew_model", lambda *_a, **_k: None)  # the rules decide; no model is called
-    return request.param
-
-
-def test_an_approved_issue_is_built_and_handed_over_on_either_engine(github, tmp_path: Path, engine: str) -> None:  # noqa: F811
     fake, root = github
     _post_draft(fake)  # a draft as an older version posted it: no origin in its JSON
     turns = tmp_path / "turns.json"
@@ -172,10 +166,10 @@ def test_an_approved_issue_is_built_and_handed_over_on_either_engine(github, tmp
     status = fake.comments[-1]["body"]
     assert "✅ Done: all 7 checks proven" in status and "Attempt 1" in status  # the comment followed the run
     run = json.loads(next((root / ".contexer" / "runs").glob("*/run.json")).read_text(encoding="utf-8"))
-    assert run["engine"] == engine
+    assert run["engine"] == "graph"
 
 
-def test_the_build_command_can_name_the_engine(github, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+def test_a_change_that_adds_a_secret_is_not_pushed_from_an_issue(github, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
     fake, root = github
     monkeypatch.setattr("contexer.cli.run_cli.crew_model", lambda *_a, **_k: None)
     _post_draft(fake)
@@ -183,7 +177,7 @@ def test_the_build_command_can_name_the_engine(github, tmp_path: Path, monkeypat
     turns.write_text(json.dumps([{"app.js": LEAK + GOOD_JS}, {"app.js": LEAK + GOOD_JS + "// again\n"}]), encoding="utf-8")
     result = CliRunner().invoke(
         app,
-        ["issue", "build", "7", "--by", "alice", "--dir", str(root), "--agent", "scripted", "--model", str(turns), "--engine", "graph"],
+        ["issue", "build", "7", "--by", "alice", "--dir", str(root), "--agent", "scripted", "--model", str(turns)],
     )
     assert result.exit_code == 0, result.output
     # The checks passed and the review found a secret twice: nothing is pushed, and the issue is told why.
