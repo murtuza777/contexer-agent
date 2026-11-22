@@ -1,9 +1,34 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-11-21
 
-Work on the [agentic harness](docs/agentic/architecture.md) starts here.
-Phase 0 adds the foundations; no agent ships yet.
+The [agentic harness](docs/agentic/architecture.md). Contexer now has its
+own agents: one works out what you meant, one uses the app like a person,
+one looks for the cause of a failure in the code, one decides what to try
+next, one reads the diff. None of them decides whether the work is done:
+that is still a check replayed by code. `contexer test` is new, and
+`contexer run` has one loop that can wait for you, stop and resume.
+
+### Live runs (2026-11-19, Claude Code, Contexer's agents on Azure `gpt-5.4`)
+
+On [HealthCare.Ai](https://github.com/murtuza777/HealthCare.Ai), a React 19
+and Vite app with a Cloudflare Worker, a local database and email sign-in.
+Contexer had never been run on it and nothing was tuned for it.
+
+| Run | Outcome | Attempts | Cost | Time |
+| --- | --- | --- | --- | --- |
+| `contexer test` on the public pages | No confirmed bugs; 5 working behaviours confirmed by replay; 1 question for the person | 20 Tester steps | not recorded | not recorded |
+| `contexer run --pr`: a message for an empty or malformed email at sign-in | Passed: 3 of 3 checks, no review notes, [pull request #4](https://github.com/murtuza777/HealthCare.Ai/pull/4) | 1 | $0.85 for Claude Code, about 9,000 tokens for Contexer's agents | 4 min 5 s |
+| `contexer run --pr` behind sign-in, frontend and Worker: first try | **Failed**, nothing proven. The test account stopped at a consent screen, so no check could run, and Contexer paid for three coding turns before ending | 3 | $6.26 | not recorded |
+| The same change, second try | Passed: 4 of 4 checks, [pull request #6](https://github.com/murtuza777/HealthCare.Ai/pull/6). The review found that the change had removed a delete confirmation to make a check pass | 2 | $3.35 for Claude Code, about 50,000 tokens for Contexer's agents | 6 min 45 s |
+
+The failed run is why a sign-in is now tried before anything is spent, and
+the review note is why any high-severity note makes the pull request a
+draft. The checks of these runs were approved with `--yes`, not read by a
+person first. Details: [docs/agentic/phase-5.md](docs/agentic/phase-5.md).
+
+Not run for this release: macOS, Codex live, and the issue flow against a
+real GitHub issue.
 
 ### Security
 
@@ -47,12 +72,21 @@ is still open are in [docs/agentic/readiness.md](docs/agentic/readiness.md).
 - One run at a time per project; a plain message for a failed snapshot, a
   missing git or a port already in use.
 - `contexer runs --stats`: how runs ended and what a proven run cost.
+- **A first run without a browser.** A new install has no Chromium, and
+  the fix Contexer printed (`python -m playwright install chromium`) fails
+  after `uv tool install` or `pipx`, where `python` is another Python.
+  `contexer setup --browser` installs it with the right one and needs no
+  key; every hint and `contexer doctor` name that command; `contexer demo`
+  offers the download to a person and then goes on. Found by following
+  `docs/try-it.md` from a wheel in a clean environment.
 
 ### Changed
 
-- **The graph engine is the default** for `contexer run` and `contexer
-  issue`. `--engine classic` or `CONTEXER_ENGINE=classic` runs the 0.4
-  loop. The version is 0.5.0.
+- **One run loop.** `contexer run`, `contexer issue` and `contexer demo
+  --fix` run the graph. The loop of 0.4 is removed (see Removed).
+- `docs/try-it.md` is rewritten around `contexer test` and the new
+  `contexer run`. The earlier multi-agent plans moved to
+  `docs/archive/multi-agent/`.
 - A pull request is opened as a draft when the review holds a
   high-severity note of any kind, not only a security one.
 
@@ -213,9 +247,11 @@ is still open are in [docs/agentic/readiness.md](docs/agentic/readiness.md).
     advice. A skill containing a secret is refused.
   Live on the demo app with Azure `gpt-5.4`: 3 bugs confirmed, a fix prompt
   naming the `refesh()` typo, a one-line fix by a coding agent from the
-  pasted prompt, and `--again` green on all 6 saved checks. The skills
-  measurement did not show fewer Tester steps on a second run (28 and 28);
-  see `docs/agentic/phase-2.md`.
+  pasted prompt, and `--again` green on all 6 saved checks. Skills are
+  built and safe, and **no saving from them has been shown**: over twelve
+  runs on the sign-in fixture the Tester took a median of 17 steps without
+  skills and 18.5 with three saved ones, with identical runs differing by
+  ten steps or more. See `docs/agentic/phase-2.md`.
 - **`contexer test "what the app should do"`**: the Tester agent uses your
   running app in a real browser against the intent you state, then every
   finding is replayed by code in a fresh browser. Only findings that
@@ -301,6 +337,13 @@ is still open are in [docs/agentic/readiness.md](docs/agentic/readiness.md).
 
 ### Removed
 
+- **The classic engine**, the run loop of 0.4. It stayed as `--engine
+  classic` until the graph had fixed the same seeded bugs (46 of 46 on
+  each). `--engine graph` and `CONTEXER_ENGINE=graph` are still accepted;
+  any other name is refused before anything runs, with a message that
+  says so. **This can break a script or a workflow** that sets
+  `CONTEXER_ENGINE=classic`: remove the variable. `contexer bench --suite
+  repair` has no `--engine` any more and reports one row.
 - **The interactive shell.** `contexer` with no command now prints the help.
   The shell was an earlier, separate chat agent (adapted from AgentForge)
   that no command used; Contexer drives Claude Code, Codex and OpenCode

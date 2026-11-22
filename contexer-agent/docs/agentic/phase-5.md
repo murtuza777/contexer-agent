@@ -233,3 +233,56 @@ rewrite of `docs/try-it.md` for the new flow.
 several ways a secret could leak and a revert could lose files. What was
 fixed, what is open, the monitoring that exists and the agents worth adding
 next are in [readiness.md](readiness.md).
+
+---
+
+## Results, 2026-11-21: what T5.3 still lacked
+
+**The 0.4 loop is removed.** Phase 3's gate was met (46 of 46 seeded bugs
+on each loop), the graph has been the default since the second part of
+this phase, and every live run of this phase ran on it. `controller/run.py`
+is deleted. `--engine graph` and `CONTEXER_ENGINE=graph` are still
+accepted, so a script written for 0.4 keeps working; any other name is
+refused before anything runs, with a message that says the classic engine
+was removed. `contexer demo --fix` and the repair benchmark use the one
+loop. The eleven tests that pinned the 0.4 behaviour (`tests/test_controller.py`)
+now pin the graph with no model.
+
+**`docs/try-it.md` is rewritten for the new flow** and was followed from a
+clean install; what that showed is under it below. `docs/multi-agent/` is
+archived as `docs/archive/multi-agent/`.
+
+*What following it showed.* The wheel was built and installed into a new
+environment (Windows 11, Python 3.14), with an empty settings folder, and
+the guide's commands were run in order.
+
+- `contexer demo`, the first command, ended in an error: Chromium was not
+  installed. The fix it printed, `python -m playwright install chromium`,
+  does not work after `uv tool install` or `pipx`, the install the guide
+  recommends, because `python` is then a Python without Playwright. Fixed:
+  `contexer setup --browser` installs it with the right Python and needs
+  no key, every hint and `contexer doctor` name that command, and the demo
+  offers the download to a person and goes on
+  (`tests/test_first_run.py`). After it, the demo caught its bug in 11
+  seconds.
+- `contexer test` on the demo app, with the key in the environment and
+  `--provider azure --model gpt-5.4`: 2 confirmed bugs (the exception and
+  the count), 1 working behaviour, 1 question, the fix prompt printed and
+  saved, exit 1. 20 Tester steps.
+- The first draft of the guide named `contexer test --copy` as a command
+  on its own. It is not one: `--copy` goes with a test. Corrected.
+
+Not followed: `contexer setup` itself, which asks for a key at the
+terminal, and the same steps on macOS and Linux.
+
+**The live runs are in the changelog** with their real outcomes, the
+failed one included.
+
+**Where this differs from the ticket.**
+
+- The real project is HealthCare.Ai, not BurryAI.
+- The release itself is the owner's step: `git tag v0.5.0 && git push origin
+  v0.5.0`. The workflow builds the package, checks that the tag matches the
+  version and publishes to PyPI by trusted publishing, which has to be
+  registered once on pypi.org for the name `contexer-agent`.
+- Not run: macOS, Codex live, the issue flow against a real GitHub issue.

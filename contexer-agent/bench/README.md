@@ -77,24 +77,24 @@ Each run of the whole suite writes `tester-results/<agent>.md`.
 
 `contexer bench --suite repair --agent NAME [--model MODEL]` measures the
 whole loop: each seeded bug is laid out with its app's approved contract and
-handed to a coding agent, once on each engine of `contexer run` (`classic`
-and `graph`). A bug counts as **fixed** only when the run ends `succeeded`,
+handed to a coding agent that `contexer run`'s loop drives. A bug counts as **fixed** only when the run ends `succeeded`,
 which is the gate's word and not the agent's.
 
 ```bash
 contexer bench --suite repair --agent opencode --model azure/gpt-5.4 --repair-only --out repair.json
-contexer bench --suite repair --agent claude-code --bug todo/count-ignores-done --engine graph
+contexer bench --suite repair --agent claude-code --bug todo/count-ignores-done
 ```
 
 - `--repair-only`: the first turn gives the agent the job and tells it to
   change nothing. The checks then fail on the seeded bug and every fix is a
-  repair. Use it to compare the engines, which differ only in the repair.
-  Without it a capable model fixes most bugs in its first turn.
-- `--engine`, `--bug app/bug`, `--app`, `--limit N`, `--rounds N` narrow the run.
-- The graph engine's own agents (Triage, Diagnoser) use the model you
+  repair. Use it to measure the repair itself: without it a capable model
+  fixes most bugs in its first turn.
+- `--bug app/bug`, `--app`, `--limit N`, `--rounds N` narrow the run.
+- Contexer's own agents (Triage, Diagnoser) use the model you
   configured; with none, the rules decide.
-- It costs a coding-agent session per bug per engine. The full run on
-  gpt-5.4 took 86 minutes.
+- It costs a coding-agent session per bug. The full run of 46 bugs on two
+  loops (0.4's and the graph, before 0.4's was removed) took 86 minutes on
+  gpt-5.4.
 - It is also how to measure a weaker coding model: same bugs, same checks,
   another `--model`.
 

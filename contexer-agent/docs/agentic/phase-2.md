@@ -148,6 +148,39 @@ signed-out states, where the project count is). One pair of runs, and this
 fixture signs in before the Tester starts, so there is little for a skill to
 save. The mechanism works; the benefit is not shown.
 
+**T2.4, measured again on 2026-11-21: still not met, and now with enough
+runs to say why.** The first measurement compared a first run with a
+second one that also had ten saved checks to skip, so it could not tell
+skills from saved checks. This one changes only the skills: twelve runs of
+`contexer test` on fresh copies of `members`, the same intent, Azure
+`gpt-5.4`. Six had `--no-skills`; six started with the three skills an
+earlier run saved.
+
+| | Tester steps, each run | Median | Tool calls, median | Tester input tokens, median |
+| --- | --- | --- | --- | --- |
+| No skills | 13, 16, 17, 17, 19, 23 | 17 | 28.5 | 105,000 |
+| Three saved skills | 8, 15, 18, 19, 22, 25 | 18.5 | 33.5 | 124,000 |
+
+- Skills did not lower the step count. Identical runs differ by ten steps
+  or more, which is far more than any difference between the two groups.
+- There was nothing for a skill to save here. In all twelve runs the
+  Tester made five calls that came back as an error or a failed
+  expectation, out of 373. The fixture signs in before the Tester starts
+  and shows one screen, so it never has to find its way.
+- What the step count follows is how many edge cases the Tester decides
+  to try, not how long it takes to find a control. "Fewer steps on the
+  second run" was the wrong thing to expect from advice about operating
+  an app.
+- Not measured: an app where the way in is not obvious (a consent screen,
+  a control whose label differs from what the goal calls it). That is
+  where the live runs on HealthCare.Ai lost time, and it was `contexer
+  run` that lost it, which does not read skills at all.
+
+The other two acceptance points hold and have tests: a skill with a
+configured secret in it is refused, and with the folder deleted a run is
+a first run (`tests/test_skills.py`, `tests/test_test_cli.py`). Cost of
+this measurement: 1.39 million input tokens.
+
 **Where the build differs from the tickets.**
 
 - `workflow/criteria.py`'s drafting prompt is not retired. `contexer verify

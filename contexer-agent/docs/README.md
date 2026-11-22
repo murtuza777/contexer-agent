@@ -8,14 +8,14 @@
 | [Developer guide](../README.md) | Setup, every command, `contexer.toml`, tests |
 | [Changelog](../CHANGELOG.md) | What changed in each release |
 
-## How it works today (0.4)
+## How it works today (0.5)
 
 | Document | Covers |
 | --- | --- |
 | [Architecture](architecture.md) | Every module, data format, algorithm, constant and security measure |
 | [Benchmark results](../bench/RESULTS.md) | Seeded-bug catch rate and false failures |
 
-## What comes next
+## How it was built
 
 | Document | Covers |
 | --- | --- |
@@ -41,7 +41,7 @@ date with the code.
 | [Technical landscape](product/technical-landscape.md) | The projects Contexer builds on, and its competitors (October 2026) |
 | [Product plan](product/product-plan.md) | The plan versions 0.1 to 0.4 followed |
 | [Technical plan](roadmap.md) | Milestones and formats for 0.1 to 0.4 |
-| [Earlier multi-agent plans](multi-agent/design.md) | Superseded by the agentic harness: [design](multi-agent/design.md), [PRD](multi-agent/prd.md), [BRD](multi-agent/brd.md), [build plan](multi-agent/build-plan.md), [LangGraph study](multi-agent/langgraph-port.md) |
+| [Earlier multi-agent plans](archive/multi-agent/design.md) | Archived; superseded by the agentic harness: [design](archive/multi-agent/design.md), [PRD](archive/multi-agent/prd.md), [BRD](archive/multi-agent/brd.md), [build plan](archive/multi-agent/build-plan.md), [LangGraph study](archive/multi-agent/langgraph-port.md) |
 
 ## Around the product
 

@@ -10,9 +10,10 @@ import pytest
 
 from contexer.agents import ScriptedAgent
 from contexer.contract import ContractStore
-from contexer.controller import RunController, RunSettings
+from contexer.controller import RunSettings
 from contexer.github.api import GitHubClient
 from contexer.github.handoff import HandoffError, hand_off, plan_handoff, pull_request_body
+from contexer.graph import GraphController
 from contexer.verification.runner import CheckRunner
 
 pytestmark = pytest.mark.anyio
@@ -77,7 +78,7 @@ class FakeGitHub:
 async def _run(root: Path, turns: list[dict]):
     contract = ContractStore(root).load("todo-basics")
     fast = CheckRunner(action_timeout=1.5, expect_timeout=1.0)
-    outcome = await RunController(root, ScriptedAgent(turns), RunSettings(max_repair_rounds=0), runner=fast).run(contract)
+    outcome = await GraphController(root, ScriptedAgent(turns), RunSettings(max_repair_rounds=0, review=False), runner=fast).run(contract)
     return outcome, contract
 
 
@@ -179,7 +180,7 @@ async def test_a_project_inside_a_monorepo_commits_paths_from_the_repository_roo
 
 def test_the_body_links_the_workflow_run_in_actions(monkeypatch) -> None:
     from contexer.contract.models import Contract
-    from contexer.controller.run import RunOutcome
+    from contexer.controller import RunOutcome
 
     monkeypatch.setenv("GITHUB_RUN_ID", "42")
     monkeypatch.setenv("GITHUB_REPOSITORY", "acme/todo")

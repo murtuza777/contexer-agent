@@ -8,7 +8,7 @@ from rich.console import Console
 from contexer.agents.base import AgentTurn
 from contexer.agents.opencode_agent import OpenCodeAgent
 from contexer.cli.run_cli import agent_hint, check_free_quota
-from contexer.controller.run import Attempt, RunOutcome
+from contexer.controller import Attempt, RunOutcome
 from contexer.llm import discovery
 from contexer.llm.discovery import FreeQuota, is_free_model
 from contexer.llm.discovery import openrouter_free_quota as real_quota  # conftest stubs the module's copy

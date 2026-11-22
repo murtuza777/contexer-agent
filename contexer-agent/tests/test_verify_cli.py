@@ -157,7 +157,7 @@ def test_an_agent_without_credit_gets_a_way_forward(monkeypatch: pytest.MonkeyPa
     import shutil as _shutil
 
     from contexer.cli.run_cli import agent_hint
-    from contexer.controller.run import RunOutcome
+    from contexer.controller import RunOutcome
 
     no_credit = RunOutcome(
         run_id="r", contract_id="c", agent="claude-code", terminal="agent_error",

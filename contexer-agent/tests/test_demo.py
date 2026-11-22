@@ -39,3 +39,8 @@ def test_demo_catches_the_bug_then_fix_passes(tmp_path: Path) -> None:
     fixed = runner.invoke(app, ["demo", "--dir", str(tmp_path / "b"), "--fix"])
     assert fixed.exit_code == 0, fixed.output
     assert "SIMULATED" in fixed.output
+    # The demo shows the loop people will run: the same one as `contexer run`.
+    import json
+
+    runs = [json.loads(p.read_text(encoding="utf-8")) for p in (tmp_path / "b" / ".contexer" / "runs").glob("*/run.json")]
+    assert [r["engine"] for r in runs] == ["graph"] and runs[0]["terminal"] == "succeeded"

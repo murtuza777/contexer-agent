@@ -8,8 +8,8 @@ is reset to the last snapshot before a resumed node runs.
 Who decides what:
 
 * ``intent``, ``triage`` and ``diagnose`` ask a model, when one is
-  configured. Without one they do nothing, apply the 0.4 rules, or write the
-  plain repair prompt, and the loop is the classic one.
+  configured. Without one they do nothing, apply fixed rules, or write the
+  plain repair prompt.
 * ``guard_snapshot``, ``score`` and ``finalize`` ask nobody. Tampering, the
   score, the revert to the best attempt and the final outcome are code.
 """
@@ -777,8 +777,8 @@ async def _ui_snapshot(ctx: RunContext, goal: str = "") -> str:
 def _stored_contract(ctx: RunContext, contract_id: str) -> Contract | None:
     """The contract as the project has it; or, when it was handed to the run and never saved there, that one.
 
-    The classic engine takes a contract as an object and never reads it back. A caller that keeps its
-    contracts elsewhere (the benchmark does) must get the same from this engine.
+    A caller that keeps its contracts elsewhere (the benchmark does) hands one over as an object, and the
+    run uses it as given.
     """
     if contract_id and ctx.store.exists(contract_id):
         return ctx.store.load(contract_id)

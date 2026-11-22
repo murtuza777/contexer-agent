@@ -41,12 +41,16 @@ def setup(
     test: bool = typer.Option(True, "--test/--no-test", help="Send one tiny request to prove the model answers."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Take the defaults instead of asking."),
     show: bool = typer.Option(False, "--show", help="Print the saved settings and exit."),
+    browser: bool = typer.Option(False, "--browser", help="Only install Chromium, which every check runs in. Needs no key."),
 ) -> None:
     """Bring your own key: choose a provider and models, test them live, and save them for every project."""
     console = Console()
     if show:
         _show(console)
         return
+    if browser:
+        # Asked for by name, so nothing is confirmed: this is the command every hint points to.
+        raise typer.Exit(code=0 if ensure_browser(console, ask=False, install=True) else 1)
     try:
         spec = _choose_provider(console, provider, yes)
     except ValueError as exc:
@@ -112,9 +116,13 @@ def setup(
     console.print('[dim]Next:[/] contexer doctor · contexer run "<what must be true>" [dim](in your app\'s folder)[/]')
 
 
-def ensure_browser(console: Console, ask: bool) -> bool:
-    """Every check runs in Chromium; offer to install it now rather than fail at the first check."""
-    from contexer.observer.browser import chromium_status
+def ensure_browser(console: Console, ask: bool, install: bool = False) -> bool:
+    """Every check runs in Chromium; offer to install it now rather than fail at the first check.
+
+    ``install`` downloads it without asking (the person asked for exactly that). Otherwise ``ask`` decides
+    whether they are asked; with neither, nothing is downloaded and the command to run later is printed.
+    """
+    from contexer.observer.browser import INSTALL_COMMAND, LINUX_DEPS_HINT, chromium_status
 
     ok, detail = asyncio.run(chromium_status())
     if ok:
@@ -122,14 +130,16 @@ def ensure_browser(console: Console, ask: bool) -> bool:
         return True
     console.print(f"  browser   [yellow]{escape(detail)}[/]")
     command = [sys.executable, "-m", "playwright", "install", "chromium"]
-    if not ask or not typer.confirm("Install Chromium for Contexer now (about 150 MB)?", default=True):
-        console.print("  [dim]Install it later with:[/] python -m playwright install chromium")
+    if not install and (not ask or not typer.confirm("Install Chromium for Contexer now (about 150 MB)?", default=True)):
+        console.print(f"  [dim]Install it later with:[/] {INSTALL_COMMAND}")
         return False
     if subprocess.call(command) != 0:
-        console.print("[yellow]Chromium did not install.[/] On Linux it may also need: python -m playwright install-deps chromium")
+        console.print("[yellow]Chromium did not install.[/] Check the network and the disk, then run this again.")
         return False
     ok, detail = asyncio.run(chromium_status())
     console.print(f"  browser   {'' if ok else '[yellow]'}{escape(detail)}{'' if ok else '[/]'}")
+    if not ok and detail != LINUX_DEPS_HINT and sys.platform.startswith("linux"):
+        console.print(f"  [dim]{escape(LINUX_DEPS_HINT)}[/]")
     return ok
 
 

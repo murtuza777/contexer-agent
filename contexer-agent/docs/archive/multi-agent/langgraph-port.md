@@ -1,6 +1,6 @@
 # Contexer on LangGraph: a plan, and how it differs from today
 
-> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
+> **Superseded.** This was the plan on 2026-11-03. The current plan is the [agentic harness](../../agentic/architecture.md), which keeps the proof rule but replaces this design. Kept for the reasoning and the research it records.
 
 Contexer's run loop is a hand-written state machine in
 `src/contexer/controller/run.py` (about 500 lines). This document plans how

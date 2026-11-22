@@ -1,7 +1,7 @@
 # Contexer as an agentic harness
 
 Status: approved plan, 2026-11-13. Nothing here is built yet. This document
-replaces the plans in [`docs/multi-agent/`](../multi-agent/) where they differ.
+replaces the plans in [`docs/archive/multi-agent/`](../archive/multi-agent/) where they differ.
 
 Tickets: [Phase 0](phase-0.md) · [Phase 1](phase-1.md) · [Phase 2](phase-2.md) ·
 [Phase 3](phase-3.md) · [Phase 4](phase-4.md) · [Phase 5](phase-5.md) ·
@@ -152,9 +152,10 @@ Reused as it is: `verification/`, `gate/`, `appserver/`, `checkpoint/`,
 `contract/`, `evidence/`, `github/`, `agents/`, `observer/`, `bench/`,
 `config/`, and `llm/catalog.py`, `discovery.py`, `factory.py`.
 
-Replaced: `controller/run.py` and `controller/prompts.py`. They stay available
-as `--engine classic` until the new loop matches them on the benchmark, then
-they are deleted. `workflow/criteria.py` folds into the Intent agent.
+Replaced: `controller/run.py`. It stayed available as `--engine classic`
+until the new loop matched it on the benchmark (46 of 46 each, Phase 3) and
+was deleted in 0.5.0. `controller/prompts.py` is still what the coding agent
+is sent. `workflow/criteria.py` folds into the Intent agent.
 
 New packages:
 
@@ -217,5 +218,6 @@ a live Claude Code session through hooks, a hosted version.
   green.
 - `contexer bench --suite tester`: bugs found and confirmed, false alarms on
   clean and benign variants, against the hand-written baseline (40/40, 0/278).
-- Phase 3: the existing controller tests run against both engines.
+- Phase 3: the existing controller tests ran against both engines until the
+  0.4 loop was removed in 0.5.0; they now pin the graph with no model.
 - Live runs on the demo app and then BurryAI, with the report and cost recorded.

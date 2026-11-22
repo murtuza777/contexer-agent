@@ -70,7 +70,7 @@ def doctor(
 def environment_findings() -> list[Finding]:
     from contexer.cli.gate_cli import compiler_llm
     from contexer.config.settings import OPENROUTER_FREE_ROUTER
-    from contexer.observer.browser import chromium_status
+    from contexer.observer.browser import INSTALL_COMMAND, chromium_status
 
     findings: list[Finding] = []
     py = sys.version_info
@@ -79,7 +79,7 @@ def environment_findings() -> list[Finding]:
     )
 
     ok, detail = asyncio.run(chromium_status())
-    findings.append(Finding("Browser", "ok" if ok else "fail", detail, "python -m playwright install chromium"))
+    findings.append(Finding("Browser", "ok" if ok else "fail", detail, INSTALL_COMMAND))
 
     git = _version(["git", "--version"])
     findings.append(
