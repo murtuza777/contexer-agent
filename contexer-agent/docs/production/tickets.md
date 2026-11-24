@@ -37,6 +37,7 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 ## Security
 
 ### SEC-1 The hand-off does not run the project's hooks or settings with a token
+- **Done 2026-11-24.** See [audit.md](audit.md) §5.2 and the changelog.
 - **Type.** Security. **Priority.** P0. **Effort.** M. **Depends on.** Nothing.
 - **Problem.** `github/handoff.py` runs `git add`, `commit` and `push` with
   the whole environment and the project's own `.git/hooks` and
@@ -50,9 +51,10 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   everything except the push. Record a hash of `.git/config` and
   `.git/hooks` before the first agent turn and refuse to hand off when
   they changed, naming the files.
-- **Decide first.** A person's own pre-commit hook then does not run on
-  Contexer's commit. Proposed: hooks never run in Actions; on a person's
-  machine `[handoff] run_hooks = true` turns them back on.
+- **As built.** No setting was needed. A hook that was there before the
+  run still runs on a person's machine, without the repository token; a
+  hook that is new or changed since the run began is not run and the pull
+  request says so; in Actions no hook runs.
 - **Files.** `github/handoff.py`, `checkpoint/shadow.py` (reuse
   `_NO_PROGRAMS`), `graph/context.py`.
 - **Accept.** A scripted agent plants `pre-commit` and `pre-push` hooks
@@ -62,6 +64,7 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   `test_handoff_refuses_when_git_config_changed_during_the_run`.
 
 ### SEC-2 One filtered loader for `.env`
+- **Done 2026-11-24.** See [audit.md](audit.md) §5.2 and the changelog.
 - **Type.** Security. **Priority.** P0. **Effort.** S. **Depends on.** Nothing.
 - **Problem.** `cli/__init__.py` and `config/settings.py` call
   `load_dotenv` on the nearest `.env` with no filter, before the filtered
@@ -82,6 +85,7 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Tests.** `test_cli_startup_does_not_take_steering_names_from_dotenv`.
 
 ### SEC-3 The contract that is committed is the one that was approved
+- **Done 2026-11-24.** See [audit.md](audit.md) §5.2 and the changelog.
 - **Type.** Security. **Priority.** P1 (P0 for the issue flow). **Effort.** S.
 - **Problem.** The tamper guard runs once, after the agent's turn. Code
   that runs later can rewrite the contract file; `cli/run_cli.py` reloads
@@ -100,6 +104,7 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Tests.** `test_contract_changed_after_the_guard_is_not_committed`.
 
 ### SEC-4 The secret scan covers every changed file
+- **Done 2026-11-24.** See [audit.md](audit.md) §5.2 and the changelog.
 - **Type.** Security. **Priority.** P0. **Effort.** S.
 - **Problem.** `prescan` reads `outcome.diff`, cut at 200,000 characters.
 - **User impact.** A key added after a large lockfile change is pushed.

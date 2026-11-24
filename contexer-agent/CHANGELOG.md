@@ -33,9 +33,22 @@ and [the tickets](docs/production/tickets.md).
 - A hook or a setting planted in `.contexer/shadow.git` is not run by a snapshot, a diff or a
   restore.
 
-Still open, with the two that matter most first: the hand-off runs the project's own git hooks with
-the repository token in the environment, and the nearest `.env` is loaded unfiltered at start. See
-[docs/production/audit.md](docs/production/audit.md) section 5.2.
+- **The hand-off no longer runs what an agent left for git.** The repository's settings and hooks are
+  noted before any agent runs. A changed `.git/config` stops the hand-off; a changed or new hook is
+  not run, and the pull request says so. A hook that was there before still runs on your machine,
+  without the repository token in its environment. In GitHub Actions no hook runs at all.
+- **Every `.env` goes through one filter.** The file nearest the working folder was loaded as it was
+  when any command started. Names that steer git, the GitHub client, proxies and certificates are
+  never taken from a file, and an endpoint (`OPENAI_BASE_URL`, `CONTEXER_LLM_BASE_URL`,
+  `AZURE_OPENAI_ENDPOINT`) is taken only when its key comes from the same file. **This can break a
+  setup** that exports a key and keeps only the endpoint in `.env`: export both, or put both in the file.
+- **The secret scan before a push reads everything that is staged.** It read the first 200,000
+  characters of the run's diff, which a lockfile change alone can fill.
+- **The contract that is committed is the one that was approved.** Files that define done are checked
+  again when the run ends and put back if the app's own code changed them, and a contract file that
+  differs from what the run approved is not committed.
+
+Still open: [docs/production/audit.md](docs/production/audit.md) section 5.2.
 
 ## 0.5.0 — 2026-11-21
 
