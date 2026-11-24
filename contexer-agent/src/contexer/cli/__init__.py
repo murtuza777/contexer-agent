@@ -67,14 +67,11 @@ def main(
     gate code: 0 pass, 1 fail, 2 needs action, 3 error.
     """
     _configure_terminal_encoding()
-    from dotenv import find_dotenv, load_dotenv
-
+    from contexer.config.project import load_nearest_env
     from contexer.config.user import apply_user_settings
 
     # Precedence: exported variables, then the nearest .env, then `contexer setup`.
-    dotenv_path = find_dotenv(usecwd=True)
-    if dotenv_path:
-        load_dotenv(dotenv_path, override=False)
+    load_nearest_env()
     apply_user_settings()
 
 

@@ -190,42 +190,102 @@ class ProjectConfigError(Exception):
     """``contexer.toml`` exists but cannot be used."""
 
 
-# Names that steer Contexer's own tools (git, the GitHub client, the interpreters it starts). A project's .env
-# never sets them: the coding agent can write that file.
-_ENV_NEVER_FROM_PROJECT = ("GIT_", "LD_", "DYLD_", "PYTHON")
-_ENV_NAMES_NEVER_FROM_PROJECT = {"PATH", "PATHEXT", "COMSPEC", "SHELL", "NODE_OPTIONS", "GITHUB_API_URL", "GITHUB_SERVER_URL"}
+# Names that steer Contexer's own tools (git, the GitHub client, the interpreters it starts, where its requests
+# go). A .env file never sets them: the coding agent can write that file, and a repository can carry one.
+_ENV_NEVER_FROM_FILE = ("GIT_", "LD_", "DYLD_", "PYTHON", "SSL_CERT_")
+_ENV_NAMES_NEVER_FROM_FILE = {
+    "PATH", "PATHEXT", "COMSPEC", "SHELL", "NODE_OPTIONS", "NODE_EXTRA_CA_CERTS", "GITHUB_API_URL", "GITHUB_SERVER_URL",
+    "GH_HOST", "GH_ENTERPRISE_TOKEN", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "OPENCODE_SERVER_URL",
+}  # fmt: skip
+_ENV_NEVER_FROM_FILE_SUFFIXES = ("_PROXY",)
+# Where a model key is sent. Taken from a file only together with the key it belongs to (see ``_endpoint_key``).
+_ENDPOINT_SUFFIXES = ("_BASE_URL", "_ENDPOINT", "_API_BASE")
 # Projects whose .env this process has read. It is read once, before any coding agent runs.
 _env_loaded: set[str] = set()
+
+
+def _steers(name: str) -> bool:
+    upper = name.upper()
+    return upper in _ENV_NAMES_NEVER_FROM_FILE or upper.startswith(_ENV_NEVER_FROM_FILE) or upper.endswith(_ENV_NEVER_FROM_FILE_SUFFIXES)
+
+
+def _endpoint_key(name: str, values: dict[str, str | None]) -> str | None:
+    """The key variable an endpoint variable belongs to, or None when ``name`` is not an endpoint."""
+    upper = name.upper()
+    if not upper.endswith(_ENDPOINT_SUFFIXES):
+        return None
+    if upper == "CONTEXER_LLM_BASE_URL":
+        from contexer.llm.catalog import provider_spec
+
+        provider = (values.get("CONTEXER_LLM_PROVIDER") or os.environ.get("CONTEXER_LLM_PROVIDER") or "custom").strip().lower()
+        try:
+            return provider_spec(provider).key_env
+        except ValueError:
+            return "CONTEXER_CUSTOM_API_KEY"
+    stem = upper
+    for suffix in _ENDPOINT_SUFFIXES:
+        stem = stem.removesuffix(suffix)
+    return f"{stem}_API_KEY"
+
+
+def load_env_file(env_file: str | Path, on_refused: Callable[[str], None] | None = None) -> None:
+    """Load one ``.env`` file into the environment. Every place Contexer reads such a file goes through here.
+
+    An exported variable wins over the file; the file wins over what ``contexer setup`` saved. Two kinds of
+    name are not taken, and ``on_refused`` is told which:
+
+    * names that steer Contexer's own tools (``_ENV_NEVER_FROM_FILE``);
+    * an endpoint (``OPENAI_BASE_URL``, ``AZURE_OPENAI_ENDPOINT``, ``CONTEXER_LLM_BASE_URL``) whose key does not
+      come from this same file: a file must not be able to send a key the person exported, or saved with
+      ``contexer setup``, to another address.
+    """
+    path = Path(env_file)
+    if not path.is_file():
+        return
+    from dotenv import dotenv_values
+
+    from contexer.config.user import from_user_settings
+
+    values = dict(dotenv_values(path))
+
+    def taken(name: str) -> bool:
+        return values.get(name) is not None and (name not in os.environ or from_user_settings(name))
+
+    takes = {name: taken(name) for name in values}  # decided before anything is set
+    for name, value in values.items():
+        key = _endpoint_key(name, values)
+        if _steers(name) or (key is not None and not takes.get(key, False)):
+            if on_refused is not None:
+                on_refused(name)
+            continue
+        if value is not None and takes[name]:
+            os.environ[name] = value
+
+
+def load_nearest_env() -> None:
+    """Load the ``.env`` nearest the working folder (it, or a parent's), filtered as every such file is."""
+    from dotenv import find_dotenv
+
+    nearest = find_dotenv(usecwd=True)
+    if nearest:
+        load_env_file(nearest)
 
 
 def load_project_env(project_dir: str | Path, on_refused: Callable[[str], None] | None = None) -> None:
     """Load ``<project>/.env`` into the environment, once per process.
 
     Model and agent keys and ``[auth]`` test credentials can live there, and
-    the coding agent Contexer starts inherits them. An exported variable wins
-    over the file; the file wins over what ``contexer setup`` saved.
+    the coding agent Contexer starts inherits them.
 
     Once, because the coding agent can write ``.env`` and git usually ignores
-    it: what appears there after the run began is not configuration. And a
-    few names are never taken from it at all (see ``_ENV_NEVER_FROM_PROJECT``).
+    it: what appears there after the run began is not configuration. And some
+    names are never taken from it at all (see :func:`load_env_file`).
     """
     key = str(Path(project_dir).resolve())
     if key in _env_loaded:
         return
     _env_loaded.add(key)
-    env_file = Path(project_dir) / ".env"
-    if env_file.is_file():
-        from dotenv import dotenv_values
-
-        from contexer.config.user import from_user_settings
-
-        for name, value in dotenv_values(env_file).items():
-            if name.upper() in _ENV_NAMES_NEVER_FROM_PROJECT or name.upper().startswith(_ENV_NEVER_FROM_PROJECT):
-                if on_refused is not None:
-                    on_refused(name)
-                continue
-            if value is not None and (name not in os.environ or from_user_settings(name)):
-                os.environ[name] = value
+    load_env_file(Path(project_dir) / ".env", on_refused)
 
 
 def load_project_config(project_dir: str | Path) -> ProjectConfig:
