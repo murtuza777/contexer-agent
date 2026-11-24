@@ -88,7 +88,7 @@ Useful options:
 
 **Exit codes:** `0` pass · `1` fail (a check was refuted) · `2` needs action
 (unverified check, draft or modified contract, budget or time exhausted) ·
-`3` error (app or agent could not run) · `130` stopped with Ctrl+C (the agent
+`3` error (app or agent could not run, or Contexer itself failed) · `130` stopped with Ctrl+C (the agent
 is stopped and the project put back; `contexer restore RUN --stopped` brings
 the unfinished work back).
 

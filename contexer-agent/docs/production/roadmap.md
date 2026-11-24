@@ -91,7 +91,8 @@ person. Every milestone ends with a stop for review.
 
 - **Objective.** A model that calls tools badly degrades to a clear
   message, never to a silent wrong answer.
-- **Current state.** `L1` to `L7` in [audit.md](audit.md) §5.1.
+- **Current state.** `L1` to `L7` in [audit.md](audit.md) §5.1. `REL-2` to
+  `REL-5` were built on 2026-11-25; `REL-6` and `REL-7` are open.
 - **Required.** `REL-2` (malformed tool calls), `REL-3` (text taken for an
   answer), `REL-4` (corrections per mistake), `REL-5` (a crash still
   writes a report), `REL-6` (flaky checks), `REL-7` (atomic writes and the
@@ -246,8 +247,7 @@ parallel with `MOD-1` and `MOD-2`; then `EVAL-1` and `EVAL-2`.
 **Blocks a closed beta.**
 
 1. ~~`SEC-1`, `SEC-2`, `SEC-4`~~ and `SEC-3`: fixed on 2026-11-24.
-4. `REL-3`: a model's printed tool call accepted as "no notes".
-5. `REL-5`: a crash leaves no report and the files mid-attempt.
+4. ~~`REL-3`~~ and ~~`REL-5`~~: fixed on 2026-11-25.
 6. `DX-3`: never run on macOS; Linux only in CI.
 7. `REL-1`: no release exists to install.
 8. `DOC-1`: no plain statement of what is sent to which provider.
@@ -388,9 +388,10 @@ Contexer is ready for people who are not the author when:
 6. It says plainly what it does not do: web apps only, never writes code,
    which provider sees what.
 
-Today, after the fixes of 2026-11-24: 1 holds as far as is known; 2 does
-not (`SEC-1` to `SEC-4`); 3 holds on Windows only; 4 does not (`REL-5`);
-5 holds; 6 is half written.
+Today, after the fixes of 2026-11-25: 1 holds as far as is known; 2 holds
+in the code but not in a release (`SEC-1` to `SEC-4` are fixed, not
+shipped); 3 holds on Windows only; 4 holds since `REL-5`; 5 holds; 6 is
+half written.
 
 ---
 
@@ -471,5 +472,6 @@ On the tree with the fixes of that day, Windows 11, Python 3.14.
 | Tests touched by the fixes | Passed (see [audit.md](audit.md) §4) |
 | Full suite (`pytest`, the live OpenCode test deselected) | 1003 passed, 4 skipped, in 37 min 37 s |
 | Full suite after `SEC-1` to `SEC-4` | 1014 passed, 4 skipped, in 30 min 46 s |
+| Full suite after `REL-2` to `REL-5` (2026-11-25) | 1028 passed, 4 skipped, in 30 min 44 s |
 | Gate, tester, repair and reviewer benchmarks | Not re-run that day |
 | Live runs with a model | None that day |

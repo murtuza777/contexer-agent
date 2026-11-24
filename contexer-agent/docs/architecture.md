@@ -214,7 +214,7 @@ required, or a contract with no gating results) > `pass`.
 | `0` | pass / run succeeded |
 | `1` | fail: a check was refuted / run ended on failing checks |
 | `2` | needs action: unverified checks, draft or modified contract, budget or time used up, tampering, not approved |
-| `3` | error: the app or the agent could not run, a pull request could not be prepared, no free requests left |
+| `3` | error: the app or the agent could not run, a pull request could not be prepared, no free requests left, or Contexer itself failed (`internal_error`) |
 | `130` | stopped with Ctrl+C |
 
 ## 5. The check language
@@ -500,7 +500,8 @@ Per attempt *n*:
 **Terminal states**: `succeeded`, `failed_checks`, `needs_human` (only
 unverified checks, or the app did not start, after the last round),
 `budget_exhausted`, `timed_out`, `tampered`, `agent_error`, `app_error`,
-`cancelled`.
+`cancelled`, `internal_error` (a fault in Contexer: the files are put back as
+for a stopped run, and the traceback is kept in the run folder as `crash.txt`).
 
 **End state**: a successful run leaves the last attempt. Otherwise the best
 attempt is restored; with no usable attempt the baseline comes back. A

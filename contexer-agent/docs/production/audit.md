@@ -149,11 +149,11 @@ standard.
 
 | # | Finding | State | Severity |
 | --- | --- | --- | --- |
-| L1 | A tool call the model sends malformed, or cut off at the output limit, is treated as "no answer". On OpenAI-style providers the next request then carries a tool call with no result | Broken, *read, not run* | Medium |
-| L2 | Any JSON object in a model's text is accepted as its final answer when every field of the expected answer has a default. A model that prints a tool call as text ends the Reviewer with "no notes" and the Diagnoser with no lead, both marked `ok` | Broken, *read, not run* | Medium |
-| L3 | A model gets two corrections for the whole run of an agent, not per mistake. Three narrated steps in a 40-step Tester run end it | Partial | Medium for weak models |
+| L1 | A tool call the model sends malformed, or cut off at the output limit, is treated as "no answer". On OpenAI-style providers the next request then carries a tool call with no result | **Fixed 2026-11-25** (`REL-2`) | Medium |
+| L2 | Any JSON object in a model's text is accepted as its final answer when every field of the expected answer has a default. A model that prints a tool call as text ends the Reviewer with "no notes" and the Diagnoser with no lead, both marked `ok` | **Fixed 2026-11-25** (`REL-3`); reproduced first | Medium |
+| L3 | A model gets two corrections for the whole run of an agent, not per mistake. Three narrated steps in a 40-step Tester run end it | **Fixed 2026-11-25** (`REL-4`) | Medium for weak models |
 | L4 | Provider errors: two retries inside the SDK, then the agent ends. No backoff of Contexer's own, no second provider | Partial; every agent degrades safely to rules | Low |
-| L5 | An unexpected exception in a node ends in a traceback with no `run.json` and the files left mid-attempt | Partial | Medium |
+| L5 | An unexpected exception in a node ends in a traceback with no `run.json` and the files left mid-attempt | **Fixed 2026-11-25** (`REL-5`). A snapshot store that cannot be written still ends the command with its own message and no `run.json` | Medium |
 | L6 | A failed check is replayed once. A flaky check sends the coding agent to repair nothing | Missing (in readiness.md) | Medium |
 | L7 | One failed coding-agent turn with no changes ends the run as `agent_error`; a transient failure is not tried again | Missing | Low |
 | L8 | The review's commands have no baseline: an `npm test` that failed before the change triggers a paid repair turn | Partial | Low |
@@ -277,5 +277,5 @@ still running when the first fixes were made, so it is not a clean
 baseline and is not quoted.
 
 After the first ten fixes: 1003 passed, 4 skipped, with lint and type checks
-clean; after the four security fixes of milestone A, 1014 passed, 4 skipped ([roadmap.md](roadmap.md) §12). The benchmarks were not re-run and no
+clean; after the four security fixes of milestone A, 1014 passed, 4 skipped; after the four run-loop fixes of milestone B on 2026-11-25, 1028 passed, 4 skipped ([roadmap.md](roadmap.md) §12). The benchmarks were not re-run and no
 live run with a model was made that day.
