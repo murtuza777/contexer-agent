@@ -169,6 +169,10 @@ def run(
         check_free_quota(console, drafting, agent, yes)
         contract, graph_preview, graph_analyzer = _draft(console, project, store, goal, url, drafting, draft_id)
         contract = _from_issue(store, contract, issue)
+    if model_for_crew is not None:
+        # The estimate's count of model calls, against what is left of a free daily allowance.
+        ceiling = _estimate(settings, crew_budget, True, contract is None and not resume).model_calls
+        check_free_quota(console, None, agent, yes, crew=model_for_crew, needed=ceiling)
     if contract is not None and contract.status != "approved":
         contract = _approve(console, store, contract, yes, graph_preview, graph_analyzer)
     outcome = execute_graph(
@@ -620,9 +624,21 @@ def _approve(
     return approved
 
 
-def check_free_quota(console: Console, drafting: Any, agent: CodingAgentAdapter, yes: bool) -> None:
-    """Say before the run, not halfway through it, when OpenRouter's free requests are about to run out."""
+def check_free_quota(
+    console: Console, drafting: Any, agent: CodingAgentAdapter, yes: bool, *, crew: Any = None, needed: int = 0
+) -> None:
+    """Say before the run, not halfway through it, when OpenRouter's free requests are about to run out.
+
+    ``crew`` is the model of Contexer's own agents and ``needed`` the most model calls they can make
+    in this run (the estimate's ceiling). Fewer requests left than that is said, not asked about:
+    a run that passes early uses a small part of the ceiling.
+    """
+    from contexer.llm.chat import uses_free_requests
+
     users = []
+    crew_is_free = uses_free_requests(crew)
+    if crew_is_free:
+        users.append("Contexer's own agents")
     if (
         drafting is not None
         and getattr(drafting, "provider_name", "") == "openrouter"
@@ -635,12 +651,17 @@ def check_free_quota(console: Console, drafting: Any, agent: CodingAgentAdapter,
     if not users or not key:
         return
     quota = discovery.openrouter_free_quota(key)
-    if quota is None or quota.remaining >= discovery.LOW_FREE_REQUESTS:
+    crew_calls = needed if crew_is_free else 0
+    if quota is None or quota.remaining >= max(discovery.LOW_FREE_REQUESTS, crew_calls):
         return
+    size = (
+        f"Contexer's own agents can make up to {crew_calls} model calls in this run"
+        if crew_calls
+        else "a small change took about 15 in our runs, a larger one can take 40 or more"
+    )
     detail = (
         f"OpenRouter's free models allow {quota.limit} requests a day and {quota.remaining} are left today "
-        f"(the count resets at 00:00 UTC). This run uses them for {' and '.join(users)}; a small change took "
-        "about 15 in our runs, a larger one can take 40 or more."
+        f"(the count resets at 00:00 UTC). This run uses them for {' and '.join(users)}; {size}."
     )
     remedy = (
         "Buying $10 of OpenRouter credit raises the limit to 1,000 a day, or `contexer setup` picks another provider."
@@ -650,9 +671,10 @@ def check_free_quota(console: Console, drafting: Any, agent: CodingAgentAdapter,
         term.note(console, "fail", "[bold red]No free requests left today[/]")
         console.print(f"  {escape(detail)}\n  {escape(remedy)}")
         raise typer.Exit(code=3)
-    term.note(console, "warn", "[bold yellow]Few free requests left[/]")
+    low = quota.remaining < discovery.LOW_FREE_REQUESTS
+    term.note(console, "warn", "[bold yellow]Few free requests left[/]" if low else "[yellow]This run can use more free requests than are left[/]")
     console.print(f"  {escape(detail)}\n  If they run out, the run stops and keeps its best attempt. {escape(remedy)}")
-    if not yes and not typer.confirm("Start anyway?", default=False):
+    if low and not yes and not typer.confirm("Start anyway?", default=False):
         raise typer.Exit(code=2)
 
 

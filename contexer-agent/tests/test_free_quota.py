@@ -99,3 +99,56 @@ def test_a_run_that_hits_the_daily_limit_says_what_to_do() -> None:
     assert agent_hint(_outcome("free-models-per-day", terminal="failed_checks")) is not None
     hint = agent_hint(_outcome("AI_APICallError: 429 Too Many Requests"))
     assert hint is not None and "rate-limiting" in hint
+
+
+# The request count the estimate gives, and Contexer's own agents on a free model (Phase 5, T5.2).
+
+
+def _crew(model: str = "nvidia/nemotron-3-ultra-550b-a55b:free"):
+    from contexer.config.settings import ContexerConfig
+    from contexer.llm.chat import chat_model
+
+    return chat_model("openrouter", model, config=ContexerConfig(openrouter_api_key="sk-test"))
+
+
+def _paid_agent() -> OpenCodeAgent:
+    return OpenCodeAgent(model="anthropic/claude-opus-5-5", start_server=False)
+
+
+def test_a_free_model_for_contexers_own_agents_counts_too(quota) -> None:
+    from contexer.llm.chat import uses_free_requests
+
+    assert uses_free_requests(_crew())
+    assert uses_free_requests(_crew().bind_tools([]))  # an agent's model is bound to its tools
+    assert not uses_free_requests(_crew("anthropic/claude-opus-5-5"))
+    assert not uses_free_requests(None)
+
+    quota(0)
+    console = Console(record=True, width=200)
+    with pytest.raises(typer.Exit) as stopped:
+        check_free_quota(console, None, _paid_agent(), yes=True, crew=_crew(), needed=80)
+    assert stopped.value.exit_code == 3
+    assert "Contexer's own agents" in console.export_text()
+
+
+def test_the_warning_names_the_estimated_request_count(quota, monkeypatch: pytest.MonkeyPatch) -> None:
+    quota(40)  # more than the fixed threshold, fewer than this run can use
+    asked: list[str] = []
+    monkeypatch.setattr(typer, "confirm", lambda *a, **_k: asked.append(str(a)) or True)
+    console = Console(record=True, width=200)
+    check_free_quota(console, None, _paid_agent(), yes=False, crew=_crew(), needed=80)
+    text = console.export_text()
+    assert "up to 80" in text and "40 are left today" in text
+    assert not asked  # said, not asked: the estimate is a ceiling, and most runs use a small part of it
+
+    quota(40)
+    quiet = Console(record=True)
+    check_free_quota(quiet, None, _paid_agent(), yes=False, crew=_crew(), needed=30)
+    assert quiet.export_text() == ""  # enough for everything this run can use
+
+
+def test_a_paid_model_for_the_agents_is_not_counted(quota) -> None:
+    quota(0)
+    console = Console(record=True)
+    check_free_quota(console, None, _paid_agent(), yes=False, crew=_crew("anthropic/claude-opus-5-5"), needed=80)
+    assert console.export_text() == ""

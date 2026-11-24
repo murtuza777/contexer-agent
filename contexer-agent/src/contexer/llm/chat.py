@@ -221,6 +221,14 @@ def describe_model(model: Any) -> str:
     return f"model '{name}'" if isinstance(name, str) and name else f"model {type(inner).__name__}"
 
 
+def uses_free_requests(model: Any) -> bool:
+    """Whether calls to this chat model count against OpenRouter's daily free-request limit."""
+    inner = getattr(model, "bound", model)
+    name = getattr(inner, "model_name", None)
+    base = str(getattr(inner, "openai_api_base", "") or "")
+    return isinstance(name, str) and "openrouter.ai" in base and discovery.is_free_model(name)
+
+
 def clean_error(exc: BaseException) -> str:
     """One line of ``exc`` with anything that looks like an API key masked."""
     lines = str(exc).strip().splitlines()
