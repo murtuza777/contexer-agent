@@ -260,3 +260,148 @@ def test_a_draft_comment_without_an_intent_is_as_before() -> None:
     assert "### What Contexer understood" not in body and "### Questions" not in body
     comment, parsed, edited = find_draft([{"id": 1, "body": body, "user": BOT}])
     assert parsed.id == "todo-basics" and not edited
+
+
+def _lockfile(packages: int) -> str:
+    """A package-lock.json of the usual shape: long, and all of it hashes."""
+    import hashlib
+    import json
+
+    entries = {
+        f"node_modules/pkg-{n}": {
+            "version": f"1.0.{n}",
+            "resolved": f"https://registry.npmjs.org/pkg-{n}/-/pkg-{n}-1.0.{n}.tgz",
+            "integrity": "sha512-" + hashlib.sha512(str(n).encode()).hexdigest(),
+        }
+        for n in range(packages)
+    }
+    return json.dumps({"name": "todo", "lockfileVersion": 3, "packages": entries}, indent=2) + "\n"
+
+
+async def test_a_secret_after_a_large_lockfile_change_is_still_seen_and_not_pushed(repo: Path) -> None:  # noqa: F811
+    # The diff a run keeps is cut at 200,000 characters and a lockfile sorts before src/. What is scanned
+    # before a push is what is staged, all of it.
+    lock = _lockfile(1500)
+    assert len(lock) > 300_000
+    plan = plan_handoff(repo)
+    outcome, contract = await _graph_run(repo, [{"package-lock.json": lock, "zz-config.js": LEAK, "app.js": GOOD_JS}], rounds=0)
+    assert "q7Rk2ZpX9vLm" not in outcome.diff  # the diff the run keeps was cut before the line with the key
+
+    github_ = PullsOnly()
+    handoff = hand_off(plan, outcome, contract, client_factory=github_.factory)
+    assert handoff is not None and not handoff.pushed and github_.pulls == []
+    assert "zz-config.js:1" in handoff.note and "secret" in handoff.note.lower()
+    assert git(repo, "ls-remote", "--heads", "origin", handoff.branch) == ""
+
+
+async def test_a_large_lockfile_change_alone_is_pushed(repo: Path) -> None:  # noqa: F811
+    plan = plan_handoff(repo)
+    outcome, contract = await _graph_run(repo, [{"package-lock.json": _lockfile(1500), "app.js": GOOD_JS}], rounds=0)
+    github_ = PullsOnly()
+    handoff = hand_off(plan, outcome, contract, client_factory=github_.factory)
+    assert handoff is not None and handoff.pushed, handoff.note  # hashes in a lockfile are not secrets
+
+
+async def test_a_contract_rewritten_after_the_run_is_not_what_gets_committed(repo: Path) -> None:  # noqa: F811
+    # The tamper guard looks after each turn. Code that runs later (a dev server, an install script) can
+    # still rewrite the file with weaker checks and a matching hash. What was approved is what the run
+    # remembers, and a file that says otherwise is not committed.
+    import json
+
+    from contexer.github.handoff import HandoffError
+
+    plan = plan_handoff(repo)
+    outcome, _ = await _graph_run(repo, [{"app.js": GOOD_JS}], rounds=0)
+    assert outcome.terminal == "succeeded" and outcome.approved_hash
+
+    store = ContractStore(repo)
+    weak = store.load("todo-basics")
+    weak = weak.model_copy(update={"criteria": weak.criteria[:1]})
+    weak = store.approve(store.save(weak) and weak.id)  # self-consistent: fewer checks, approved, hash matches
+    assert weak.status == "approved" and weak.content_hash() != outcome.approved_hash
+
+    github_ = PullsOnly()
+    with pytest.raises(HandoffError, match="changed after"):
+        hand_off(plan, outcome, store.load("todo-basics"), client_factory=github_.factory)
+    assert github_.pulls == []
+    assert json.loads((repo / ".contexer" / "contracts" / "todo-basics.json").read_text(encoding="utf-8"))["criteria"]
+
+
+async def test_a_file_that_defines_done_changed_after_the_last_turn_is_put_back_at_the_end(repo: Path) -> None:  # noqa: F811
+    from contexer.verification.runner import CheckRunner
+
+    path = repo / ".contexer" / "contracts" / "todo-basics.json"
+    approved = path.read_bytes()
+
+    class _RewritesWhileProving(CheckRunner):
+        async def run(self, *args: Any, **kwargs: Any) -> Any:
+            results = await super().run(*args, **kwargs)
+            path.write_text("{}", encoding="utf-8")  # as the app's own code could, once it is running
+            return results
+
+    contract = ContractStore(repo).load("todo-basics")
+    controller = GraphController(repo, RecordingAgent([{"app.js": GOOD_JS}]), RunSettings(max_repair_rounds=0), runner=_RewritesWhileProving(action_timeout=1.5, expect_timeout=1.0))
+    outcome = await controller.run(contract)
+
+    assert path.read_bytes() == approved
+    assert "put back" in outcome.reason and "todo-basics.json" in outcome.reason
+
+
+# -- the hand-off's own git calls (SEC-1) -----------------------------------------------------------------
+
+
+def _hook(repo: Path, name: str, marker: Path) -> None:  # noqa: F811
+    """A hook that writes the repository token it can see, or "none", to ``marker``."""
+    hook = repo / ".git" / "hooks" / name
+    hook.parent.mkdir(exist_ok=True)
+    hook.write_text("#!/bin/sh\nprintf '%s' \"${GITHUB_TOKEN:-none}\" > '" + marker.as_posix() + "'\n", encoding="utf-8", newline="\n")
+    hook.chmod(0o755)
+
+
+async def test_a_hook_planted_during_the_run_is_not_run_by_the_hand_off(repo: Path, tmp_path: Path) -> None:  # noqa: F811
+    plan = plan_handoff(repo)  # before any agent runs, as the commands do
+    outcome, contract = await _graph_run(repo, [{"app.js": GOOD_JS}], rounds=0)
+    ran = tmp_path / "ran.txt"
+    for name in ("pre-commit", "commit-msg", "post-commit", "pre-push"):
+        _hook(repo, name, ran)  # what a coding agent with a shell can do
+
+    github_ = PullsOnly()
+    handoff = hand_off(plan, outcome, contract, client_factory=github_.factory)
+    assert handoff is not None and handoff.pushed, handoff.note  # the work is still handed off
+    assert not ran.exists()
+    assert "hooks" in handoff.note and "not run" in handoff.note
+
+
+async def test_a_hook_that_was_there_before_the_run_still_runs_and_sees_no_token(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    ran = tmp_path / "ran.txt"
+    _hook(repo, "pre-commit", ran)  # the person's own, from before
+    plan = plan_handoff(repo)
+    outcome, contract = await _graph_run(repo, [{"app.js": GOOD_JS}], rounds=0)
+    handoff = hand_off(plan, outcome, contract, client_factory=PullsOnly().factory)
+    assert handoff is not None and "hooks" not in handoff.note
+    assert ran.read_text(encoding="utf-8") == "none"  # it ran, and the token in Contexer's environment was not in its own
+
+
+async def test_in_actions_no_hook_runs_at_all(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    ran = tmp_path / "ran.txt"
+    _hook(repo, "pre-commit", ran)
+    _hook(repo, "pre-push", ran)
+    plan = plan_handoff(repo)
+    outcome, contract = await _graph_run(repo, [{"app.js": GOOD_JS}], rounds=0)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")  # the push there carries the token on git's command line
+    monkeypatch.setattr("contexer.github.handoff._push_auth", lambda _plan: [])  # the remote here is a folder
+    handoff = hand_off(plan, outcome, contract, client_factory=PullsOnly().factory)
+    assert handoff is not None and handoff.pushed, handoff.note
+    assert not ran.exists()
+
+
+async def test_git_settings_changed_during_the_run_stop_the_hand_off(repo: Path) -> None:  # noqa: F811
+    from contexer.github.handoff import HandoffError
+
+    plan = plan_handoff(repo)
+    outcome, contract = await _graph_run(repo, [{"app.js": GOOD_JS}], rounds=0)
+    with (repo / ".git" / "config").open("a", encoding="utf-8", newline="\n") as config:
+        config.write("[core]\n\tsshCommand = evil\n")
+    with pytest.raises(HandoffError, match=r"\.git/config"):
+        hand_off(plan, outcome, contract, client_factory=PullsOnly().factory)
+    assert git(repo, "branch", "--show-current") == "main"  # nothing was started
