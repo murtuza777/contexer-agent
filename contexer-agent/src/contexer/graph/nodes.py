@@ -187,6 +187,11 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             best=held,
             best_score=CARRIED_SCORE if held is not None else UNSCORED,
             last_signatures=[],
+            # A pass under the old checks is not a pass under these. The review's set-aside pass is dropped
+            # with it, or a later attempt that fails the new checks would be undone back to "passed".
+            review_passed=None,
+            accepted=None,
+            review_repairs=0,
         )
         return updates
 
@@ -309,6 +314,9 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         contracts = _contracts(ctx)
         folder = ctx.attempt_dir(n)
         error = state.get("app_error")
+        if error is None and ctx.app is None:
+            # A run resumed at this step: the process that started the app is gone.
+            error = _start_app(ctx, [])
         if error is None and ctx.app is not None:
             ctx.event("phase", f"Attempt {n}: proving {check_count(contracts)} checks in Chromium", n=n, proving=check_count(contracts))
             session = VerificationSession(ctx.project, folder, verifier=Verifier(llm_provider=None, runner=ctx.runner))

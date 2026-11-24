@@ -534,3 +534,44 @@ async def test_what_the_agents_spent_before_the_stop_still_counts_after_a_resume
     assert controller.last_outcome is not None
     await _graph(project, RecordingAgent([{"app.js": GOOD_JS}]), model=AgentScript(), budget=second).resume(controller.last_outcome.run_id)
     assert second.tokens >= first.tokens  # it starts from what was already spent, not from zero
+
+
+async def test_a_pass_under_the_old_checks_does_not_end_a_run_whose_checks_were_corrected(project: Path) -> None:
+    # Attempt 1 passes and the review asks for one repair. Before that turn a correction adds a check.
+    # No later attempt meets it. The pass was under checks that no longer define done: it must not end the run.
+    leaky = 'const SERVICE_KEY = "' + "q7Rk2ZpX9vLm" + "4TnB8sWd3Yf6" + '";\n' + GOOD_JS
+    model = AgentScript(intent=[_corrected_intent()])
+    agent = RecordingAgent([{"app.js": leaky}, {"app.js": GOOD_JS}, {"app.js": GOOD_JS}])
+    controller = _graph(project, agent, model=model, ask=lambda _r: {"approve": True}, corrections=_once(CORRECTION, after=agent))
+    outcome = await controller.run(contract(project))
+
+    assert outcome.corrections == [CORRECTION]
+    assert outcome.terminal != "succeeded", outcome.reason
+    assert outcome.final is None or outcome.final.decision.outcome != "pass"
+
+
+async def test_a_run_stopped_while_proving_resumes_with_the_app_running(project: Path) -> None:
+    # Stopped in the middle of the checks: the resumed process has no app yet. It must start one and
+    # prove the attempt, not record "the app did not start" and pay for a repair of nothing.
+    replaying = asyncio.Event()
+
+    class _StuckRunner(type(fast_runner())):
+        async def run(self, *args: Any, **kwargs: Any) -> Any:
+            replaying.set()
+            await asyncio.sleep(3600)
+
+    controller = GraphController(project, ScriptedAgent([{"app.js": GOOD_JS}]), RunSettings(max_repair_rounds=2), runner=_StuckRunner(action_timeout=1.5, expect_timeout=1.0))
+    task = asyncio.create_task(controller.run(contract(project)))
+    await asyncio.wait_for(replaying.wait(), 60)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert controller.last_outcome is not None
+    stopped = controller.last_outcome
+
+    agent = RecordingAgent([{"app.js": GOOD_JS}])
+    resumed = await _graph(project, agent).resume(stopped.run_id)
+
+    assert resumed.terminal == "succeeded", resumed.reason
+    assert [a.outcome for a in resumed.attempts] == ["pass"]
+    assert not any("did not start" in (a.note or "") for a in resumed.attempts)
