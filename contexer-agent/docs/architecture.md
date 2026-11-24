@@ -696,6 +696,10 @@ intent → approve → coder_turn → guard_snapshot → ensure_app → test →
 - `changed_paths` (`diff --name-only --no-renames`), `diff` (stat and patch,
   cut at 200,000 characters), `resolve(ref)`.
 - `unsafe_work_tree` refuses a drive root or the home folder.
+- Every git call passes `-c core.hooksPath=<null device>`, `core.fsmonitor=false`,
+  `commit.gpgSign=false`, and diffs use `--no-ext-diff --no-textconv`: the folder is
+  inside the project, so the coding agent can write to it, and nothing planted there
+  (a hook, a setting that names a program) is started.
 
 Refs per run: `<run>/0` (baseline), `<run>/<n>` (attempts), `<run>/stopped`,
 `<run>/undo` (before a `contexer restore`).
@@ -926,7 +930,10 @@ flowchart LR
   uncaught exceptions) is inserted by code from the `CheckResult`, word for
   word, and is the same text with or without a brief. `diagnose` runs the
   agent with `read_file` and `grep`, both read-only, confined to the project
-  and closed to `.contexer/`, `.git/`, dependencies and `.env` files. Its
+  and closed to `.contexer/`, `.git/`, dependencies, `.aws/`, `.ssh/` and files that hold
+  credentials by name (`.env`, `*.env`, `.npmrc`, `.netrc`, `*.pem`, `*.key`, `id_rsa`...).
+  `grep` resolves every file first, so a link or a junction cannot lead out of the project
+  or into a closed folder. Its
   `RepairBrief` adds the likely cause (labelled a hypothesis), the files,
   the instruction and what must keep working. With no brief the prompt is
   still complete.
@@ -962,6 +969,7 @@ wants (`tests/test_guardrails.py`). The plan is in
 | --- | --- |
 | Report a bug that is not there | `browser/freeze.py`: a finding that does not reproduce on replay is never shown. `crew/challenger.py`: a second look at each confirmed bug can set it aside as the tester's doing (the steps skipped a condition the intent states, or the app said why it refused); it can only remove, needs a reason, and what it removes is listed with that reason |
 | Spend without limit | `crew/budget.py`: one `Budget` per run, shared by every agent, checked before each model call (`[limits] tokens`, `--max-tokens`, default 1,500,000). At most 25 tool calls run from one reply, and the same call four times in a row is refused |
+| A replayed check leaves the app | `verification/runner.py`: a `goto` to another site is refused, and so is an address with a backslash, a control character, a user name or `${NAME}` in it (a browser and Python do not read every address alike). A check stops at the first step after the page has left the app's origin; the `[auth]` sign-in may pass through another site. `[auth]` cannot name a repository token, a model key or a tracing key |
 | Leave the app and act elsewhere | `browser/tools.py`: `goto` to another origin is refused; an action that leaves the origin is undone, not recorded, and marks the recording unreliable; pop-ups are closed |
 | Click and type on a live site | `contexer test --url` to a host that is not this machine or a private network needs `--allow-remote` |
 | Change the project | No agent has a write tool (the table below, enforced by a test); a full run leaves every file outside `.contexer/` unchanged |

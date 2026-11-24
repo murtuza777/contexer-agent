@@ -30,6 +30,17 @@
 Each phase file holds its tickets. The same tickets are GitHub issues, one
 milestone per phase.
 
+## Getting to a closed beta
+
+Written on 2026-11-24. Proposals for the owner to read and accept.
+
+| Document | Covers |
+| --- | --- |
+| [System audit](production/audit.md) | What the code is, what Phase 5 left, what three independent reads found, what was fixed and what is open |
+| [Research](production/research.md) | The coding agents, the tools that verify them, the models, what developers report, with sources |
+| [Roadmap](production/roadmap.md) | Position, milestones, launch blockers, quality gates, what "ready" means |
+| [Tickets](production/tickets.md) | The backlog behind the roadmap |
+
 ## Research and history
 
 These explain why Contexer is built the way it is. They are not kept up to

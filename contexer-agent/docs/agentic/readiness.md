@@ -1,5 +1,9 @@
 # Readiness review, 2026-11-19
 
+> A second, wider audit was done on 2026-11-24: [production/audit.md](../production/audit.md).
+> It found that two fixes below do not fully hold (the `goto` check and the `.env` filter) and
+> lists what is open now.
+
 What stands between the code on this branch and people using it, after
 Phase 5. Four parts: what an independent review found and what was fixed,
 what is still open, what monitoring exists, and which agents to add next.

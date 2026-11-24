@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+An audit of the whole system on 2026-11-24: [what was found](docs/production/audit.md),
+[the research behind the plan](docs/production/research.md), [the roadmap](docs/production/roadmap.md)
+and [the tickets](docs/production/tickets.md).
+
+### Fixed
+
+- **A run could end as succeeded on checks that had since been corrected.** Attempt 1 passed, the
+  review asked for one repair, the checks were corrected, and a later attempt that failed the new
+  checks was undone back to attempt 1 and reported as proven. Approving changed checks now drops
+  that earlier pass.
+- A run stopped while its checks were replaying, then resumed, recorded "App did not start: None"
+  and paid for a repair of nothing. The app is started again.
+- The project's file list shown to the Intent agent and the coding agent listed `.contexer/runs`
+  first and walked `node_modules`.
+- The warning about OpenRouter's free daily requests now covers Contexer's own agents and compares
+  what is left with the most model calls the run can make.
+
+### Security
+
+- A check's `goto` refuses an address a browser reads differently from Python (`http://other\@app/`),
+  one with a user name in it, and one with `${NAME}` in it. **This can break a hand-written
+  contract** whose `goto` contains `${NAME}`.
+- A check stops at the first step after the page has left the app, so nothing is typed on another
+  site. The sign-in from `contexer.toml` may still pass through one.
+- `[auth]` cannot name a repository token, a model key or a tracing key.
+- The model's search tool no longer follows a link or a junction out of the project or into a
+  closed folder, and credential files (`.npmrc`, `.netrc`, `*.pem`, `id_rsa`, `.aws/`, any `*.env`)
+  are closed to it.
+- A hook or a setting planted in `.contexer/shadow.git` is not run by a snapshot, a diff or a
+  restore.
+
+Still open, with the two that matter most first: the hand-off runs the project's own git hooks with
+the repository token in the environment, and the nearest `.env` is loaded unfiltered at start. See
+[docs/production/audit.md](docs/production/audit.md) section 5.2.
+
 ## 0.5.0 — 2026-11-21
 
 The [agentic harness](docs/agentic/architecture.md). Contexer now has its
