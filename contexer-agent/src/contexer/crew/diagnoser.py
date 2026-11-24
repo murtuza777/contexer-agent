@@ -39,7 +39,12 @@ _TIMEOUT = 300.0
 _PROMPT = Path(__file__).resolve().parent / "prompts" / "diagnoser.md"
 
 # What the read tools never open: Contexer's own files, version control, dependencies, secrets.
-_CLOSED_DIRS = {".contexer", ".git", "node_modules", ".venv", "venv", "__pycache__", ".next", "dist", "build"}
+_CLOSED_DIRS = {".contexer", ".git", "node_modules", ".venv", "venv", "__pycache__", ".next", "dist", "build", ".aws", ".ssh", ".gnupg"}
+# Files that hold credentials by convention, lower case. The read tools send what they read to a model provider,
+# and from there it can reach the coding agent's prompt and a pull request.
+_SECRET_NAMES = {".envrc", ".npmrc", ".netrc", ".pypirc", ".git-credentials", ".dev.vars", "credentials.toml"}
+_SECRET_SUFFIXES = (".env", ".pem", ".key", ".p12", ".pfx")
+_SECRET_PREFIXES = (".env.", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
 _MAX_FILE_BYTES = 400_000
 _MAX_READ_LINES = 400
 _MAX_MATCHES = 60
@@ -360,7 +365,12 @@ def project_tools(project_dir: Path) -> list[BaseTool]:
         matches: list[str] = []
         for file in files:
             relative = file.relative_to(root)
-            if _closed(relative) or file.stat().st_size > _MAX_FILE_BYTES:
+            try:
+                real = file.resolve()
+                # A link or a junction can point out of the project or into a closed folder; the name alone does not say.
+                if root not in real.parents or _closed(relative) or _closed(real.relative_to(root)) or real.stat().st_size > _MAX_FILE_BYTES:
+                    continue
+            except OSError:
                 continue
             try:
                 text = file.read_text(encoding="utf-8")
@@ -408,7 +418,7 @@ def _closed(relative: Path) -> str:
             return f"`{part}/` is closed to this tool."
     if parts and parts[-1] in _CLOSED_DIRS:
         return f"`{parts[-1]}/` is closed to this tool."
-    name = parts[-1] if parts else ""
-    if name == ".env" or name.startswith(".env."):
-        return "environment files hold secrets."
+    name = parts[-1].lower() if parts else ""
+    if name == ".env" or name in _SECRET_NAMES or name.endswith(_SECRET_SUFFIXES) or name.startswith(_SECRET_PREFIXES):
+        return "environment and credential files hold secrets."
     return ""

@@ -231,3 +231,43 @@ def test_the_search_tool_does_not_walk_closed_folders_or_run_a_pattern_that_can_
     assert time.monotonic() - started < 5
     assert "Error" in hung and "nested" in hung
     assert "Error" in grep.invoke({"pattern": "x" * 600})  # and a pattern is not a place to put a novel
+
+
+def _link_folder(link: Path, target: Path) -> None:
+    """A folder link: a symlink where the system allows one, a junction on Windows (which needs no privilege)."""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        import _winapi  # Windows without the symlink privilege
+
+        _winapi.CreateJunction(str(target), str(link))  # type: ignore[attr-defined]
+
+
+async def test_a_search_does_not_follow_a_link_out_of_the_project_or_into_a_closed_folder(tmp_path: Path) -> None:
+    project = tmp_path / "app"
+    (project / "src").mkdir(parents=True)
+    (project / "src" / "app.js").write_text("const token = 1;\n", encoding="utf-8")
+    (project / ".git").mkdir()
+    (project / ".git" / "config").write_text("token=in-git-config\n", encoding="utf-8")
+    outside = tmp_path / "home"
+    outside.mkdir()
+    (outside / "credentials").write_text("token=outside-the-project\n", encoding="utf-8")
+    _link_folder(project / "vendor", project / ".git")  # the coding agent, or the repository, can plant these
+    _link_folder(project / "notes", outside)
+
+    found = await _call(project, "grep", pattern="token")
+    assert found == "src/app.js:1: const token = 1;", found
+
+
+async def test_files_that_hold_credentials_are_closed_whatever_they_are_called(tmp_path: Path) -> None:
+    names = [".npmrc", ".netrc", ".pypirc", ".git-credentials", ".envrc", ".dev.vars", "prod.env", "server.pem", "deploy.key", "id_rsa", "id_ed25519", ".ENV"]
+    for name in names:
+        (tmp_path / name).write_text("token=the-secret-in-" + name, encoding="utf-8")
+    (tmp_path / ".aws").mkdir()
+    (tmp_path / ".aws" / "credentials").write_text("token=the-secret-in-aws", encoding="utf-8")
+    (tmp_path / "keyboard.js").write_text("const token = 'fine';\n", encoding="utf-8")
+
+    for name in [*names, ".aws/credentials"]:
+        assert (await _call(tmp_path, "read_file", path=name)).startswith("Error:"), name
+    found = await _call(tmp_path, "grep", pattern="token")
+    assert found == "keyboard.js:1: const token = 'fine';", found
