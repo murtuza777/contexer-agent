@@ -57,3 +57,21 @@ def test_a_folder_without_a_page_is_not_a_static_site(tmp_path) -> None:
     assert RepositoryInspector().inspect(tmp_path).is_static_site is False
     (tmp_path / "index.html").write_text("<h1>hi</h1>", encoding="utf-8")
     assert RepositoryInspector().inspect(tmp_path).is_static_site is True
+
+
+def test_the_file_list_is_the_projects_own_files_not_contexers_or_its_dependencies(tmp_path: Path) -> None:
+    # After a few runs .contexer/runs holds hundreds of files, and they sort before src/. The list is what the
+    # Intent agent and the coding agent are shown as the project's files.
+    (tmp_path / "index.html").write_text("<h1>App</h1>", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.js").write_text("let a = 1;", encoding="utf-8")
+    for n in range(80):
+        run = tmp_path / ".contexer" / "runs" / f"run-{n:03}"
+        run.mkdir(parents=True)
+        (run / "run.json").write_text("{}", encoding="utf-8")
+    deep = tmp_path / "node_modules" / "pkg"
+    deep.mkdir(parents=True)
+    (deep / "index.js").write_text("", encoding="utf-8")
+
+    files = RepositoryInspector().inspect(tmp_path).key_files
+    assert files == ["index.html", "src/app.js"]

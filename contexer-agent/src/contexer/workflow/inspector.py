@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -143,16 +144,15 @@ class RepositoryInspector:
                 entry_points.append(candidate)
 
         # 4. Enumerate key files
-        ignored = {".git", ".venv", "node_modules", ".next", "__pycache__", "build", "dist"}
-        for item in sorted(path.rglob("*")):
-            if item.is_file() and not any(p in ignored for p in item.parts):
-                try:
-                    rel = str(item.relative_to(path)).replace("\\", "/")
-                    key_files.append(rel)
-                except Exception:
-                    pass
+        # Closed folders are never entered: node_modules can hold 100,000 files, and .contexer/runs sorts first.
+        ignored = {".git", ".venv", "venv", "node_modules", ".next", "__pycache__", "build", "dist", ".contexer"}
+        for here, folders, names in os.walk(path):
+            folders[:] = sorted(name for name in folders if name not in ignored)
+            for name in sorted(names):
+                key_files.append((Path(here) / name).relative_to(path).as_posix())
             if len(key_files) >= 50:
                 break
+        key_files = sorted(key_files)[:50]
 
         summary = (
             f"{framework} project at {path.name} with {len(key_files)} files. "
