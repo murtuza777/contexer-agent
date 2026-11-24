@@ -114,11 +114,11 @@ class ShadowRepo:
             return None
 
     def changed_paths(self, a: str, b: str) -> list[str]:
-        out = self._git("diff", "--name-only", "--no-renames", a, b)
+        out = self._git("diff", "--no-ext-diff", "--no-textconv", "--name-only", "--no-renames", a, b)
         return [line for line in out.splitlines() if line]
 
     def diff(self, a: str, b: str, max_chars: int = 200_000) -> str:
-        text = self._git("diff", "--no-color", "--stat", "--patch", a, b)
+        text = self._git("diff", "--no-ext-diff", "--no-textconv", "--no-color", "--stat", "--patch", a, b)
         return text if len(text) <= max_chars else text[:max_chars] + "\n... (diff truncated)\n"
 
     # -- internals ----------------------------------------------------------------
@@ -170,7 +170,7 @@ class ShadowRepo:
         env.pop("GIT_INDEX_FILE", None)
         try:
             proc = subprocess.run(
-                ["git", *args],
+                ["git", *_NO_PROGRAMS, *args],
                 cwd=self.work_tree,
                 env=env,
                 capture_output=True,
@@ -184,6 +184,17 @@ class ShadowRepo:
         if proc.returncode != 0:
             raise SnapshotError(f"git {' '.join(args[:2])} failed: {proc.stderr.strip() or proc.stdout.strip()}")
         return proc.stdout
+
+
+# The snapshot repository is a folder in the project, so the coding agent can write to it. These settings, given
+# on the command line, win over anything written into its config: no hook, no file-system monitor and
+# no signing program is ever started by a snapshot, a diff or a restore.
+_NO_PROGRAMS = (
+    "-c", f"core.hooksPath={os.devnull}",
+    "-c", "core.fsmonitor=false",
+    "-c", "commit.gpgSign=false",
+    "-c", "core.pager=cat",
+)  # fmt: skip
 
 
 def _as_pattern(path: str) -> str:

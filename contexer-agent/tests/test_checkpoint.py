@@ -162,3 +162,31 @@ def test_an_ignored_name_with_pattern_characters_is_frozen_as_that_name(tmp_path
     (tmp_path / "notes.md").write_text("public, edited\n", encoding="utf-8")
     assert "notes [draft] #1.md" not in shadow.changed_paths(shadow.snapshot(), baseline)
     assert shadow.changed_paths(baseline, shadow.snapshot()) == [".gitignore", "notes.md"]
+
+
+def test_a_hook_or_a_setting_planted_in_the_snapshot_repository_does_not_run(tmp_path: Path) -> None:
+    # The coding agent can write to .contexer/shadow.git through a shell command. Contexer's next snapshot
+    # runs git there with the whole environment, which in Actions holds the repository token.
+    import sys
+
+    _write(tmp_path, "src/app.js", "let a = 1;\n")
+    shadow = ShadowRepo(tmp_path)
+    first = shadow.snapshot()
+    marker = tmp_path.parent / "ran.txt"
+    plant = f'"{Path(sys.executable).as_posix()}" -c "open(r\'{marker.as_posix()}\', \'w\').write(\'x\')"'
+    hooks = shadow.git_dir / "hooks"
+    hooks.mkdir(exist_ok=True)
+    for name in ("pre-commit", "post-commit", "post-index-change", "post-checkout"):
+        hook = hooks / name
+        hook.write_text("#!/bin/sh\n" + plant + "\n", encoding="utf-8", newline="\n")
+        hook.chmod(0o755)
+    with (shadow.git_dir / "config").open("a", encoding="utf-8", newline="\n") as config:
+        config.write('[core]\n\tfsmonitor = ' + plant.replace('"', '\\"') + "\n[diff]\n\texternal = " + plant.replace('"', '\\"') + "\n")
+
+    _write(tmp_path, "src/app.js", "let a = 2;\n")
+    second = shadow.snapshot()
+    shadow.diff(first, second)
+    shadow.restore(first)
+
+    assert not marker.exists()
+    assert (tmp_path / "src/app.js").read_text(encoding="utf-8") == "let a = 1;\n"
