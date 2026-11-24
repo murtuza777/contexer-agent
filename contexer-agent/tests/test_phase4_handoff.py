@@ -373,6 +373,7 @@ async def test_a_hook_planted_during_the_run_is_not_run_by_the_hand_off(repo: Pa
 
 
 async def test_a_hook_that_was_there_before_the_run_still_runs_and_sees_no_token(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # on a person's machine; in Actions no hook runs
     ran = tmp_path / "ran.txt"
     _hook(repo, "pre-commit", ran)  # the person's own, from before
     plan = plan_handoff(repo)
