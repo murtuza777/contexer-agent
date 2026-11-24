@@ -85,3 +85,56 @@ async def test_a_draft_from_an_issue_is_not_run_before_someone_approves_it() -> 
     fixture = Path(__file__).resolve().parents[1] / "bench" / "fixtures" / "todo" / "app"
     draft = ContractStore(fixture).load("todo-basics").model_copy(update={"approval": None, "origin": "GitHub issue #7"})
     assert await preview_draft(Session(), None, draft) is None  # type: ignore[arg-type]
+
+
+# -- what an independent audit found on 2026-11-24 ----------------------------------------------
+
+OTHER = '<!doctype html><title>Other</title><label for="q">Search</label><input id="q">'
+
+
+@pytest.fixture
+def other_url(tmp_path_factory: pytest.TempPathFactory):
+    folder = tmp_path_factory.mktemp("other")
+    (folder / "index.html").write_text(OTHER, encoding="utf-8")
+    with StaticAppServer(folder) as server:
+        yield server.url
+
+
+@pytest.mark.parametrize("trick", ["{other}\\@{app}/", "http://user:pw@{app}/", "/a\\b", "/x\ty"])
+async def test_an_address_a_browser_reads_differently_from_python_is_refused(app_url: str, other_url: str, runner: CheckRunner, trick: str) -> None:
+    # Python reads the host of "http://other\\@app/" as app; a browser treats a backslash as "/" and opens other.
+    host = app_url.split("://", 1)[1].rstrip("/")
+    value = trick.format(other=other_url.rstrip("/"), app=host)
+    [result] = await runner.run(app_url, [("trick", check([{"action": "goto", "value": value}], [{"kind": "visible", "target": {"label": "Search"}}]))])
+    assert not result.passed
+    assert "goto" in (result.failed_step or "") and "address" in (result.failed_step or "")
+
+
+async def test_a_goto_address_never_carries_a_secret(app_url: str, runner: CheckRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTEXER_TEST_PASSWORD", "hunter2-for-the-test-only")
+    step = {"action": "goto", "value": "/?p=${CONTEXER_TEST_PASSWORD}"}
+    [result] = await runner.run(app_url, [("leak", check([step], [{"kind": "visible", "target": {"label": "Search"}}]))])
+    assert not result.passed and "address" in (result.failed_step or "")
+    assert "hunter2" not in result.model_dump_json()
+
+
+async def test_a_check_stops_when_a_step_takes_the_page_off_the_app(tmp_path: Path, other_url: str, runner: CheckRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CONTEXER_TEST_PASSWORD", "hunter2-for-the-test-only")
+    (tmp_path / "index.html").write_text(f'<!doctype html><title>App</title><a href="{other_url}">Partner</a>', encoding="utf-8")
+    steps = [
+        {"action": "click", "target": {"role": "link", "name": "Partner"}},
+        {**FILL, "value": "${CONTEXER_TEST_PASSWORD}"},
+    ]
+    with StaticAppServer(tmp_path) as server:
+        [result] = await runner.run(server.url, [("away", check(steps, [{**VALUE, "equals": "hunter2-for-the-test-only"}]))])
+    assert not result.passed
+    assert "left the app" in (result.failed_step or "")  # the fill on the other site never happened
+
+
+def test_the_sign_in_cannot_name_a_repository_token_or_a_model_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # contexer.toml is part of a pull request in the gate job, where the token is in the environment.
+    for name in ("GITHUB_TOKEN", "GH_TOKEN", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "LANGFUSE_SECRET_KEY"):
+        monkeypatch.setenv(name, "a-real-secret-value-0123456789")
+        allow_secret_names([name])
+        with pytest.raises(SecretNotAllowedError, match=name):
+            expand_secrets(f"${{{name}}}")

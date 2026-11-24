@@ -353,8 +353,22 @@ def allow_secret_names(names: Iterable[str]) -> None:
     _allowed_secret_names.update(names)
 
 
+def _never_typed(name: str) -> bool:
+    """Contexer's own credentials: repository tokens, model keys, tracing keys.
+
+    ``contexer.toml`` is part of a pull request in the gate job, where the repository token is in the
+    environment. A sign-in step that names it would type it into the app that pull request serves.
+    """
+    from contexer.llm.catalog import PROVIDERS
+    from contexer.procutil import REPOSITORY_TOKENS
+
+    return name in REPOSITORY_TOKENS or name.startswith("LANGFUSE_") or any(name == p.key_env for p in PROVIDERS)
+
+
 def secret_allowed(name: str) -> bool:
-    return name.startswith(TEST_SECRET_PREFIX) or name in _allowed_secret_names
+    if name.startswith(TEST_SECRET_PREFIX):
+        return True
+    return name in _allowed_secret_names and not _never_typed(name)
 
 
 def expand_secrets(value: str, env: dict[str, str] | None = None) -> str:

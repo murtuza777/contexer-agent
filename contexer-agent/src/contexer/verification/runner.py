@@ -150,7 +150,7 @@ class CheckRunner:
             try:
                 context = await browser.new_context(viewport={"width": 1280, "height": 800}, ignore_https_errors=True)
                 try:
-                    result, page = await self._exercise(context, urljoin(base_url, path), "sign-in", flow)
+                    result, page = await self._exercise(context, urljoin(base_url, path), "sign-in", flow, stay_on_app=False)
                     if not result.passed:
                         problem = [result.summary()]
                         if page is not None:
@@ -237,6 +237,7 @@ class CheckRunner:
         url: str,
         criterion_id: str,
         check: Check,
+        stay_on_app: bool = True,
     ) -> tuple[CheckResult, Page | None]:
         started = time.monotonic()
         page_errors: list[str] = []
@@ -314,6 +315,12 @@ class CheckRunner:
                 if step.action in DIALOG_ACTIONS:
                     armed.append(DIALOG_ACTIONS[step.action])
                     continue
+                elsewhere = _left_app(page.url, url) if stay_on_app else ""
+                if elsewhere:
+                    # An earlier step (a link, a redirect) took the page to another site. Nothing is typed or
+                    # clicked there: a check proves the app it was started on. The sign-in from contexer.toml
+                    # is the person's own and may pass through a login page elsewhere.
+                    return finish(False, failed_step=f"step {n} '{step.describe()}' (the page left the app for {elsewhere}; a check stays on the app under test)"), page
                 try:
                     await self._perform(page, step, url)
                 except Exception as exc:
@@ -383,7 +390,7 @@ class CheckRunner:
             await page.wait_for_timeout(int(value))
             return
         if step.action == "goto":
-            address = urljoin(base_url, value)
+            address = _plain_address(base_url, step.value or "")
             if _site(address) != _site(base_url):
                 # A check proves the app it was started on. An address elsewhere proves nothing about it, and
                 # is how a check written by a steered model would send something out.
@@ -591,6 +598,31 @@ def _short(exc: BaseException) -> str:
 
 
 short_error = _short
+
+
+def _plain_address(base_url: str, value: str) -> str:
+    """The address a ``goto`` opens, or ValueError when a browser could read it differently from this code.
+
+    Python and a browser do not parse every address alike: a browser treats ``\\`` as ``/`` and drops tabs and
+    newlines, so ``http://other\\@app/`` is ``app`` here and ``other`` there. Such an address is refused, as
+    is one with a user name in it, and one with ``${NAME}`` in it: a secret is typed into a field, never
+    put where it would be sent.
+    """
+    if "${" in value:
+        raise ValueError("a goto address may not contain ${...}; a secret is typed with fill, never put in an address")
+    if "\\" in value or any(ord(ch) < 0x20 or ch == "\x7f" for ch in value):
+        raise ValueError("a goto address may not contain a backslash or a control character")
+    address = urljoin(base_url, value)
+    if "@" in urlsplit(address).netloc:
+        raise ValueError("a goto address may not contain a user name")
+    return address
+
+
+def _left_app(page_url: str, base_url: str) -> str:
+    """The site the page is on when that is not the app's, else ''. A blank page has left nothing."""
+    if not page_url.startswith(("http://", "https://")):
+        return ""
+    return "" if _site(page_url) == _site(base_url) else _site(page_url)
 
 
 def _site(address: str) -> str:
