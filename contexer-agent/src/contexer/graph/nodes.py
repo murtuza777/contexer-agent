@@ -630,11 +630,18 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             ctx.event("revert", "No attempt produced a working app; restored the project as it was.")
         if ctx.pending_correction:
             ctx.event("strategy", "The run ended before the correction could be applied.")
+        # The guard looked after each turn. The app's own code ran after that (its server, its install scripts, the
+        # review's commands) and could have rewritten what defines done; whatever it changed is put back now.
+        late = ctx.guard.restore_if_changed() if ctx.guard is not None else []
+        if late:
+            ctx.event("strategy", f"Files that define done were changed after the agent's turn and were put back: {', '.join(late)}")
+            reason = f"{reason} Files that define done were changed while the app ran and were put back: {', '.join(late)}.".strip()
 
         end = snapshots.get(str(best), baseline) if best is not None else ctx.shadow.snapshot()
         outcome = _outcome(ctx, state, attempts)
         outcome.terminal, outcome.reason = terminal, reason  # type: ignore[assignment]
         outcome.best_attempt = best
+        outcome.approved_hash = state.get("approved_hash") or ""
         outcome.final = ctx.result(best) if best is not None else ctx.result(final_n)
         outcome.diff = ctx.shadow.diff(baseline, end)
         outcome.changed_files = ctx.shadow.changed_paths(baseline, end)

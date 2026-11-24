@@ -88,6 +88,8 @@ class RunOutcome(BaseModel):
     crew_cost_usd: float | None = None
     # True when any of it was worked out from tokens and the configured rates.
     crew_cost_estimated: bool = False
+    # The hash of the checks as they were last approved in this run. The hand-off commits no contract that differs.
+    approved_hash: str = ""
 
     @property
     def exit_code(self) -> int:
