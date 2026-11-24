@@ -25,12 +25,12 @@ Not listed: what was fixed on 2026-11-24 ([audit.md](audit.md) §4).
 | C | SEC-5, SEC-6, SEC-7, SEC-8, SEC-9, SEC-10, REL-8 |
 | D | MOD-1, MOD-2, MOD-3, MOD-4, MOD-5, EVAL-1, EVAL-2, EVAL-3 |
 | E | COST-1, COST-2, COST-3, COST-4, OBS-1, OBS-2, OBS-3, OBS-4, CTX-1, CTX-2, CTX-3, CTX-4 |
-| F | DX-1, DX-2, DX-3, DX-4, DX-5, DOC-1 |
+| F | INT-1, INT-2, BRIEF-1, BRIEF-2, CTX-5, DX-1, DX-2, DX-3, DX-4, DX-5, DOC-1 |
 | G | AGT-1, AGT-2, AGT-3, AGT-4 |
 | H | REL-9, REL-10, REL-11, DOC-2, CLN-1 |
 
-Critical path: SEC-1 → SEC-2 → SEC-4 → REL-1 → REL-3 → REL-5 → DX-3 →
-DX-1 → DOC-1 → REL-11.
+Critical path: SEC-1 → SEC-2 → SEC-4 → REL-1 → REL-3 → REL-5 → INT-1 →
+INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 
 ---
 
@@ -540,17 +540,113 @@ DX-1 → DOC-1 → REL-11.
 
 ---
 
+## Connecting to coding agents, and instructing them
+
+Added on 2026-11-24 after the owner set the direction
+([roadmap.md](roadmap.md) §1). There are two ways round, and both are
+wanted: Contexer starts the agent (built: the adapters in `agents/`), and
+an agent a person is already using calls Contexer (not built).
+
+### INT-1 An MCP server
+- **Type.** New capability. **Priority.** P0. **Effort.** M. **Depends on.**
+  SEC-2.
+- **Problem.** An agent a person is already working in cannot ask
+  Contexer anything. MCP is the one protocol Claude Code, Codex, OpenCode,
+  Cursor and the rest all speak.
+- **Do.** `contexer mcp`: a server over stdio with a small, flat set of
+  tools. `contexer_checks` returns the approved contract as the agent
+  should read it. `contexer_verify` replays it and returns, per check,
+  passed or what the browser saw, with the Diagnoser's lead when a model
+  is configured. `contexer_brief` returns the brief of BRIEF-1 for a goal.
+  `contexer_status` returns the run's attempts and budget. No tool
+  approves a contract, edits one, or changes a setting: approval stays
+  with a person, in the terminal or on the pull request.
+- **Files.** New `mcp/server.py`, `cli/__init__.py`, `gate/session.py`.
+- **Accept.** In Claude Code with the server configured, "make the count
+  right" ends with the agent having called `contexer_verify` and fixed
+  what it returned, on the demo app. The tool audit test covers the
+  server: no tool writes.
+- **Tests.** The server driven by a scripted MCP client; a call that tries
+  to approve is refused.
+
+### INT-2 "Done" is refused while a check fails
+- **Type.** New capability. **Priority.** P1. **Effort.** S. **Depends on.**
+  INT-1.
+- **Problem.** An agent that may call a verifier may also not call it. A
+  rule in a prompt is advice; a hook is code.
+- **Do.** `contexer init --agent claude-code` writes a Stop hook that runs
+  `contexer verify --json` and, while an approved contract fails, blocks
+  the stop and hands the agent what failed. A cap on how many times in a
+  row, so a check that cannot pass does not loop for ever; then it stops
+  and says so. The same for Codex and OpenCode where their hooks allow it,
+  and a statement of where they do not.
+- **Files.** `cli/init_cli.py`, new `integrations/`.
+- **Accept.** In Claude Code on the demo app with the bug in place, the
+  agent cannot end its turn until the contract passes or the cap is
+  reached.
+- **Tests.** The hook script run against a failing and a passing project.
+
+### BRIEF-1 The first instruction is a brief, not a template
+- **Type.** Agent architecture. **Priority.** P1. **Effort.** M.
+  **Depends on.** REL-3, CTX-5.
+- **Problem.** `controller/prompts.py: implement_prompt` sends the goal,
+  the checks, fifty file names and the rules. Everything a senior engineer
+  would add is missing, so the first attempt is the coding agent's guess
+  and the repair rounds pay for it.
+- **Do.** A Planner step before the first turn, read-only, with the
+  Diagnoser's tools. It returns a `TaskBrief`: the files to change and to
+  read first (checked to exist, as `RepairBrief` is), what already exists
+  that the change should reuse, the order of work, the edge cases the
+  checks imply, and what must not change. The checks and the rules are
+  still inserted by code, word for word. With no model, or over budget,
+  the template is sent as now.
+- **Files.** New `crew/planner.py`, `crew/prompts/planner.md`,
+  `graph/nodes.py`, `controller/prompts.py`, `crew/estimate.py`.
+- **Accept.** The brief names only files inside the project; a steered
+  Planner cannot point at `.env` or `.contexer/`; the tool audit lists it.
+- **Tests.** As for the Diagnoser, with a scripted model.
+
+### BRIEF-2 Does the brief pay for itself
+- **Type.** Evaluation. **Priority.** P1. **Effort.** M. **Depends on.**
+  BRIEF-1, EVAL-3.
+- **Do.** A feature suite, not a bug suite: ten small features across the
+  benchmark apps, each with an approved contract. Two arms per coding
+  model (one strong, one cheap): the template and the brief. Five repeats.
+- **Accept.** First-attempt pass rate, attempts to proven, and cost per
+  proven feature for each arm, in `bench/RESULTS.md`. If the brief does
+  not raise the first-attempt rate on the cheap model, it is off by
+  default.
+
+### CTX-5 Context from where the task came from
+- **Type.** Context. **Priority.** P1. **Effort.** M.
+- **Problem.** Contexer reads the goal sentence. The rest of what a person
+  would tell a colleague is elsewhere: the ticket's discussion, the
+  project's own instruction files, earlier decisions.
+- **Do.** Three sources, each quoted as data and capped. The issue or
+  ticket with its comments, when the run starts from one. The project's
+  instruction files (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`), for the
+  Planner and the Reviewer: a change that breaks a stated convention is a
+  note. The intent store, which exists. Say in the run view which sources
+  were read.
+- **Files.** `graph/context.py`, `github/issues.py`, `crew/intent.py`,
+  `crew/reviewer.py`.
+- **Accept.** A convention stated in `AGENTS.md` appears in the brief, and
+  a change that breaks it gets a Reviewer note that quotes the line.
+- **Tests.** The injection suite of `tests/test_security.py` extended to
+  the three new channels.
+
+---
+
 ## Developer experience
 
 ### DX-1 Contexer from inside the coding agent
-- **Type.** New capability. **Priority.** P0. **Effort.** M.
+- **Type.** New capability. **Priority.** P0. **Effort.** S. **Depends on.** INT-1, INT-2.
 - **Problem.** People live in their coding agent; Contexer is a second
   terminal.
-- **Do.** A skill and a command for Claude Code, Codex and OpenCode,
-  installed by `contexer init --agent NAME`: the agent calls `contexer
-  verify --json`, reads which checks failed and what the browser saw, and
-  may not edit `.contexer/`. A stop hook for Claude Code that refuses
-  "done" while an approved contract fails.
+- **Do.** `contexer init --agent NAME` for Claude Code, Codex and
+  OpenCode: registers the MCP server (INT-1), writes the hook (INT-2) and
+  a short skill that tells the agent when to call them and that it may
+  not edit `.contexer/`.
 - **Files.** `cli/init_cli.py`, new `integrations/`.
 - **Accept.** In Claude Code on the demo app, "fix the count" ends with
   the agent having run `contexer verify` and reporting its result.

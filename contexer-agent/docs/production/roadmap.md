@@ -37,6 +37,26 @@ What would change this recommendation: `EVAL-2` showing that the loop does
 not raise a weak model's rate of proven work. Then the cheap-model claim
 is dropped, not the product.
 
+**Decided by the owner, 2026-11-24.** Contexer stays above the coding
+agents and never writes code. It is the senior engineer over them: it
+takes the task, works out what was meant, instructs the agent, watches
+the work, tests it as the person intended, reviews it, finds the gaps,
+writes the next instruction, and goes on by itself until the task, ticket
+or contract is proven. It works with small and large models alike, and it
+connects to the agents people already use.
+
+Set against the code, that is three things to build and one to keep:
+
+| The direction | Today | To build |
+| --- | --- | --- |
+| Instruct like a senior engineer | The first prompt is a template: goal, checks, a file list, rules. Only repairs get a model-written lead | A brief for the first turn: the files that matter, the project's own conventions, the order of work, what not to touch (`BRIEF-1`), measured (`BRIEF-2`) |
+| Connect to any coding agent | Contexer starts the agent headless through three adapters. Nothing lets an agent a person is already using call Contexer | An MCP server (`INT-1`), a hook that refuses "done" while a check fails (`INT-2`), the skill that installs both (`DX-1`) |
+| Take context | The goal, the page, a file list, the diff, the server log. Corrections are remembered | The ticket and its discussion, the project's instruction files, earlier attempts (`CTX-5`, `CTX-1`) |
+| Work until it is finished | Built: the loop, the budget, stop and resume | Keep; make it hold with a weak model (milestone B) |
+
+These move ahead of the model matrix in the order of work: after
+milestone A and `REL-3`, `REL-5`, build `INT-1`, `INT-2` and `BRIEF-1`.
+
 **First users.** People who build web apps with a coding agent and are
 the tester in the loop. The wedge is one command inside the agent they
 already use (`DX-1`), not a new terminal to live in.
