@@ -32,6 +32,7 @@ TERMINAL_STYLE = {
     "tampered": "red",
     "agent_error": "red",
     "app_error": "red",
+    "internal_error": "red",
 }
 
 _MARKS = {"pass": ("✓", "+"), "fail": ("✗", "x"), "open": ("?", "?"), "warn": ("!", "!"), "info": ("›", ">")}

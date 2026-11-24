@@ -452,7 +452,7 @@ async def test_a_killed_process_whose_turn_had_finished_keeps_that_work_on_resum
     """The same moment, without the tidy-up of Ctrl+C: the files in the project are the finished turn's."""
     from contexer.controller.shared import ContractGuard
 
-    class Killed(Exception):
+    class Killed(BaseException):  # as when the process dies: no handler of the run's sees it
         pass
 
     checked = {"times": 0}
@@ -575,3 +575,36 @@ async def test_a_run_stopped_while_proving_resumes_with_the_app_running(project:
     assert resumed.terminal == "succeeded", resumed.reason
     assert [a.outcome for a in resumed.attempts] == ["pass"]
     assert not any("did not start" in (a.note or "") for a in resumed.attempts)
+
+
+# -- REL-5: a run that crashes still ends as a run ---------------------------------------------
+
+
+async def test_an_exception_in_a_node_restores_and_reports(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.controller.shared import ContractGuard
+
+    before = (project / "app.js").read_text(encoding="utf-8")
+    key = "sk-or-v1-" + "a1b2c3d4" * 6
+
+    def bug(self: ContractGuard) -> list[str]:
+        raise TypeError(f"'NoneType' object is not subscriptable ({key})")
+
+    monkeypatch.setattr(ContractGuard, "restore_if_changed", bug)
+    agent = RecordingAgent([{"app.js": GOOD_JS}])
+    controller = _graph(project, agent)
+    outcome = await controller.run(contract(project))
+
+    assert outcome.terminal == "internal_error"
+    assert outcome.exit_code == 3
+    assert "TypeError" in outcome.reason and "not subscriptable" in outcome.reason
+    assert "report" in outcome.reason.lower()
+    assert key not in outcome.reason
+    assert controller.last_outcome is outcome
+    # The files are as they were before the run; what the agent wrote is kept as a snapshot.
+    assert (project / "app.js").read_text(encoding="utf-8") == before
+    run_dir = Path(outcome.run_dir)
+    saved = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert saved["terminal"] == "internal_error"
+    crash = (run_dir / "crash.txt").read_text(encoding="utf-8")
+    assert "Traceback" in crash and "TypeError" in crash and key not in crash
+    assert (run_dir / "report.html").is_file() or (run_dir / "report.md").is_file()

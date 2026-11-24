@@ -23,6 +23,8 @@ TerminalState = Literal[
     "agent_error",
     "app_error",
     "cancelled",
+    # Contexer itself failed. The run still ends in order: files put back, a report, the traceback kept.
+    "internal_error",
 ]
 
 Engine = Literal["classic", "graph"]
@@ -103,4 +105,5 @@ class RunOutcome(BaseModel):
             "agent_error": 3,
             "app_error": 3,
             "cancelled": 130,  # the shell's code for Ctrl+C
+            "internal_error": 3,
         }[self.terminal]

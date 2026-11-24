@@ -223,6 +223,8 @@ _TERMINAL_LABELS = {
     "tampered": ("Agent edited the contract", "bad"),
     "agent_error": ("Coding agent failed", "bad"),
     "app_error": ("App did not start", "bad"),
+    "cancelled": ("Stopped", "warn"),
+    "internal_error": ("Contexer failed", "bad"),
 }
 
 
