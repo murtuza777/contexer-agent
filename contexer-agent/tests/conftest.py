@@ -62,6 +62,23 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+_wanted_a_browser = pytest.StashKey[bool]()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item: pytest.Item) -> Any:
+    """A browser started in a background task skips that task, and the test then fails waiting for it.
+
+    Such a test asked for a browser under ``--no-browser``, so it is skipped like the others.
+    """
+    try:
+        return (yield)
+    except Exception:
+        if item.stash.get(_wanted_a_browser, False):
+            pytest.skip(NO_BROWSER_REASON)
+        raise
+
+
 @pytest.fixture(autouse=True)
 def _no_browser(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """With ``--no-browser``, a test that starts a browser is skipped there; every other test runs whole.
@@ -76,6 +93,7 @@ def _no_browser(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch)
     from playwright.sync_api import BrowserType as SyncBrowserType
 
     def no_launch(*_args: Any, **_kwargs: Any) -> Any:
+        request.node.stash[_wanted_a_browser] = True
         pytest.skip(NO_BROWSER_REASON)
 
     for browser_type in (AsyncBrowserType, SyncBrowserType):
