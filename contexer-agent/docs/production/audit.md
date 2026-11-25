@@ -176,10 +176,10 @@ results are data. Ordered by severity and by how easily it is used.
 
 | # | Finding | Who can use it | Severity | State |
 | --- | --- | --- | --- | --- |
-| S1 | The hand-off's `git add`, `commit` and `push` run the **project's** hooks and git settings with the whole environment. The coding agent can write `.git/hooks/pre-push`; in Actions it then reads the repository token, and for a push the auth header | The coding agent, steered by an issue | **High in the issue flow**, low on a laptop | Open. The snapshot repository's half is fixed (§4 item 8) |
-| S2 | The CLI loads the nearest `.env` unfiltered at start, before the filtered loader runs. `GIT_CONFIG_*`, `GIT_SSH_COMMAND`, `GITHUB_API_URL`, `NODE_OPTIONS` and model base URLs are all taken | Repository content; the coding agent, for the next command | Medium | Open, *read, not run*. The fix in readiness.md §1 does not hold |
-| S3 | The tamper guard runs once per turn. Code that runs later (the dev server, an install script, the review's `npm test`) can rewrite the contract file, and the hand-off commits the file from disk | The coding agent | Medium | Open, *read, not run* |
-| S4 | The secret scan before a push reads the first 200,000 characters of the diff. A lockfile change alone is often larger | Nobody needed: an accident | Medium | Open, *read, not run* |
+| S1 | ~~The hand-off's `git add`, `commit` and `push` ran the project's hooks and git settings with the whole environment~~ | The coding agent, steered by an issue | High in the issue flow | **Fixed 2026-11-24** (`test_a_hook_planted_during_the_run_is_not_run_by_the_hand_off` and three more). Left: a hook that was there before the run still runs locally and may call project scripts the agent changed, without a token; the two-job design (`SEC-10`) is the full answer in Actions |
+| S2 | ~~The CLI loaded the nearest `.env` unfiltered at start~~ | Repository content; the coding agent | Medium | **Fixed 2026-11-24** (`test_no_command_takes_a_steering_name_from_the_nearest_env_file`) |
+| S3 | ~~The tamper guard ran once per turn and the hand-off committed the contract from disk~~ | The coding agent | Medium | **Fixed 2026-11-24** (`test_a_contract_rewritten_after_the_run_is_not_what_gets_committed`) |
+| S4 | ~~The secret scan read the first 200,000 characters of the diff~~ | An accident | Medium | **Fixed 2026-11-24**; reproduced first: a key after a 300 KB lockfile change was pushed (`test_a_secret_after_a_large_lockfile_change_is_still_seen_and_not_pushed`) |
 | S5 | The `grep` pattern guard misses `(a\|a)*$` and relatives. One pattern holds the interpreter lock: no timeout, no budget check, until the process is killed | A steered Diagnoser or Reviewer | Low to medium | Open; reproduced by the auditor |
 | S6 | Issue text keeps Unicode tag characters and bidi isolates, which GitHub renders as nothing. `/contexer draft` checks nobody's role in code | An issue author; any commenter | Low to medium | Open; reproduced |
 | S7 | The dev server, the install and the reset get every model key, including keys `contexer setup` saved | A dependency's install script | Low to medium | Open; partly a design choice |
@@ -276,6 +276,6 @@ Before the changes: the suite was started on the untouched tree and was
 still running when the first fixes were made, so it is not a clean
 baseline and is not quoted.
 
-After the changes: 1003 passed, 4 skipped, with lint and type checks
-clean ([roadmap.md](roadmap.md) §12). The benchmarks were not re-run and no
+After the first ten fixes: 1003 passed, 4 skipped, with lint and type checks
+clean; after the four security fixes of milestone A, 1014 passed, 4 skipped ([roadmap.md](roadmap.md) §12). The benchmarks were not re-run and no
 live run with a model was made that day.

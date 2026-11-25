@@ -92,3 +92,70 @@ def test_names_that_steer_contexers_own_tools_are_never_taken_from_the_project_e
     assert refused == [name]
     assert os.environ["HYGIENE_OK"] == "yes"  # the rest of the file is read as before
     monkeypatch.delenv("HYGIENE_OK")
+
+
+# -- the .env nearest the working folder, read when any command starts (SEC-2) ------------------------
+
+STEERING = {
+    "GIT_SSH_COMMAND": "evil",
+    "GIT_CONFIG_COUNT": "1",
+    "GITHUB_API_URL": "https://evil.example",
+    "GH_HOST": "evil.example",
+    "NODE_OPTIONS": "--require ./x.js",
+    "PYTHONSTARTUP": "x.py",
+    "HTTPS_PROXY": "http://evil.example:8080",
+    "SSL_CERT_FILE": "ca.pem",
+    "NODE_EXTRA_CA_CERTS": "ca.pem",
+    "OPENCODE_SERVER_URL": "http://evil.example",
+}
+
+
+def _start_cli_in(folder: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from typer.testing import CliRunner
+
+    from contexer.cli import app
+
+    monkeypatch.chdir(folder)
+    result = CliRunner().invoke(app, ["runs", "--dir", str(folder)])
+    assert result.exit_code == 0, result.output
+
+
+def test_no_command_takes_a_steering_name_from_the_nearest_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in STEERING:
+        monkeypatch.delenv(name, raising=False)
+    lines = [f"{name}={value}" for name, value in STEERING.items()]
+    (tmp_path / ".env").write_text("\n".join([*lines, "DATABASE_URL=postgres://local/dev"]) + "\n", encoding="utf-8")
+    _start_cli_in(tmp_path, monkeypatch)
+    assert not (set(STEERING) & set(os.environ)), sorted(set(STEERING) & set(os.environ))
+    assert os.environ["DATABASE_URL"] == "postgres://local/dev"  # ordinary settings are still read
+
+
+def test_load_config_does_not_take_them_either(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.config.settings import load_config
+
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    (tmp_path / ".env").write_text("GIT_SSH_COMMAND=evil\nOPENROUTER_MODEL=some/model\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert load_config().openrouter_model == "some/model"
+    assert "GIT_SSH_COMMAND" not in os.environ
+
+
+def test_an_endpoint_from_the_file_is_taken_only_with_its_key_from_the_same_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.config.project import load_env_file
+
+    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "CONTEXER_LLM_BASE_URL", "CONTEXER_LLM_PROVIDER"):
+        monkeypatch.delenv(name, raising=False)
+    # A key the person exported, and a file that would send it somewhere else.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-exported-by-the-person-0123456789")
+    env = tmp_path / ".env"
+    env.write_text(
+        "OPENAI_BASE_URL=https://evil.example/v1\nCONTEXER_LLM_PROVIDER=openai\nCONTEXER_LLM_BASE_URL=https://evil.example/v1\n"
+        "AZURE_OPENAI_API_KEY=key-from-the-file-0123456789\nAZURE_OPENAI_ENDPOINT=https://mine.services.ai.azure.com\n",
+        encoding="utf-8",
+    )
+    refused: list[str] = []
+    load_env_file(env, on_refused=refused.append)
+    assert "OPENAI_BASE_URL" not in os.environ and "CONTEXER_LLM_BASE_URL" not in os.environ
+    assert sorted(refused) == ["CONTEXER_LLM_BASE_URL", "OPENAI_BASE_URL"]
+    # A deployment's own key and endpoint, both from the file, are the ordinary case and work.
+    assert os.environ["AZURE_OPENAI_ENDPOINT"] == "https://mine.services.ai.azure.com"

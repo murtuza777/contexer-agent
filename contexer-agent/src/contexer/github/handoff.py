@@ -20,11 +20,12 @@ and the approved contract, never other work in the checkout.
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import re
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -33,6 +34,7 @@ from contexer.contract.store import AUTOMATIC_APPROVAL, CONTEXER_DIR, CONTRACTS_
 from contexer.crew.reviewer import holds_pull_request, prescan
 from contexer.crew.triage import MOVE_LABELS
 from contexer.github.api import GitHubClient, GitHubError, github_token, repo_of
+from contexer.procutil import REPOSITORY_TOKENS
 
 if TYPE_CHECKING:
     from contexer.controller.models import RunOutcome
@@ -53,6 +55,8 @@ class HandoffPlan:
     base: str  # the branch the work starts from
     remote: str | None
     repo: str | None  # owner/name on GitHub
+    # The repository's settings and hooks as they were before any agent ran (see ``_git_state``).
+    git_state: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -88,7 +92,7 @@ def plan_handoff(project: str | Path) -> HandoffPlan:
     remotes = (_git(root, "remote") or "").split()
     remote = "origin" if "origin" in remotes else (remotes[0] if remotes else None)
     repo = repo_of(root, remote) if remote else None
-    return HandoffPlan(project=project, root=root, base=base, remote=remote, repo=repo)
+    return HandoffPlan(project=project, root=root, base=base, remote=remote, repo=repo, git_state=_git_state(root))
 
 
 def hand_off(
@@ -102,10 +106,29 @@ def hand_off(
     """Commit the run's changes to a new branch, push it and open a pull request. None if nothing changed."""
     if not outcome.changed_files:
         return None
+    if outcome.approved_hash and contract.content_hash() != outcome.approved_hash:
+        # The run proved the checks it remembers. A contract file that now says something else was written
+        # after they were approved, by something other than an approval: it is not committed as "approved".
+        raise HandoffError(
+            f"the contract {contract.id} changed after its checks were approved in this run, so nothing was committed. "
+            f"Look at {CONTEXER_DIR}/{CONTRACTS_DIR}/{contract.id}.json, approve it again if the change is yours, and hand the work off yourself."
+        )
+    # The coding agent ran in this checkout with a shell. What it could have left for git to run is looked at before
+    # git is asked to do anything: a changed setting stops the hand-off, a changed hook is not run.
+    now = _git_state(plan.root)
+    if plan.git_state and now.get(_CONFIG) != plan.git_state.get(_CONFIG):
+        raise HandoffError(
+            "the repository's git settings (.git/config) changed while the agent worked, so nothing was committed: a setting "
+            "there can name a program for git to run. Look at the file, put it right, and hand the work off yourself."
+        )
+    hooks_changed = bool(plan.git_state) and {k: v for k, v in now.items() if k != _CONFIG} != {
+        k: v for k, v in plan.git_state.items() if k != _CONFIG
+    }
+    quiet = _NO_HOOKS if hooks_changed or os.environ.get("GITHUB_ACTIONS") == "true" else ()
     prefix = plan.project.relative_to(plan.root)
     paths = [(prefix / p).as_posix() for p in outcome.changed_files]
     contract_file = (prefix / CONTEXER_DIR / CONTRACTS_DIR / f"{contract.id}.json").as_posix()
-    note = ""
+    note = "The repository's git hooks changed during the run, so they were not run for this commit or this push. " if hooks_changed else ""
     if (plan.root / contract_file).is_file():
         if _git(plan.root, "check-ignore", "--quiet", contract_file) is None:
             paths.append(contract_file)
@@ -113,8 +136,10 @@ def hand_off(
             note = f"{contract_file} is ignored by git, so the contract is not in the pull request. "
 
     branch = _free_branch(plan, f"contexer/{contract.id}")
-    _git_or_fail(plan.root, "switch", "--quiet", "-c", branch)
-    _git_or_fail(plan.root, "add", "--all", "--", *paths)
+    _git_or_fail(plan.root, *quiet, "switch", "--quiet", "-c", branch)
+    _git_or_fail(plan.root, *quiet, "add", "--all", "--", *paths)
+    # What is scanned is what is staged, all of it. The diff a run keeps is cut to size, and a lockfile alone can fill it.
+    staged = _git(plan.root, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "--", *paths, timeout=120)
     automatic = contract.approval is not None and contract.approval.by == AUTOMATIC_APPROVAL
     held = holds_pull_request(outcome.review) or automatic
     succeeded = outcome.terminal == "succeeded" and not held
@@ -125,7 +150,7 @@ def hand_off(
             else "Opened as a draft: the review has a high-severity note. "
         )
     try:
-        _git_or_fail(plan.root, *_identity(plan.root), "commit", "--quiet", "-m", _commit_message(outcome, contract))
+        _git_or_fail(plan.root, *quiet, *_identity(plan.root), "commit", "--quiet", "-m", _commit_message(outcome, contract))
     except HandoffError as exc:  # a pre-commit hook, usually
         raise HandoffError(f"{exc}\nThe changes are staged on branch {branch}; commit and push them yourself.") from exc
     commit = _git(plan.root, "rev-parse", "HEAD") or ""
@@ -133,15 +158,21 @@ def hand_off(
     if plan.remote is None:
         return Handoff(branch, commit, False, None, False, not succeeded, note + "The repository has no remote to push to.")
     # A draft is still a push. Whatever the outcome, a change that adds a secret stays on this machine.
-    leaked = [n for n in prescan(outcome.diff) if n.category == "security" and n.severity == "high"]
+    if staged is None:
+        return Handoff(
+            branch, commit, False, None, False, True,
+            note + f"Not pushed: the change could not be read back to scan it for secrets. The work is committed on the local "
+            f"branch {branch}; look it over and push it yourself.",
+        )  # fmt: skip
+    leaked = [n for n in prescan(staged) if n.category == "security" and n.severity == "high"]
     if leaked:
-        where = ", ".join(f"{n.file}:{n.line}" if n.line else n.file for n in leaked[:3])
+        where = ", ".join(f"{_in_project(n.file, prefix)}:{n.line}" if n.line else _in_project(n.file, prefix) for n in leaked[:3])
         return Handoff(
             branch, commit, False, None, False, True,
             note + f"Not pushed: the change adds what looks like a secret ({where}). The work is committed on the local "
             f"branch {branch}. Remove the secret (and revoke it if it is real), amend the commit, then push it yourself.",
         )  # fmt: skip
-    pushed = _git(plan.root, *_push_auth(plan), "push", "--quiet", "--set-upstream", plan.remote, branch, timeout=180)
+    pushed = _git(plan.root, *quiet, *_push_auth(plan), "push", "--quiet", "--set-upstream", plan.remote, branch, timeout=180, tokens=True)
     if pushed is None:
         return Handoff(
             branch, commit, False, None, False, not succeeded,
@@ -380,7 +411,7 @@ def _branch_taken(plan: HandoffPlan, branch: str) -> bool:
         return True
     if plan.remote is None:
         return False
-    return bool(_git(plan.root, *_push_auth(plan), "ls-remote", "--heads", plan.remote, branch, timeout=60))
+    return bool(_git(plan.root, *_NO_HOOKS, *_push_auth(plan), "ls-remote", "--heads", plan.remote, branch, timeout=60, tokens=True))
 
 
 def _push_auth(plan: HandoffPlan) -> list[str]:
@@ -404,9 +435,9 @@ def _identity(root: Path) -> list[str]:
     return ["-c", f"user.name={_BOT[0]}", "-c", f"user.email={_BOT[1]}"]
 
 
-def _git(cwd: Path, *args: str, timeout: float = 30) -> str | None:
+def _git(cwd: Path, *args: str, timeout: float = 30, tokens: bool = False) -> str | None:
     try:
-        out = _run_git(cwd, args, timeout)
+        out = _run_git(cwd, args, timeout, tokens=tokens)
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.strip() if out.returncode == 0 else None
@@ -423,8 +454,50 @@ def _git_or_fail(cwd: Path, *args: str) -> str:
     return out.stdout.strip()
 
 
-def _run_git(cwd: Path, args: tuple[str, ...], timeout: float) -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")  # never wait on a password prompt nobody sees
+def _in_project(path: str, prefix: Path) -> str:
+    """A path from the repository's root as the person knows it: from the project's folder."""
+    lead = prefix.as_posix()
+    return path[len(lead) + 1 :] if lead not in ("", ".") and path.startswith(lead + "/") else path
+
+
+_CONFIG = ".git/config"
+# No hook of the repository is run, whatever its settings say where they are.
+_NO_HOOKS = ("-c", f"core.hooksPath={os.devnull}")
+
+
+def _git_state(root: Path) -> dict[str, str]:
+    """A digest of the repository's own settings and of each of its hooks.
+
+    Taken before any agent runs and again before the hand-off. The hooks are looked for where git itself
+    looks (``core.hooksPath`` can point into the project, as husky does), and a sample that git ships is
+    not a hook.
+    """
+    state: dict[str, str] = {}
+    for name, args in ((_CONFIG, ("rev-parse", "--git-path", "config")), ("hooks", ("rev-parse", "--git-path", "hooks"))):
+        found = _git(root, *args)
+        if not found:
+            continue
+        path = (root / found).resolve()
+        files = [path] if name == _CONFIG else (sorted(p for p in path.iterdir() if p.is_file() and p.suffix != ".sample") if path.is_dir() else [])
+        for file in files:
+            try:
+                digest = hashlib.sha256(file.read_bytes()).hexdigest()
+            except OSError:
+                digest = "unreadable"
+            state[name if name == _CONFIG else f"hooks/{file.name}"] = digest
+    return state
+
+
+def _run_git(cwd: Path, args: tuple[str, ...], timeout: float, *, tokens: bool = False) -> subprocess.CompletedProcess[str]:
+    """Run git in the person's checkout.
+
+    Without ``tokens`` (everything but a push) the environment has no repository token: a hook that
+    runs on a commit is the project's code. The file-system monitor setting names a program too, and is
+    never used.
+    """
+    env = {k: v for k, v in os.environ.items() if tokens or k not in REPOSITORY_TOKENS}
+    env["GIT_TERMINAL_PROMPT"] = "0"  # never wait on a password prompt nobody sees
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
-    )
+        ["git", "-c", "core.fsmonitor=false", *args],
+        cwd=str(cwd), env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+    )  # fmt: skip

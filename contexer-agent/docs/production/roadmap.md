@@ -73,7 +73,8 @@ person. Every milestone ends with a stop for review.
 - **Objective.** Nothing known can end a run falsely, leak a token in the
   issue flow, or lose a push to an unscanned secret.
 - **Current state.** Ten fixes landed on 2026-11-24 ([audit.md](audit.md)
-  §4). Open: `SEC-1` to `SEC-4`, and the release.
+  §4), then `SEC-1` to `SEC-4` the same day. Open: the release (`REL-1`),
+  which is the owner's step.
 - **Required.** `SEC-1`, `SEC-2`, `SEC-3`, `SEC-4`, `REL-1`.
 - **Depends on.** Nothing. `REL-1` needs the owner.
 - **Accept when.** Each ticket's regression test passes; a hook planted in
@@ -244,9 +245,7 @@ parallel with `MOD-1` and `MOD-2`; then `EVAL-1` and `EVAL-2`.
 
 **Blocks a closed beta.**
 
-1. `SEC-1`: project hooks run with the token during a hand-off.
-2. `SEC-2`: the unfiltered `.env` load.
-3. `SEC-4`: the secret scan stops at 200,000 characters.
+1. ~~`SEC-1`, `SEC-2`, `SEC-4`~~ and `SEC-3`: fixed on 2026-11-24.
 4. `REL-3`: a model's printed tool call accepted as "no notes".
 5. `REL-5`: a crash leaves no report and the files mid-attempt.
 6. `DX-3`: never run on macOS; Linux only in CI.
@@ -471,5 +470,6 @@ On the tree with the fixes of that day, Windows 11, Python 3.14.
 | `pyright src` | 0 errors |
 | Tests touched by the fixes | Passed (see [audit.md](audit.md) §4) |
 | Full suite (`pytest`, the live OpenCode test deselected) | 1003 passed, 4 skipped, in 37 min 37 s |
+| Full suite after `SEC-1` to `SEC-4` | 1014 passed, 4 skipped, in 30 min 46 s |
 | Gate, tester, repair and reviewer benchmarks | Not re-run that day |
 | Live runs with a model | None that day |

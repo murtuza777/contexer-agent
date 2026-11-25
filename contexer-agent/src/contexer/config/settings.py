@@ -10,8 +10,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import find_dotenv, load_dotenv
-
 # OpenRouter's router, which sends each request to a different free model.
 OPENROUTER_FREE_ROUTER = "openrouter/free"
 # Drafting default: one specific free model, measured with `bench --live` on
@@ -76,12 +74,12 @@ def load_config(env_file: str | Path | None = None) -> ContexerConfig:
         2. .env file in current or parent directories
         3. Built-in defaults
     """
+    from contexer.config.project import load_env_file, load_nearest_env  # imports this module
+
     if env_file:
-        load_dotenv(dotenv_path=env_file, override=False)
+        load_env_file(env_file)
     else:
-        dotenv_path = find_dotenv(usecwd=True)
-        if dotenv_path:
-            load_dotenv(dotenv_path=dotenv_path, override=False)
+        load_nearest_env()
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
     model = os.environ.get("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL).strip()
