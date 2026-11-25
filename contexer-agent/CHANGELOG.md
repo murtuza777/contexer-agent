@@ -19,6 +19,24 @@ and [the tickets](docs/production/tickets.md).
 - The warning about OpenRouter's free daily requests now covers Contexer's own agents and compares
   what is left with the most model calls the run can make.
 
+- **A tool call a model wrote out as text is no longer taken for its answer.** The Reviewer given
+  `{"name": "read_file", "arguments": {}}` as text ended as "no notes" and the Diagnoser with no
+  lead, both marked `ok`. Text is an answer only when it has a field of the answer; a printed tool
+  call, or JSON with none of the fields, is sent back with the reason.
+- A tool call whose arguments are not valid JSON gets an error result under its own id. Before, the
+  next request carried a call with no result, which OpenAI-style providers refuse.
+- A reply cut off at the output limit is told so, with the limit, and the transcript records why
+  each reply ended.
+- Corrections are counted in a row, not over an agent's whole run: two are allowed, and a reply
+  without a mistake starts the count again. Three narrated steps in a long Tester run no longer end it.
+- **A run that hits a fault in Contexer still ends as a run.** It ended in a traceback with no
+  `run.json` and the files left mid-attempt. Now the files go back to the best attempt or to how
+  they were, the unfinished work is kept as a snapshot, `run.json` and the report are written with
+  the new end state `internal_error` (exit code 3), the traceback is kept in the run folder as
+  `crash.txt` with keys masked, and nothing is committed or pushed.
+- A sign-in that breaks outside its own steps (the browser closing, say) is reported as "could not
+  sign in" instead of ending the command.
+
 ### Security
 
 - A check's `goto` refuses an address a browser reads differently from Python (`http://other\@app/`),

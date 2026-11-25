@@ -22,6 +22,7 @@ from contexer.contract.models import Contract, utc_now
 from contexer.evidence.rundir import RunDir
 from contexer.gate.decision import decide
 from contexer.gate.models import ContractOutcome, GateDecision, JudgedPolicy, RunResult
+from contexer.llm.chat import clean_error
 from contexer.observer.browser import browser_problem
 from contexer.observer.models import BrowserObservation
 from contexer.observer.playwright import PlaywrightObserver
@@ -91,6 +92,11 @@ class VerificationSession:
                 )
             except SignInError as exc:
                 self.sign_in_error = str(exc)
+                return None
+            except Exception as exc:
+                # The browser closing, a timeout outside a step, a page that will not load: to the run they
+                # are all "could not sign in", and it goes on to say so instead of ending in a traceback.
+                self.sign_in_error = f"{type(exc).__name__}: {clean_error(exc)}"
                 return None
         return self._signed_in_state
 

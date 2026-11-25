@@ -21,7 +21,7 @@ from langgraph.errors import NodeCancelledError
 from langgraph.types import Command
 
 from contexer.agents.base import CodingAgentAdapter
-from contexer.checkpoint import ShadowRepo
+from contexer.checkpoint import ShadowRepo, SnapshotError
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.contract.models import utc_now
 from contexer.contract.store import CONTEXER_DIR
@@ -32,7 +32,7 @@ from contexer.crew.budget import Budget
 from contexer.evidence.rundir import RUNS_DIR, RunDir
 from contexer.graph.build import CHECKPOINT_FILE, build_graph, step_limit
 from contexer.graph.context import STOPPED_FILE, AskFn, DetailFn, EventFn, RunContext, guard_digest
-from contexer.graph.nodes import stopped_outcome
+from contexer.graph.nodes import crashed_outcome, stopped_outcome
 from contexer.graph.state import UNSCORED, LoopState
 from contexer.intent.store import IntentStore
 from contexer.verification.runner import CheckRunner
@@ -272,7 +272,15 @@ class GraphController:
                         self.last_outcome = stopped_outcome(ctx)
                     if isinstance(exc, NodeCancelledError):
                         raise asyncio.CancelledError from exc
-                    raise
+                    if stopped or getattr(exc, "stops_run", False):
+                        raise
+                    # Anything else is a fault in Contexer. A process that is being killed (not an Exception)
+                    # and a snapshot store that cannot be written (the CLI explains that one) pass through.
+                    if not isinstance(exc, Exception) or isinstance(exc, SnapshotError):
+                        raise
+                    ctx.close_app()
+                    self.agent.stop()
+                    crashed_outcome(ctx, exc)
         finally:
             ctx.close_app()
         if ctx.outcome is None:  # the graph ended without finalize; routing makes this unreachable

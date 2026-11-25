@@ -29,6 +29,7 @@ _STYLE = {
     "error": "red",
     "agent_error": "red",
     "app_error": "red",
+    "internal_error": "red",
     "tampered": "red",
 }
 

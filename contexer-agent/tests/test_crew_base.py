@@ -236,3 +236,127 @@ async def test_a_tool_may_not_take_the_name_submit(tmp_path: Path) -> None:
 async def test_no_run_dir_is_fine(tmp_path: Path) -> None:
     result = await run_agent(_spec(), ScriptedChatModel(submit(summary="ok", bugs=0)), [], "Go.", run_dir=None)
     assert result.status == "ok"
+
+
+# -- REL-3: text is an answer only when it is the answer ---------------------------------------
+
+
+def _answer_schemas() -> list[type[BaseModel]]:
+    from contexer.crew.challenger import Verdicts
+    from contexer.crew.diagnoser import RepairBrief
+    from contexer.crew.intent import IntentDraft
+    from contexer.crew.reviewer import Review
+    from contexer.crew.tester import TesterSummary
+    from contexer.crew.triage import _Choice
+
+    return [Review, RepairBrief, IntentDraft, TesterSummary, Verdicts, _Choice]
+
+
+@pytest.mark.parametrize("schema", _answer_schemas(), ids=lambda schema: schema.__name__)
+async def test_a_printed_tool_call_is_not_a_final_answer(schema: type[BaseModel], tmp_path: Path) -> None:
+    printed = 'I will read the page.\n{"name": "look", "arguments": {"page": "home"}}'
+    model = ScriptedChatModel(*[says(printed) for _ in range(6)])
+    result = await run_agent(_spec(output_schema=schema), model, [look], "Go.", run_dir=tmp_path)
+
+    assert result.status == "invalid_output"
+    assert result.output is None
+    assert result.tool_calls == 0  # what was printed was not run either
+    nudge = model.seen[1][-1]
+    assert isinstance(nudge, HumanMessage)
+    assert "tool call written as text" in nudge.content and "`look`" in nudge.content
+
+
+async def test_json_with_no_field_of_the_answer_is_not_an_answer(tmp_path: Path) -> None:
+    from contexer.crew.reviewer import Review
+
+    model = ScriptedChatModel(says('{"path": "app.js", "line": 3}'), says("{}"), submit(notes=[]))
+    result = await run_agent(_spec(output_schema=Review), model, [], "Go.", run_dir=tmp_path)
+
+    assert result.status == "ok"
+    assert result.steps == 3  # neither text was taken for "no notes"
+    assert "none of the answer's fields" in model.seen[1][-1].content
+
+
+# -- REL-2: a malformed or cut-off tool call is answered ----------------------------------------
+
+
+def _garbled(name: str, args: str, call_id: str = "call_bad") -> dict[str, Any]:
+    return {"name": name, "args": args, "id": call_id, "error": "Expecting ',' delimiter", "type": "invalid_tool_call"}
+
+
+def _events(run_dir: Path, kind: str) -> list[dict[str, Any]]:
+    import json
+
+    lines = (run_dir / "agents" / "tester.jsonl").read_text(encoding="utf-8").splitlines()
+    return [row for row in map(json.loads, lines) if row.get("kind") == kind or row.get("event") == kind]
+
+
+async def test_an_invalid_tool_call_gets_a_tool_result(tmp_path: Path) -> None:
+    reply = AIMessage(
+        content="",
+        tool_calls=[{"name": "look", "args": {"page": "home"}, "id": "call_ok", "type": "tool_call"}],
+        invalid_tool_calls=[_garbled("look", '{"page": "ca')],
+    )
+    model = ScriptedChatModel(reply, submit(summary="ok", bugs=0))
+    result = await run_agent(_spec(), model, [look], "Go.", run_dir=tmp_path)
+
+    assert result.status == "ok"
+    assert result.tool_calls == 1  # the valid one ran
+    after_reply = model.seen[1][3:]
+    assert all(isinstance(m, ToolMessage) for m in after_reply)  # every call has a result; nothing else is in between
+    by_id = {m.tool_call_id: m for m in after_reply}
+    assert by_id["call_ok"].status == "success"
+    assert by_id["call_bad"].status == "error"
+    assert "not valid JSON" in by_id["call_bad"].content and "was not run" in by_id["call_bad"].content
+
+
+async def test_a_reply_cut_off_at_the_output_limit_is_told_so(tmp_path: Path) -> None:
+    cut = AIMessage(
+        content="",
+        invalid_tool_calls=[_garbled("submit", '{"summary": "the app works and')],
+        response_metadata={"finish_reason": "length"},
+    )
+    model = ScriptedChatModel(cut, submit(summary="ok", bugs=0))
+    result = await run_agent(_spec(max_output_tokens=500), model, [], "Go.", run_dir=tmp_path)
+
+    assert result.status == "ok"
+    [answer] = _tool_messages(model, 1)
+    assert answer.tool_call_id == "call_bad" and answer.status == "error"
+    assert "cut off" in answer.content and "500" in answer.content
+    assert _events(tmp_path, "model")[0]["finish_reason"] == "length"
+
+
+async def test_a_run_that_ends_on_cut_off_replies_says_so(tmp_path: Path) -> None:
+    cut = AIMessage(content='{"summary": "the app wor', response_metadata={"stop_reason": "max_tokens"})
+    model = ScriptedChatModel(cut, cut, cut)
+    result = await run_agent(_spec(max_output_tokens=500), model, [], "Go.", run_dir=tmp_path)
+
+    assert result.status == "invalid_output"
+    assert "cut off" in result.error and "500" in result.error
+
+
+# -- REL-4: corrections are counted per mistake -------------------------------------------------
+
+
+async def test_corrections_reset_after_a_valid_step(tmp_path: Path) -> None:
+    replies: list[AIMessage] = []
+    for i in range(3):  # three narrated steps, spread out
+        replies.append(says("Let me look around first."))
+        replies.extend(calls(("look", {"page": f"p{i}-{j}"})) for j in range(11))
+    replies.append(submit(summary="ok", bugs=0))
+    model = ScriptedChatModel(*replies)
+    result = await run_agent(_spec(max_steps=40), model, [look], "Go.", run_dir=tmp_path)
+
+    assert result.status == "ok"
+    assert result.steps == 37
+    assert result.corrections == 3
+    assert _events(tmp_path, "end")[0]["corrections"] == 3
+
+
+async def test_three_mistakes_in_a_row_end_the_run(tmp_path: Path) -> None:
+    model = ScriptedChatModel(calls(("look", {"page": "home"})), *[says("Still thinking.") for _ in range(5)])
+    result = await run_agent(_spec(max_steps=40), model, [look], "Go.", run_dir=tmp_path)
+
+    assert result.status == "invalid_output"
+    assert result.steps == 1 + MAX_CORRECTIONS + 1
+    assert result.corrections == MAX_CORRECTIONS

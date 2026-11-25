@@ -17,6 +17,7 @@ Who decides what:
 from __future__ import annotations
 
 import re
+import traceback
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ from contexer.crew.diagnoser import DEFAULT_MAX_STEPS as DEFAULT_DIAGNOSER_STEPS
 from contexer.crew.diagnoser import Failure, brief_section, diagnose
 from contexer.crew.intent import run_intent
 from contexer.crew.reviewer import DEFAULT_REVIEW_STEPS, ReviewNote, review, review_repair_prompt
+from contexer.crew.transcript import Masker
 from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, TriageDecision, triage
 from contexer.crew.untrusted import quoted_goal
 from contexer.evidence.test_report import AgentUsage
@@ -51,6 +53,7 @@ from contexer.graph.context import STOPPED_FILE, RunContext
 from contexer.graph.routing import settle
 from contexer.graph.state import CARRIED_SCORE, UNSCORED, LoopState
 from contexer.intent.store import IntentSpec, SavedCheck
+from contexer.llm.chat import clean_error
 from contexer.verification.models import AcceptanceCriterion
 from contexer.verification.verifier import Verifier
 
@@ -1017,8 +1020,63 @@ def _crew_cost(state: LoopState) -> float | None:
     return sum(known) if known else None
 
 
+# The traceback of a run that ended on an error in Contexer itself, in its run folder.
+CRASH_FILE = "crash.txt"
+ISSUES_URL = "https://github.com/murtuza777/contexer-agent/issues"
+
+
 def stopped_outcome(ctx: RunContext) -> RunOutcome:
     """A run that was stopped: keep the unfinished work as a snapshot, put back a state that was proven or found."""
+    return _cut_short(
+        ctx,
+        "cancelled",
+        lambda put_back, kept: (
+            f"Stopped before the run ended; left {put_back}.{kept} "
+            f"`contexer run --resume {ctx.run.run_id}` continues it."
+        ),
+    )
+
+
+def crashed_outcome(ctx: RunContext, exc: Exception) -> RunOutcome:
+    """A run that ended on an error in Contexer itself. It still ends as a run: files put back, a report written."""
+    what = f"{type(exc).__name__}: {clean_error(exc)}"
+    trace = ctx.run.path / CRASH_FILE
+    try:
+        trace.write_text(Masker().text("".join(traceback.format_exception(exc))), encoding="utf-8")
+        where = f" The traceback is in {trace}."
+    except OSError:
+        where = ""
+    report = f"{where} Please report it: {ISSUES_URL}."
+    again = f"`contexer run --resume {ctx.run.run_id}` tries again from the last step that finished."
+    try:
+        return _cut_short(
+            ctx,
+            "internal_error",
+            lambda put_back, kept: (
+                f"Contexer itself failed ({what}). This is a fault in Contexer, not in the project. "
+                f"Left {put_back}.{kept}{report} {again}"
+            ),
+        )
+    except Exception as second:
+        # Putting the files back failed too. Say so, and still leave a run.json.
+        state: LoopState = ctx.mirror  # type: ignore[assignment]
+        outcome = _outcome(ctx, state, _attempts(state))
+        outcome.terminal = "internal_error"
+        outcome.reason = (
+            f"Contexer itself failed ({what}). This is a fault in Contexer, not in the project. The files could not "
+            f"be put back ({type(second).__name__}: {clean_error(second)}); they are as the run left them.{report}"
+        )
+        outcome.duration_seconds = ctx.elapsed()
+        try:
+            write_run_evidence(ctx.project, outcome, ctx.run)
+        except Exception:
+            pass
+        ctx.outcome = outcome
+        return outcome
+
+
+def _cut_short(ctx: RunContext, terminal: Any, reason: Callable[[str, str], str]) -> RunOutcome:
+    """End a run that did not reach its own end: unfinished work kept as a snapshot, a known state put back."""
     state: LoopState = ctx.mirror  # type: ignore[assignment]
     snapshots = state.get("snapshots", {})
     attempts = _attempts(state)
@@ -1035,10 +1093,8 @@ def stopped_outcome(ctx: RunContext) -> RunOutcome:
         ctx.shadow.restore(target)
         kept = f" The unfinished work is kept: `contexer restore {ctx.run.run_id} --stopped` brings it back."
     outcome = _outcome(ctx, state, scored)
-    outcome.terminal = "cancelled"
-    outcome.reason = (
-        f"Stopped before the run ended; left {put_back}.{kept} `contexer run --resume {ctx.run.run_id}` continues it."
-    )
+    outcome.terminal = terminal
+    outcome.reason = reason(put_back, kept)
     outcome.best_attempt = best
     outcome.final = ctx.result(best)
     outcome.diff = ctx.shadow.diff(snapshots["0"], target)

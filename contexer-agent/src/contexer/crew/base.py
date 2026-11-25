@@ -8,7 +8,13 @@ limits; the model cannot extend them.
 The answer is handed in through a ``submit`` tool whose arguments are the
 output schema, because tool calling is the one structured channel every
 provider has. A model that writes the answer as JSON text instead is accepted
-too.
+too, but only when the text is the answer: JSON with none of the answer's
+fields, or a tool call written out as text, is sent back.
+
+A mistake in a reply (an answer that does not fit, a tool call whose arguments
+are not JSON, talk where a call was expected) is answered with a correction.
+``MAX_CORRECTIONS`` of them in a row are allowed; a reply without a mistake
+starts the count again.
 
 Every model call and tool call is written to the agent's transcript in the
 run folder, and what a tool returns is masked before the model sees it (see
@@ -44,8 +50,12 @@ from contexer.llm.structured import parse_json_object
 AgentStatus = Literal["ok", "step_limit", "timeout", "invalid_output", "model_error", "budget_exhausted"]
 
 SUBMIT_TOOL = "submit"
-# How many times an answer that does not fit the schema is sent back for correction.
+# How many replies in a row may be sent back for correction. The next mistake ends the run.
 MAX_CORRECTIONS = 2
+# What a provider reports as the reason a reply ended when it hit the output limit.
+_CUT_OFF = frozenset({"length", "max_tokens"})
+# Keys a model uses when it writes a tool call as text instead of calling the tool.
+_CALL_ARGUMENT_KEYS = ("arguments", "args", "parameters", "input", "tool_input")
 # A tool result longer than this is cut before it goes back to the model.
 MAX_TOOL_RESULT_CHARS = 20_000
 # Tool calls run from one reply. A model that sends hundreds gets an error for the rest.
@@ -81,6 +91,8 @@ class AgentResult:
     cost_usd: float | None = None
     duration_seconds: float = 0.0
     error: str = ""
+    # Replies that were sent back for correction, over the whole run.
+    corrections: int = 0
     # agents/<name>.jsonl in the run folder; None when there is no run folder.
     transcript: Path | None = None
     messages: list[BaseMessage] = field(default_factory=list, repr=False)
@@ -104,7 +116,7 @@ async def run_agent(
     * ``step_limit``: ``spec.max_steps`` model calls were made without a valid answer.
     * ``timeout``: ``spec.timeout`` seconds passed.
     * ``invalid_output``: the answer still did not fit the schema after
-      ``MAX_CORRECTIONS`` corrections.
+      ``MAX_CORRECTIONS`` corrections in a row.
     * ``model_error``: the model call failed; ``error`` says why.
     * ``budget_exhausted``: the run's ``budget``, shared with its other agents, is used up.
 
@@ -137,6 +149,7 @@ async def run_agent(
         tokens_out=result.tokens_out,
         cost_usd=result.cost_usd,
         seconds=round(result.duration_seconds, 3),
+        corrections=result.corrections,
         error=result.error,
         output=result.output.model_dump(mode="json") if result.output is not None else None,
     )
@@ -177,7 +190,10 @@ class _Run:
         self.messages: list[BaseMessage] = []
         # Until a limit or an answer says otherwise, a run that stops has run out of steps.
         self.result = AgentResult(status="step_limit")
+        # Corrections sent in a row; a reply without a mistake sets it back to 0.
         self.corrections = 0
+        # Whether the reply being handled ended at the output limit.
+        self._cut_off = False
 
     async def loop(self, user_input: str) -> None:
         spec, result = self.spec, self.result
@@ -215,6 +231,8 @@ class _Run:
                 reply = AIMessage(content=str(getattr(reply, "content", reply)))
             self.messages.append(reply)
             self._count(reply)
+            finish = _finish_reason(reply)
+            self._cut_off = finish in _CUT_OFF
             usage = reply.usage_metadata or {}
             self.transcript.write(
                 "model",
@@ -225,6 +243,11 @@ class _Run:
                 cost_usd=reported_cost(reply),
                 text=str(reply.text),
                 tool_calls=[{"name": call["name"], "args": call["args"]} for call in reply.tool_calls],
+                invalid_tool_calls=[
+                    {"name": call.get("name") or "", "error": str(call.get("error") or "")[:200]}
+                    for call in reply.invalid_tool_calls
+                ],
+                finish_reason=finish,
             )
             if await self._handle(reply):
                 return
@@ -232,8 +255,15 @@ class _Run:
 
     async def _handle(self, reply: AIMessage) -> bool:
         """Act on one model reply. True when the run is over."""
-        if not reply.tool_calls:
-            return self._accept(_from_text(reply), on_invalid=lambda problem: HumanMessage(_correction(problem)))
+        sent = self.result.corrections
+        done = await self._act(reply)
+        if self.result.corrections == sent:
+            self.corrections = 0  # a reply without a mistake: the next one starts with every correction left
+        return done
+
+    async def _act(self, reply: AIMessage) -> bool:
+        if not reply.tool_calls and not reply.invalid_tool_calls:
+            return self._text(reply)
         done = False
         ran = 0
         for call in reply.tool_calls:
@@ -273,7 +303,76 @@ class _Run:
                 seconds=_elapsed(called),
             )
             self.messages.append(ToolMessage(content, tool_call_id=call_id, name=call["name"], status=status))
+        # A call whose arguments could not be read still needs a result under its id: the next request is
+        # refused by the provider when a call in it has none.
+        for call in reply.invalid_tool_calls:
+            call_id = call.get("id") or ""
+            name = call.get("name") or ""
+            if done:
+                self.messages.append(ToolMessage("Not run: the answer was already handed in.", tool_call_id=call_id))
+                continue
+            problem = self.transcript.masker.text(self._unreadable(name, str(call.get("error") or "")))
+            self.transcript.write("tool", step=self.result.steps, name=name, args=call.get("args"), status="error", result=problem, seconds=0.0)
+            self.messages.append(ToolMessage(f"Error: {problem}", tool_call_id=call_id, name=name, status="error"))
+            if self._mistake(problem):
+                return True
         return done
+
+    def _text(self, reply: AIMessage) -> bool:
+        """A reply with no tool call: the answer as JSON text, or something to send back."""
+        found = _from_text(reply)
+        rejected = ""
+        if not isinstance(found, dict):
+            if self._cut_off:
+                rejected = (
+                    f"Your reply was cut off at the limit of {self.spec.max_output_tokens} output tokens, so it is "
+                    f"incomplete and was not accepted. Send a shorter reply: call the `{SUBMIT_TOOL}` tool with a "
+                    "shorter answer, or call one tool at a time."
+                )
+        else:
+            fields = _answer_fields(self.spec.output_schema)
+            shared = fields & set(found)
+            called = _printed_call(found)
+            if called and (not shared or called == SUBMIT_TOOL or called in self.tools):
+                rejected = (
+                    f"That was a tool call written as text (`{called}`), and text is not run: nothing was called. "
+                    f"Call `{called}` through the tool-calling interface; do not write the call as JSON in your reply."
+                )
+            elif not shared:
+                rejected = (
+                    f"That JSON has none of the answer's fields ({', '.join(sorted(fields))}), so it was not taken "
+                    f"as the answer. Call the `{SUBMIT_TOOL}` tool with the answer as its arguments."
+                )
+        if rejected:
+            if self._mistake(rejected):
+                return True
+            self.messages.append(HumanMessage(rejected))
+            return False
+        return self._accept(found, on_invalid=lambda problem: HumanMessage(_correction(problem)))
+
+    def _unreadable(self, name: str, error: str) -> str:
+        """What the model is told about a tool call whose arguments were not JSON."""
+        why = f" ({error[:200]})" if error else ""
+        problem = f"the arguments of this `{name}` call were not valid JSON{why}, so it was not run."
+        if self._cut_off:
+            return (
+                f"{problem} The reply was cut off at the limit of {self.spec.max_output_tokens} output tokens: "
+                "send a shorter call."
+            )
+        return f"{problem} Send the call again with valid JSON arguments."
+
+    def _mistake(self, problem: str) -> bool:
+        """Count a reply that is sent back. True when the run is over: too many in a row."""
+        if self.corrections >= MAX_CORRECTIONS:
+            self.result.status = "invalid_output"
+            self.result.error = (
+                f"{self.spec.name}'s answer did not fit the expected shape after {MAX_CORRECTIONS} corrections "
+                f"in a row: {problem}"
+            )
+            return True
+        self.corrections += 1
+        self.result.corrections += 1
+        return False
 
     def _refuse(self, call: Any, ran: int) -> str:
         """Why a tool call is not run, or ''. Bounds what one reply, and one stuck model, can do."""
@@ -311,11 +410,8 @@ class _Run:
             output = self.spec.output_schema.model_validate(candidate)
         except (ValidationError, ValueError) as exc:
             problem = _validation_problem(exc)
-            if self.corrections >= MAX_CORRECTIONS:
-                self.result.status = "invalid_output"
-                self.result.error = f"{self.spec.name}'s answer did not fit the expected shape: {problem}"
+            if self._mistake(problem):
                 return True
-            self.corrections += 1
             self.messages.append(on_invalid(problem))
             return False
         if on_valid:
@@ -377,6 +473,41 @@ def _from_text(reply: AIMessage) -> Any:
         return parse_json_object(text)
     except ValueError:
         return None
+
+
+def _finish_reason(reply: AIMessage) -> str:
+    """Why the provider says the reply ended ("stop", "length", "tool_calls"...), or ''."""
+    metadata = reply.response_metadata or {}
+    for key in ("finish_reason", "stop_reason"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value:
+            return value.lower()
+    return ""
+
+
+def _answer_fields(schema: type[BaseModel]) -> set[str]:
+    """Every name a field of the answer may be given under."""
+    names: set[str] = set()
+    for name, info in schema.model_fields.items():
+        names.add(name)
+        if isinstance(info.alias, str):
+            names.add(info.alias)
+    return names
+
+
+def _printed_call(data: dict[str, Any]) -> str:
+    """The tool's name when ``data`` is a tool call written out as text, else ''."""
+    listed = data.get("tool_calls")
+    if isinstance(listed, list) and listed and isinstance(listed[0], dict):
+        return _printed_call(listed[0]) or "a tool"
+    function = data.get("function")
+    if isinstance(function, dict):
+        name = function.get("name")
+        return name if isinstance(name, str) and name else ""
+    name = function if isinstance(function, str) else data.get("name") or data.get("tool") or data.get("tool_name")
+    if isinstance(name, str) and name and any(key in data for key in _CALL_ARGUMENT_KEYS):
+        return name
+    return ""
 
 
 def _correction(problem: str) -> str:

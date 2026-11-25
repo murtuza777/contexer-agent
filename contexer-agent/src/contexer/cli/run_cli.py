@@ -212,7 +212,7 @@ def _finish(
     """Hand the result off if asked, print it, and exit with the outcome's code."""
     handoff: Handoff | None = None
     handoff_error: str | None = None
-    if handoff_plan is not None and contract is not None and outcome.terminal not in ("tampered", "cancelled"):
+    if handoff_plan is not None and contract is not None and outcome.terminal not in _NO_HANDOFF:
         with console.status("[dim]Committing the work to a branch and opening a pull request...[/dim]"):
             try:
                 handoff = hand_off(handoff_plan, outcome, contract, issue=issue)
@@ -540,6 +540,10 @@ def execute_graph(
     return outcome
 
 
+# How a run ended when nothing is committed or pushed: the files were put back, not finished.
+_NO_HANDOFF = ("tampered", "cancelled", "internal_error")
+
+
 def issue_goal(console: Console, plan: HandoffPlan | None, number: int, store: ContractStore) -> tuple[str, str]:
     """The goal an issue describes (its title and text), and a contract id that names the issue."""
     token = github_token()
@@ -772,7 +776,7 @@ def _render(
             rows.append(("Note", f"[yellow]{escape(handoff.note.strip())}[/]"))
     elif handoff_error:
         rows.append(("Pull request", f"[red]not opened:[/] {escape(handoff_error)}"))
-    elif pr and outcome.terminal not in ("tampered", "cancelled"):
+    elif pr and outcome.terminal not in _NO_HANDOFF:
         rows.append(("Pull request", "[dim]none: the run left no changes[/]"))
     # What reading the diff found: the notes themselves, the ones that need a person first.
     order = {"high": 0, "medium": 1, "low": 2}

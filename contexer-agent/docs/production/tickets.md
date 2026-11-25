@@ -220,6 +220,7 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Accept.** A scripted reply with one valid and one invalid call: the
   valid one runs, the invalid one gets an error result, the agent goes on.
 - **Tests.** `test_an_invalid_tool_call_gets_a_tool_result`.
+- **Done 2026-11-25.** The message names the limit; no setting raises it yet (`MOD-1`). See [audit.md](audit.md) §5.1 and the changelog.
 
 ### REL-3 Text is an answer only when it is the answer
 - **Type.** Bug. **Priority.** P0. **Effort.** S.
@@ -236,6 +237,7 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   text does not return `ok`.
 - **Tests.** `test_a_printed_tool_call_is_not_a_final_answer`, for each of
   the five answer types.
+- **Done 2026-11-25.** See [audit.md](audit.md) §5.1 and the changelog.
 
 ### REL-4 Corrections are counted per mistake
 - **Type.** Reliability. **Priority.** P1. **Effort.** S.
@@ -246,6 +248,7 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Accept.** Three narrated steps spread over a 40-step run do not end it;
   three in a row do.
 - **Tests.** `test_corrections_reset_after_a_valid_step`.
+- **Done 2026-11-25.** See [audit.md](audit.md) §5.1 and the changelog.
 
 ### REL-5 A run that crashes still ends as a run
 - **Type.** Reliability. **Priority.** P0. **Effort.** M.
@@ -260,6 +263,7 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Accept.** A node made to raise: the files are as before the run, the
   report exists, the exit code is 3.
 - **Tests.** `test_an_exception_in_a_node_restores_and_reports`.
+- **Done 2026-11-25.** See [audit.md](audit.md) §5.1 and the changelog.
 
 ### REL-6 A check that fails is replayed once more
 - **Type.** Reliability. **Priority.** P1. **Effort.** M.

@@ -207,3 +207,21 @@ def test_members_fixture_contract_is_approved() -> None:
     assert contract.status == "approved"
     data = json.loads((FIXTURE / "app" / ".contexer" / "contracts" / "members-basics.json").read_text("utf-8"))
     assert any(c["check"].get("login") is False for c in data["criteria"])
+
+
+def test_a_sign_in_that_breaks_outside_its_steps_is_still_a_sign_in_error(
+    members_app: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (members_app / ".env").write_text("MEMBERS_EMAIL=demo@example.com\nMEMBERS_PASSWORD=correct-horse\n", encoding="utf-8")
+
+    async def browser_closed(self: CheckRunner, *args: object, **kwargs: object) -> dict[str, object]:
+        raise RuntimeError("Target page, context or browser has been closed")
+
+    monkeypatch.setattr(CheckRunner, "sign_in", browser_closed)
+    code, result = _verify(members_app)
+
+    assert code == 3
+    assert result.decision.outcome == "error"
+    [reason] = result.decision.reasons
+    assert reason.startswith("Could not sign in with the [auth] flow in contexer.toml:")
+    assert "RuntimeError" in reason and "browser has been closed" in reason
