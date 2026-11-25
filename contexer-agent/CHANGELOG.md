@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-11-26
+
+The first release on PyPI: `uv tool install contexer-agent`.
+
 An audit of the whole system on 2026-11-24: [what was found](docs/production/audit.md),
 [the research behind the plan](docs/production/research.md), [the roadmap](docs/production/roadmap.md)
 and [the tickets](docs/production/tickets.md).
