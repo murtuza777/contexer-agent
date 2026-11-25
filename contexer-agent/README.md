@@ -307,5 +307,8 @@ The suite (987 tests, about half an hour on a laptop) runs real Chromium against
 for the dev-server tests, and real git for snapshots. It needs no network and
 no model. The benchmark's React + Vite fixture runs `npm ci` once, so the
 benchmark needs network the first time. Live-service tests skip themselves when their prerequisites are
-missing. CI runs both commands on Linux; see
+missing. CI runs both commands on Linux. On Windows and macOS it runs the
+tests that start no browser (`pytest --no-browser` skips a test at the moment
+it starts one), installs the package cleanly and runs `contexer demo`, and
+runs the benchmark once a week; see
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).

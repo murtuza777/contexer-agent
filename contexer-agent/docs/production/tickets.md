@@ -716,6 +716,18 @@ an agent a person is already using calls Contexer (not built).
   from a clean install on macOS and Linux and fix what it shows.
 - **Files.** `.github/workflows/ci.yml`, `docs/try-it.md`.
 - **Accept.** Green on three systems; the guide's commands run as written.
+- **Built 2026-11-26**, in `ci.yml` and `tests/conftest.py`
+  (`pytest --no-browser`). Green on all three: lint, types, the tests
+  that start no browser (824 of 1,099 on Windows, 823 on macOS; 1,094 on
+  Ubuntu, where 5 skip for other reasons), and a clean pipx install that runs steps 1 and 2 of the
+  guide. The benchmark is 46 of 46 on Ubuntu and Windows. Open: **on macOS
+  the benchmark missed `shop/load-crash`** in the one run it has had (all 8
+  checks passed on the buggy app, a false pass), so the weekly macOS
+  benchmark is expected to be red until that is understood; the likely
+  place is the fixed 250 ms wait before `no_errors` is counted in
+  `verification/runner.py`, not confirmed. Steps 3 to 5 of the guide need
+  a model key and were not followed on macOS or Linux. The tests that use
+  a browser run on Ubuntu only. The weekly schedule has not fired yet.
 
 ### DX-4 The run view
 - **Type.** Terminal UX. **Priority.** P2. **Effort.** M. **Depends on.** OBS-1.
