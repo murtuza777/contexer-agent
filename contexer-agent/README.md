@@ -70,7 +70,7 @@ The same groups as `contexer --help`:
 | `contexer runs` | Recent runs with outcome, check counts and report paths |
 | `contexer restore RUN --attempt N` / `--stopped` / `--undo` | Put the files back to a snapshot a run took |
 | `contexer mcp` | Serve the approved checks to the coding agent you already work in, over MCP (see below) |
-| `contexer mcp` | Serve the approved checks to the coding agent you already work in, over MCP (see below) |
+| `contexer init --agent NAME` | Write a stop hook so Claude Code or Codex cannot end a turn while an approved check fails (see below) |
 | **CI and GitHub** | |
 | `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
 | `contexer issue draft N` / `build N --by LOGIN` / `event` | Post an issue's checks for approval; build them once approved; in Actions, act on the triggering event |
@@ -121,32 +121,37 @@ a terminal, with `contexer contract approve ID`. `contexer_verify` starts the
 app, runs your `[app] reset` if you have one, and writes its evidence under
 `.contexer/runs`; it changes nothing else.
 
-## Inside your coding agent (MCP)
+## Holding the agent to the checks (stop hook)
 
-`contexer mcp` is a Model Context Protocol server on stdio. An agent you are
-already working in starts it and can then ask Contexer four things:
-
-| Tool | What the agent gets |
-| --- | --- |
-| `contexer_checks` | The approved contract: every check's steps and what it expects |
-| `contexer_verify` | The checks replayed in a real browser: passed, or what was expected and what the browser saw |
-| `contexer_brief` | The instruction a Contexer run would give for the contract |
-| `contexer_status` | How the last run in the project ended |
-
-For Claude Code, from the project folder:
+An agent that may call a verifier may also not call it. A hook is code, so
+it does not depend on the agent remembering:
 
 ```bash
-claude mcp add contexer -- contexer mcp
+contexer init --agent claude-code   # or: codex
 ```
 
-For any other agent, add a stdio server whose command is `contexer` with the
-argument `mcp` (and `--dir PATH` when the agent does not start it in the
-project folder).
+This adds one Stop hook to the agent's project settings
+(`.claude/settings.json`, or `.codex/hooks.json`) and keeps what you already
+have there. When the agent says it is done, its own harness runs
+`contexer hook stop`, which replays the approved contracts:
 
-No tool approves a contract, edits one or changes a setting. You approve, in
-a terminal, with `contexer contract approve ID`. `contexer_verify` starts the
-app, runs your `[app] reset` if you have one, and writes its evidence under
-`.contexer/runs`; it changes nothing else.
+- **A check fails:** the stop is refused and the agent is handed what was
+  expected and what the browser saw. It keeps working.
+- **Still failing after three tries in a row:** the stop goes through and you
+  are told, in the agent's own window, that the work is not proven.
+- **Nothing changed since the checks last passed:** nothing is replayed, so a
+  turn that only answered a question costs about two seconds.
+- **No approved contract, or a `contexer run` is working here:** the hook
+  stands aside.
+
+The hook never approves, edits or skips a check, and writes only under
+`.contexer/`. If Contexer itself breaks, the stop goes through and says why.
+
+| Agent | Can a stop be refused? |
+| --- | --- |
+| Claude Code | Yes |
+| Codex | Yes, once you have trusted the hook (`/hooks` in Codex) |
+| OpenCode | No: it has no hook that can refuse a stop. Use `contexer mcp` and ask it to call `contexer_verify` |
 
 ## Project files
 
