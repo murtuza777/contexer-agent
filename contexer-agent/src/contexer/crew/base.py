@@ -17,8 +17,8 @@ are not JSON, talk where a call was expected) is answered with a correction.
 starts the count again.
 
 Every model call and tool call is written to the agent's transcript in the
-run folder, and what a tool returns is masked before the model sees it (see
-``crew/transcript.py``).
+run folder. The task an agent is given and what a tool returns are masked
+before the model sees them (see ``crew/transcript.py``).
 
 An agent's output is its opinion. Nothing here marks anything as proven: that
 is decided by replaying checks (see ``verification/``).
@@ -125,7 +125,7 @@ async def run_agent(
 
     ``secrets`` are values that must not appear anywhere (a test account's
     password, say). They, and every key in the environment, are masked in the
-    transcript and in tool results before the model reads them.
+    transcript, and in ``user_input`` and tool results before the model reads them.
     """
     run = _Run(spec, model, tools, Transcript(run_dir, spec.name, Masker(secrets)), budget)
     started = time.monotonic()
@@ -197,6 +197,9 @@ class _Run:
 
     async def loop(self, user_input: str) -> None:
         spec, result = self.spec, self.result
+        # The task carries what the caller gathered from the app (a diff, a failure report, the end of a
+        # log), and any of it may hold a password or a key. It is masked like a tool result is.
+        user_input = self.transcript.masker.text(user_input)
         self.messages = [SystemMessage(_system_prompt(spec)), HumanMessage(user_input)]
         self.transcript.write(
             "start",

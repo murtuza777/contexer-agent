@@ -11,6 +11,7 @@ from typing import Any
 from contexer import __version__
 from contexer.appserver import RunningApp
 from contexer.appserver.reset import reset_command, run_reset
+from contexer.browser.tools import sign_in_secrets
 from contexer.config.project import (
     AuthSettings,
     ProjectConfig,
@@ -133,7 +134,7 @@ class VerificationSession:
     ) -> Contract:
         """Compile a goal into a draft contract grounded in the app's current UI."""
         ui = self.load.ui_snapshot if self.load and self.load.success else ""
-        analysis = await analyzer.analyze(goal, repo_context, ui)
+        analysis = await analyzer.analyze(goal, repo_context, ui, secrets=sign_in_secrets(self.auth))
         return Contract.from_analysis(analysis, contract_id)
 
     async def verify(

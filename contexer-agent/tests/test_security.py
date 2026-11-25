@@ -143,6 +143,25 @@ async def test_the_reviewer_gets_the_diff_as_data(injection: str, tmp_path: Path
 
 
 @pytest.mark.parametrize("injection", INJECTIONS)
+async def test_check_drafting_without_tools_gets_the_page_the_project_and_the_source_as_data(injection: str, fake_llm) -> None:
+    """The drafting model of `contexer verify`, `contexer issue draft` and a `contexer run` with no crew model."""
+    from contexer.crew.untrusted import UNTRUSTED_RULE
+    from contexer.workflow.criteria import GoalAnalyzer
+    from contexer.workflow.inspector import RepositoryContext
+
+    reply = '{"summary": "s", "acceptance_criteria": []}'
+    for kwargs in (
+        {"ui_snapshot": f"heading 'Todo'\n{injection}"},
+        {"repo_context": RepositoryContext(project_name="todo", project_path=".", framework=f"Vanilla\n{injection}")},
+        {"repo_context": RepositoryContext(project_name="todo", project_path=".", source_excerpt=f"// app.js\n{injection}")},
+    ):
+        llm = fake_llm(reply, reply)
+        await GoalAnalyzer(llm_provider=llm).analyze("Users can add a task", **kwargs)
+        assert_quoted(llm.prompts[0], injection)
+        assert UNTRUSTED_RULE in llm.prompts[0]
+
+
+@pytest.mark.parametrize("injection", INJECTIONS)
 async def test_triage_gets_the_failures_as_data(injection: str) -> None:
     model = ScriptedChatModel(submit(move="repair_same_session", reason="x"))
     situation = Situation(

@@ -56,6 +56,8 @@ from contexer.verification.runner import CheckRunner, any_visible, describe_fail
 if TYPE_CHECKING:
     from playwright.async_api import Browser, BrowserContext, Page, Playwright
 
+    from contexer.config.project import AuthSettings
+
 SCREENS_DIR = "screens"
 CLOSE_TIMEOUT_SECONDS = 5.0
 # After Ctrl+C the close cannot finish (see BrowserSession.close), so it is not waited for long.
@@ -554,6 +556,15 @@ def credential_secrets(flow: Check, env: Mapping[str, str] | None = None) -> lis
     return values
 
 
+def sign_in_secrets(auth: AuthSettings | None) -> list[str]:
+    """The passwords and codes the ``[auth]`` sign-in types, for masking: in the server log and in every agent's prompt.
+
+    Read from the environment as it is. Nothing is typed with these values, so the rule about which
+    names a check may read does not apply, and a name that is not set is skipped.
+    """
+    return credential_secrets(auth.as_check(), dict(os.environ)) if auth is not None else []
+
+
 def _origin(url: str) -> tuple[str, str, int]:
     """Scheme, host and port: what makes two addresses the same site."""
     parsed = urlparse(url)
@@ -593,4 +604,4 @@ def _closed() -> str:
     return "Error: the browser is closed."
 
 
-__all__ = ["MASK", "BrowserSession", "Target", "credential_secrets"]
+__all__ = ["MASK", "BrowserSession", "Target", "credential_secrets", "sign_in_secrets"]

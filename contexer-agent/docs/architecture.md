@@ -106,7 +106,7 @@ A `contexer run "GOAL" --pr`, end to end:
 
 | Package | Responsibility |
 | --- | --- |
-| `cli/` | The commands. `term.py` is the shared terminal design; `run_cli`, `gate_cli` (verify, replay, contract), `issue_cli`, `setup_cli` (setup, models), `doctor_cli`, `demo_cli`, `init_cli`, `runs_cli` (runs, restore), `bench_cli` |
+| `cli/` | The commands. `term.py` is the shared terminal design; `run_cli`, `gate_cli` (verify, replay, contract), `issue_cli`, `setup_cli` (setup, models), `doctor_cli`, `demo_cli`, `init_cli`, `runs_cli` (runs, runs prune, restore), `bench_cli` |
 | `contract/` | `Contract` model, canonical hash, approval, file store |
 | `verification/` | The check language (`checks.py`), the Playwright runner (`runner.py`), the verifier (`verifier.py`), result models |
 | `observer/` | Page observation: ARIA snapshot, password masking, Chromium status |
@@ -708,7 +708,52 @@ Checks approved again after work began go from `approve` straight to
   (a hook, a setting that names a program) is started.
 
 Refs per run: `<run>/0` (baseline), `<run>/<n>` (attempts), `<run>/stopped`,
-`<run>/undo` (before a `contexer restore`).
+`<run>/undo` (before a `contexer restore`), `<run>/before-resume`.
+
+### Pruning (`contexer runs prune`, `cli/runs_cli.py: prune`)
+
+Nothing else removes run folders or snapshots, and `gc.auto` is 0, so both
+grow until a person prunes.
+
+- **What goes.** Direct children of `.contexer/runs` that are plain folders
+  named like a run id (`YYYYMMDD-HHMMSS-xxxx`), sorted by name, newest first
+  as `contexer runs` lists them; the first `--keep N` (default 20, 0 allowed)
+  stay. A symlink or a Windows junction is never entered and is left where it
+  is, also when it is named like a run; a `runs` folder or a `.contexer` that
+  is itself a link is refused. Other folders and files are left and named.
+  Nothing outside `runs/` and `shadow.git` is opened for writing.
+- **Unfinished runs are kept.** A run older than the newest N stays when it
+  has `stopped.ref`, when its `run.json` ends in `cancelled` or
+  `internal_error`, or when it has a checkpoint and no `run.json` (killed):
+  `run --resume` can continue it, and its unfinished work exists only in its
+  `stopped` snapshot. The output names it. `--include-unfinished` removes
+  these too.
+- **Lock.** The run lock is taken before the list is made and held until the
+  last removal. When a run holds it, nothing is removed and the command
+  exits 2 with the holder's name. `--dry-run`, and a call with no terminal
+  and no `--yes`, remove nothing and so take no lock.
+- **Asking.** The list (folder size, number of snapshots, outcome) is
+  printed, then a yes/no question with "no" as the default. `--yes` skips
+  the question. With no terminal and no `--yes` nothing is removed and the
+  exit code is 2.
+- **Removing.** The folder first (`shutil.rmtree`, which removes a link
+  inside a run as a link; read-only files are made writable and retried; on
+  Windows the `\\?\` path form lifts the 260-character limit), then
+  `ShadowRepo.drop_run`, which deletes `refs/contexer/<run>/*` for exactly
+  that run. A folder that could not be removed keeps its snapshots, and the
+  exit code is 1.
+- **Collecting.** `ShadowRepo.collect` runs `git gc --prune=now` with the
+  same no-hook settings as every other call. `gc.recentObjectsHook` names a
+  program that git starts while pruning and that no command-line setting
+  turns off; one found in the snapshot repository's own config is removed
+  first, and if it is still set (in the person's global config) nothing is
+  collected and the command says so. The space freed is the run folders plus
+  the difference in the size of `shadow.git`. Objects the index holds (the
+  files as they were at the last snapshot) are not freed.
+- **Not covered.** `contexer verify` and `contexer replay` do not take the
+  run lock, so `--keep 0` during one of them removes the folder it is
+  writing to. Snapshots whose run folder was deleted by hand are not found
+  and stay.
 
 ## 11. Coding agent adapters
 
@@ -724,6 +769,29 @@ returns the same expected-and-actual report a repair prompt carries. Nothing
 in the module prints, because stdout carries the protocol. No tool writes
 what defines done; `tests/test_mcp_server.py` drives the server with a real
 client and holds that.
+
+The server is something the agent may call. The stop hook is something it
+cannot skip. `contexer init --agent claude-code|codex`
+(`integrations/agent_setup.py`) adds one Stop hook to the agent's project
+settings; the agent's harness then runs `contexer hook stop`
+(`integrations/stop_hook.py`) each time the agent ends a turn. It takes the
+run lock, replays the approved contracts with `integrations/replay.py` (the
+code `contexer_verify` uses) and prints `{"decision": "block", "reason":
+...}` while one fails. Its state is `.contexer/hook-state.json`: the
+session, the blocks in a row (the stop goes through after `--max-blocks`,
+three by default, with a message to the person), and a fingerprint of the
+project's files (the snapshot repository's tree id) and approved contracts,
+so nothing is replayed when nothing changed since a pass. It always exits
+0, and an exception inside Contexer lets the stop through. OpenCode has no
+hook that can refuse a stop, so nothing is written for it.
+
+`init --agent` (`agent_setup.set_up`) does three things per agent, each in
+the file that agent reads: the server (`.mcp.json`; a table appended to
+`.codex/config.toml`, which is parsed to check and never rewritten; for
+OpenCode a pointer to `opencode mcp add`, because where servers sit in its
+config changed between versions), the hook, and the instructions (a skill
+at `.claude/skills/contexer/SKILL.md`, or a block in `AGENTS.md` that
+starts with a marker so it is added once).
 
 `agents/base.py: CodingAgentAdapter.run_turn(workdir, prompt, *, session_id,
 timeout, budget_usd, on_progress) -> AgentTurn` with `status`
@@ -848,11 +916,47 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 limits), then one `model` line per model call (step, seconds, tokens in and
 out, cost, text, tool calls, or the error) and one `tool` line per tool call
 (name, arguments, status, result, seconds), then an `end` line (status,
-totals, the output). `Masker` replaces the secrets the caller names, every
-provider key and token in the environment, and anything shaped like an API
-key, using `verification/checks.py: redact`. Tool results are masked before
-they go back to the model, so a password shown on a page reaches neither the
-prompt nor the file.
+totals, the output).
+
+**Masking** (`crew/transcript.py: Masker`): one masker is used in four
+places.
+
+- The task an agent is given and every tool result are masked before the
+  model is sent them (`crew/base.py`), and so is every line of the transcript.
+- What the app prints is masked line by line as the dev server's output is
+  recorded (`appserver/devserver.py: _record`), before it is kept in memory or
+  written to `server.log`. `result.json`, the report, the repair prompt, the
+  Diagnoser's task and `contexer mcp`'s verdict all read the log from there.
+- The prompt of check drafting without tools (`workflow/criteria.py`) is
+  masked before it is sent.
+
+What it replaces is exactly this, and nothing else:
+
+1. the values the caller names: what the `[auth]` sign-in types into a field
+   that looks like a password, a token or a one-time code, or takes from a
+   `${NAME}` whose name does (`browser/tools.py: credential_secrets`). They
+   are named for the agents of `contexer run` (`graph/context.py:
+   RunContext.secrets`), of `contexer test` and of `contexer issue draft`,
+   for check drafting without tools and for the server log. The benchmark
+   (`bench/`) names them for its Tester only. The email or user name of the
+   test account is never masked: an agent may need to see it;
+2. the exact values of the provider keys Contexer knows by variable name
+   (the `key_env` of every provider in `llm/catalog.py`) and of
+   `CONTEXER_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, `CODEX_API_KEY`,
+   `LANGFUSE_SECRET_KEY` and `LANGFUSE_PUBLIC_KEY`, when they are set and at
+   least six characters long;
+3. three key shapes, where a word starts: `sk-or-v1-...`, `sk-...` followed
+   by twenty or more key characters, and `AIza...` (Google). `sk-` in the
+   middle of a word (`task-remaining-count-label-wide`) is a name, and is
+   left as it is.
+
+Anything else passes unchanged: the app's own secrets under other variable
+names (`DATABASE_URL`, `STRIPE_SECRET_KEY`, a session secret), keys of other
+shapes (AWS, GitHub `ghp_...`, a JWT), and a secret that is encoded, split
+over two lines or cut by a length limit. An app that prints such a value, or
+a file that holds one and is read by an agent, sends it to the model
+provider. Keep those out of the test environment's output, and use a
+dedicated test account.
 
 **Tracing**: with `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` set and the
 `tracing` extra installed, `tracing_callbacks()` attaches Langfuse's LangChain
@@ -1019,16 +1123,23 @@ wants (`tests/test_guardrails.py`). The plan is in
 | Leave the app and act elsewhere | `browser/tools.py`: `goto` to another origin is refused; an action that leaves the origin is undone, not recorded, and marks the recording unreliable; pop-ups are closed |
 | Click and type on a live site | `contexer test --url` to a host that is not this machine or a private network needs `--allow-remote` |
 | Change the project | No agent has a write tool (the table below, enforced by a test); a full run leaves every file outside `.contexer/` unchanged |
-| Read secrets or Contexer's files | `read_file` and `grep` refuse paths outside the project, `.contexer/`, `.git/`, dependencies and `.env` files; secrets are masked in tool results and transcripts |
+| Read secrets or Contexer's files | `read_file` and `grep` refuse paths outside the project, `.contexer/`, `.git/`, dependencies and `.env` files; the secrets the masker knows (see Masking above: the `[auth]` password, the known key variables, three key shapes) are masked in the task, in tool results and in transcripts |
 | Steer the coding agent through the fix prompt | `validated_brief`: files must exist inside the project, the cause and instruction are capped, and the prompt tells the coding agent what a model-written section may not ask for |
 | Plant instructions for later runs | Skills are capped (160 and 800 characters, 30 in the store) and `--no-skills` ignores them; the Intent agent cannot change the goal, writes at most 25 behaviours, and what it adds or rewrites is printed |
 | Redefine "done" or the command Contexer runs | The tamper guard covers `contracts/`, `intent/` and `contexer.toml`. A resumed run compares those files with the hashes in its checkpoint and refuses to continue if one changed while it was stopped |
 | Declare the work done | `graph/routing.py: settle`: a run ends `succeeded` only when the gate's decision, computed again from the replayed checks, is `pass`. Triage's moves do not include one that passes a run, and a move outside the legal list is replaced by the rules |
 
 Text from the app (page snapshots, project summaries, diffs, server logs,
-failure reports, command output, saved skills) goes into every prompt inside
+failure reports, command output, saved skills) goes into a prompt inside
 `<untrusted source="...">`, and text that imitates the closing marker is
-neutralised (`crew/untrusted.py`). That is the soft layer: it makes steering
+neutralised (`crew/untrusted.py`). That holds for the task of each of the six
+agents, for the coding agent's repair prompt, and for check drafting without
+tools (`workflow/criteria.py`: the page, the project summary and the
+front-end source excerpt). `tests/test_security.py` puts the same hostile
+strings through each of those channels. Two things are not inside the
+marker: what an agent's own tool returns (a file it reads, a page it
+snapshots), and a goal from a GitHub issue in check drafting without tools,
+where it is given as the goal. That is the soft layer: it makes steering
 less likely, and nothing depends on it.
 
 A goal a person typed to Contexer is theirs. A goal taken from a GitHub
@@ -1041,6 +1152,12 @@ wrote it and that anything in it which is not about the app's behaviour is
 not the goal. `contexer issue build` sets `origin` itself, so editing the
 JSON in the draft comment cannot remove it. The approval by someone with
 write access is still what makes the checks count.
+
+An issue is read in one place, `github/issues.py: issue_goal`, by the
+Actions path (`contexer issue`) and by `contexer run --issue N` alike. It
+removes what GitHub does not show (HTML comments, zero-width and
+direction characters) before the text becomes a goal, so nothing reaches an
+agent that a person reading the issue could not see.
 
 ### Tool audit
 
@@ -1254,7 +1371,7 @@ the help.
 | Group (`contexer --help`) | Commands |
 | --- | --- |
 | Get started | `setup`, `demo`, `doctor`, `init` |
-| Build and prove | `test`, `run`, `verify`, `contract` (`draft`, `list`, `show`, `approve`), `runs`, `restore`, `mcp` |
+| Build and prove | `test`, `run`, `verify`, `contract` (`draft`, `list`, `show`, `approve`), `runs` (`prune`), `restore`, `mcp` |
 | CI and GitHub | `replay`, `issue` (`draft`, `build`, `event`) |
 | More | `models`, `bench` |
 
@@ -1359,7 +1476,7 @@ and prints the fix under each problem.
 | The agent moves the goalposts | Contracts are hashed at approval; Claude Code and OpenCode are denied edits to `.contexer/**` (Codex has no per-path rule); the controller compares the contract files after every turn, puts them back and ends the run `tampered`; a modified contract never runs as approved |
 | The agent's claim is taken as proof | Only Contexer's own browser checks decide; changed files come from the shadow diff |
 | An attempt makes things worse | Every attempt is snapshotted; worse attempts are reverted; the run ends on the best attempt or the baseline |
-| Secrets leak into evidence or prompts | `${NAME}` values and password fields are masked in snapshots, `result.json`, `report.html` and repair prompts; signed-in checks keep no trace unless `--trace on`; the browser session lives only in memory |
+| Secrets leak into evidence or prompts | `${NAME}` values and password fields are masked in snapshots, `result.json`, `report.html` and repair prompts; the dev server's log, the task of every agent and what its tools return are masked for the `[auth]` password, the known key variables and three key shapes, and for nothing else (§ Masking: an app's own secrets under other names are not recognised); signed-in checks keep no trace unless `--trace on`; the browser session lives only in memory |
 | Keys leak | Keys live in `~/.contexer/credentials.toml` (0600 on POSIX), never in a project; masked in output; discovery errors never echo the key |
 | Issue text steers the agent (prompt injection) | A person with write access approves the checks first; the agent gets no GitHub or Actions token in its environment; the issue workflow checks out without stored credentials; only Contexer pushes, with the token passed per command |
 | Someone forges an approval | The workflow runs only for owners, members and collaborators; Contexer checks the approver's write access through the API; only the bot's own draft comment counts |

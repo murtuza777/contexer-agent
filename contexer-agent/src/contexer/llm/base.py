@@ -19,11 +19,15 @@ def _mask_api_key_match(match: re.Match[str]) -> str:
     return "...[MASKED]"
 
 
-# Patterns to mask OpenRouter, OpenAI, and Google API keys
+# Patterns to mask OpenRouter, OpenAI, and Google API keys. A key starts a word: "sk-" in the middle of
+# one ("task-remaining-count-label", a test id or a class name) is not a key, and masking it would change
+# the names in a diff or a page snapshot that an agent is asked to work with. In JSON text a key on a
+# new line follows the two characters "\n", so a letter that is the end of such an escape does not count.
+_KEY_START = r"(?:(?<![0-9A-Za-z])|(?<=\\[nrt]))"
 _API_KEY_PATTERNS = [
-    re.compile(r"sk-or-v1-[0-9a-zA-Z\-_]{20,}"),
-    re.compile(r"sk-[0-9a-zA-Z\-_]{20,}"),
-    re.compile(r"AIza[0-9A-Za-z\-_]{35}"),
+    re.compile(_KEY_START + r"sk-or-v1-[0-9a-zA-Z\-_]{20,}"),
+    re.compile(_KEY_START + r"sk-[0-9a-zA-Z\-_]{20,}"),
+    re.compile(_KEY_START + r"AIza[0-9A-Za-z\-_]{35}"),
 ]
 
 

@@ -21,6 +21,7 @@ from rich.markup import escape
 
 from contexer.agents import create_agent
 from contexer.appserver import AppStartError, open_app
+from contexer.browser.tools import sign_in_secrets
 from contexer.cli import run_cli
 from contexer.cli.gate_cli import compiler_llm, preview_draft
 from contexer.cli.run_cli import (
@@ -279,7 +280,14 @@ async def _draft_with_intent(
 
     async def drafted(ui_snapshot: str, repo_summary: str) -> tuple[Contract, IntentResult]:
         result = await run_intent(
-            goal, model, stored=spec, ui_snapshot=ui_snapshot, repo_summary=repo_summary, run_dir=run_dir.path, origin=origin
+            goal,
+            model,
+            stored=spec,
+            ui_snapshot=ui_snapshot,
+            repo_summary=repo_summary,
+            run_dir=run_dir.path,
+            origin=origin,
+            secrets=sign_in_secrets(session.auth),
         )
         contract = Contract(
             id=contract_id,

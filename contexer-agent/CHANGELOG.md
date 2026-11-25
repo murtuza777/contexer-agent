@@ -23,9 +23,60 @@ and [the tickets](docs/production/tickets.md).
   (replay it in a browser and say what was seen), `contexer_brief` (the instruction for it) and
   `contexer_status` (the last run). No tool approves a contract, edits one or changes a setting, and
   a contract is named by its id, never by a path. Adds the dependency `mcp>=2.3,<3.0`.
+- **A stop hook: the agent cannot say "done" while an approved check fails.**
+  `contexer init --agent claude-code` (or `codex`) adds a Stop hook to the agent's project settings,
+  keeping what is there. The hook runs `contexer hook stop`, which replays the approved contracts
+  and refuses the stop with what the browser saw. After three refusals in a row it lets the stop
+  through and says the work is not proven. Nothing is replayed when no file and no contract changed
+  since the last pass. OpenCode has no hook that can refuse a stop, and `init` says so.
+- **`contexer init --agent NAME` sets a coding agent up in one command.** Beside the stop hook it
+  registers the MCP server (`.mcp.json` for Claude Code, `.codex/config.toml` for Codex) and writes
+  the agent's instructions (a skill for Claude Code, a marked section of `AGENTS.md` for Codex and
+  OpenCode): read the checks first, verify before saying done, never edit `.contexer/`. Existing
+  files are kept. It warns when `contexer` is not on the PATH.
+- A `contexer_verify` that passes every approved contract is remembered, so the stop hook does not
+  replay the same files again when the agent stops.
+- **[What Contexer sends, and what it does not do](docs/data-and-limits.md).** One page for a
+  security review: which command calls which model, what each prompt contains, what is kept out
+  and where that stops, every other network destination, what stays on disk, and what Contexer
+  does not control about the coding agent it starts. Each row names the code behind it. No code
+  changed.
+- **`contexer runs prune --keep N`: remove old runs.** Run folders and snapshots were never removed.
+  Prune keeps the newest N runs (20 by default), lists the rest with their sizes, asks, then removes
+  those folders and their snapshots and collects the snapshot repository, reporting the space freed.
+  `--dry-run` only lists; `--yes` does not ask; with no terminal and no `--yes` nothing is removed.
+  It removes nothing while a run holds the project's lock (exit 2). A stopped run that can still be
+  resumed is kept unless `--include-unfinished` is given. It deletes only run folders directly inside
+  `.contexer/runs` and never follows a symlink or a junction. `contexer runs` itself is unchanged.
 
 ### Fixed
 
+- **What the app prints is masked before it is kept.** A dev server that printed a key or the test
+  account's password at start-up had it written to `server.log` and `result.json`, shown in the
+  report, and sent to the model provider in the Diagnoser's task and to the coding agent in the
+  repair prompt. Each line is now masked as it is recorded, so every reader of the log gets the
+  masked text.
+- **The task an agent is given is masked, not only what its tools return.** The diff, the failure
+  report and the log tail in the first message of an agent's prompt went to the provider as built.
+  A task with no secret in it is sent unchanged, byte for byte. For that to hold, the `sk-...` key
+  shape now has to start a word: a test id or a class name such as `task-remaining-count-label-wide`
+  was masked from `sk-` on, in tool results and transcripts too.
+- **Check drafting without tools marks and masks what the app says.** The page, the project summary
+  and the front-end source excerpt went to the drafting model with no `<untrusted>` marker and no
+  masking (`contexer verify` with a goal, `contexer contract draft`, and `contexer issue draft` and
+  `contexer run` when no crew model is configured). They are now wrapped and masked like in every
+  agent's task, and the injection tests cover this channel.
+- **In `contexer run`, the agents know the `[auth]` password.** The Intent agent, Triage, the
+  Diagnoser and the Reviewer were given no list of secrets, so a page, a diff or a failure that
+  showed the test account's password sent it to the provider. They get the same list `contexer test`
+  gives its Tester. The Intent agent and the Challenger of `contexer test`, and the Intent agent of
+  `contexer issue draft`, get it too.
+- **`contexer run --issue N` reads the issue as GitHub shows it.** It built the goal from the raw
+  title and body, so an HTML comment or invisible characters in an issue reached the agents unseen
+  by the person who ran it. It now uses the same reading as the Actions path.
+- The masker knows the `[auth]` password, the exact values of the key variables Contexer knows by
+  name, and three key shapes; `SECURITY.md` and `docs/architecture.md` now say that, and what passes
+  unmasked.
 - **A run could end as succeeded on checks that had since been corrected.** Attempt 1 passed, the
   review asked for one repair, the checks were corrected, and a later attempt that failed the new
   checks was undone back to attempt 1 and reported as proven. Approving changed checks now drops
