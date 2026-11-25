@@ -92,7 +92,7 @@ person. Every milestone ends with a stop for review.
 - **Objective.** A model that calls tools badly degrades to a clear
   message, never to a silent wrong answer.
 - **Current state.** `L1` to `L7` in [audit.md](audit.md) §5.1. `REL-2` to
-  `REL-5` were built on 2026-11-25; `REL-6` and `REL-7` are open.
+  `REL-7` were built on 2026-11-25. Milestone B is complete.
 - **Required.** `REL-2` (malformed tool calls), `REL-3` (text taken for an
   answer), `REL-4` (corrections per mistake), `REL-5` (a crash still
   writes a report), `REL-6` (flaky checks), `REL-7` (atomic writes and the
@@ -473,5 +473,6 @@ On the tree with the fixes of that day, Windows 11, Python 3.14.
 | Full suite (`pytest`, the live OpenCode test deselected) | 1003 passed, 4 skipped, in 37 min 37 s |
 | Full suite after `SEC-1` to `SEC-4` | 1014 passed, 4 skipped, in 30 min 46 s |
 | Full suite after `REL-2` to `REL-5` (2026-11-25) | 1028 passed, 4 skipped, in 30 min 44 s |
+| Full suite after `REL-6` and `REL-7` (2026-11-25) | 1037 passed, 4 skipped, in 37 min 55 s (failing checks are now replayed twice) |
 | Gate, tester, repair and reviewer benchmarks | Not re-run that day |
 | Live runs with a model | None that day |
