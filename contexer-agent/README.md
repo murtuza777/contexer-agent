@@ -70,7 +70,7 @@ The same groups as `contexer --help`:
 | `contexer runs` | Recent runs with outcome, check counts and report paths |
 | `contexer restore RUN --attempt N` / `--stopped` / `--undo` | Put the files back to a snapshot a run took |
 | `contexer mcp` | Serve the approved checks to the coding agent you already work in, over MCP (see below) |
-| `contexer init --agent NAME` | Write a stop hook so Claude Code or Codex cannot end a turn while an approved check fails (see below) |
+| `contexer init --agent NAME` | Set up the coding agent you work in: the MCP server, a stop hook and its instructions (see below) |
 | **CI and GitHub** | |
 | `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
 | `contexer issue draft N` / `build N --by LOGIN` / `event` | Post an issue's checks for approval; build them once approved; in Actions, act on the triggering event |
@@ -94,7 +94,28 @@ Useful options:
 is stopped and the project put back; `contexer restore RUN --stopped` brings
 the unfinished work back).
 
-## Inside your coding agent (MCP)
+## Inside your coding agent
+
+One command sets up the agent you already work in:
+
+```bash
+contexer init --agent claude-code   # or: codex, opencode
+```
+
+| | Claude Code | Codex | OpenCode |
+| --- | --- | --- | --- |
+| MCP server | `.mcp.json` | `.codex/config.toml` | you run `opencode mcp add` |
+| Stop hook | `.claude/settings.json` | `.codex/hooks.json` | none: it cannot refuse a stop |
+| Instructions | `.claude/skills/contexer/SKILL.md` | `AGENTS.md` | `AGENTS.md` |
+
+What you already have in those files is kept, each thing is added once,
+and a file Contexer cannot read is left alone. Codex reads a project's
+`.codex/` folder only once you trust the project. The agent starts
+Contexer by the name `contexer`, so it must be on the PATH the agent sees.
+
+The two sections below say what the server and the hook do.
+
+### The MCP server
 
 `contexer mcp` is a Model Context Protocol server on stdio. An agent you are
 already working in starts it and can then ask Contexer four things:
@@ -121,7 +142,7 @@ a terminal, with `contexer contract approve ID`. `contexer_verify` starts the
 app, runs your `[app] reset` if you have one, and writes its evidence under
 `.contexer/runs`; it changes nothing else.
 
-## Holding the agent to the checks (stop hook)
+### The stop hook
 
 An agent that may call a verifier may also not call it. A hook is code, so
 it does not depend on the agent remembering:

@@ -735,6 +735,14 @@ so nothing is replayed when nothing changed since a pass. It always exits
 0, and an exception inside Contexer lets the stop through. OpenCode has no
 hook that can refuse a stop, so nothing is written for it.
 
+`init --agent` (`agent_setup.set_up`) does three things per agent, each in
+the file that agent reads: the server (`.mcp.json`; a table appended to
+`.codex/config.toml`, which is parsed to check and never rewritten; for
+OpenCode a pointer to `opencode mcp add`, because where servers sit in its
+config changed between versions), the hook, and the instructions (a skill
+at `.claude/skills/contexer/SKILL.md`, or a block in `AGENTS.md` that
+starts with a marker so it is added once).
+
 `agents/base.py: CodingAgentAdapter.run_turn(workdir, prompt, *, session_id,
 timeout, budget_usd, on_progress) -> AgentTurn` with `status`
 (`completed`, `failed`, `timeout`, `budget_exceeded`, `cancelled`),

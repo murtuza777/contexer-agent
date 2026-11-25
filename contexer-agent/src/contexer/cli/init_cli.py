@@ -111,11 +111,11 @@ def init(
     issues: bool = typer.Option(False, "--issues", help="Also write a workflow that builds labelled issues into pull requests."),
     repo_root: Path = typer.Option(Path("."), "--repo-root", help="Repository root, for the workflow file."),
     agent: str | None = typer.Option(
-        None, "--agent", help="Also hold a coding agent you work in to the checks: claude-code, codex or opencode."
+        None, "--agent", help="Also set up a coding agent you work in (MCP server, stop hook, instructions): claude-code, codex or opencode."
     ),
 ) -> None:
     """Detect how the app starts, prepare .contexer/, and add the merge gate (--ci), the issue workflow (--issues)
-    or a stop hook for your coding agent (--agent)."""
+    or set up the coding agent you work in (--agent)."""
     from contexer.integrations.agent_setup import AGENTS
 
     if agent is not None and agent not in AGENTS:
@@ -156,7 +156,7 @@ def init(
             )
 
     if agent is not None:
-        _write_stop_hook(console, project, agent)
+        _set_up_agent(console, project, agent)
 
     console.print()
     rows = [] if startable else [("First", f"set {escape('[app]')} start in contexer.toml to the command that starts your app")]
@@ -167,28 +167,34 @@ def init(
     term.fields(console, rows, indent=0)
 
 
-def _write_stop_hook(console: Console, project: Path, agent: str) -> None:
-    """Have the agent's own harness run `contexer hook stop` when the agent says it is done."""
-    from contexer.integrations.agent_setup import install_stop_hook
+def _set_up_agent(console: Console, project: Path, agent: str) -> None:
+    """Register the MCP server, write the stop hook and the instructions for a coding agent."""
+    import shutil
 
-    done = install_stop_hook(project, agent)
-    if done.status == "unsupported":
-        term.note(console, "warn", escape(done.note))
-        return
-    assert done.path is not None
-    where = escape(term.path(done.path))
-    if done.status == "unreadable":
-        term.note(console, "warn", f"{where} is not JSON Contexer can read; left unchanged")
-        return
-    if done.status == "present":
-        console.print(f"{term.mark('pass')} {where} already runs the stop hook")
-    else:
-        console.print(
-            f"{term.mark('pass')} Wrote the stop hook to {where}: "
-            f"[dim]{agent} cannot end a turn while an approved check fails[/]"
-        )
-    if done.note:
-        console.print(f"  [dim]{escape(done.note)}[/]")
+    from contexer.integrations.agent_setup import set_up
+
+    names = {
+        "server": ("the MCP server", "has the MCP server"),
+        "hook": ("the stop hook", "runs the stop hook"),
+        "instructions": ("when to call Contexer", "says when to call Contexer"),
+    }
+    for done in set_up(project, agent):
+        wrote, has = names[done.what]
+        if done.path is None:  # nothing Contexer can write for this agent
+            term.note(console, "warn", escape(done.note))
+            continue
+        where = escape(term.path(done.path))
+        if done.status == "unreadable":
+            term.note(console, "warn", f"{where} is not a file Contexer can read; left unchanged")
+            continue
+        if done.status == "present":
+            console.print(f"{term.mark('pass')} {where} already {has}")
+        else:
+            console.print(f"{term.mark('pass')} Wrote {wrote} to {where}")
+        if done.note:
+            console.print(f"  [dim]{escape(done.note)}[/]")
+    if shutil.which("contexer") is None:
+        term.note(console, "warn", "`contexer` is not on your PATH; the agent starts it by that name, so install it where the agent can find it")
 
 
 def _write_workflow(console: Console, path: Path, text: str) -> None:
