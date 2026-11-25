@@ -60,6 +60,7 @@ def test_the_graph_has_the_nodes_the_design_names() -> None:
     assert set(NODES) == {
         "intent",
         "approve",
+        "plan",
         "coder_turn",
         "guard_snapshot",
         "ensure_app",
@@ -78,8 +79,10 @@ def test_the_graph_has_the_nodes_the_design_names() -> None:
     ("node", "state", "expected"),
     [
         ("intent", {}, "approve"),
-        ("approve", {}, "coder_turn"),
+        ("approve", {}, "plan"),  # before the first turn
+        ("approve", {"n": 1}, "coder_turn"),  # checks approved again after work began: no second brief
         ("approve", {"correction": "Deleting must ask first"}, "intent"),
+        ("plan", {}, "coder_turn"),
         ("coder_turn", {}, "guard_snapshot"),
         ("coder_turn", {"correction": "Deleting must ask first"}, "intent"),
         ("guard_snapshot", {}, "ensure_app"),
@@ -317,8 +320,103 @@ async def test_a_spent_budget_runs_the_loop_on_rules_alone(project: Path) -> Non
     model = AgentScript()
     agent = RecordingAgent([{"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS}])
     outcome = await _graph(project, agent, model=model, budget=budget).run(contract(project))
-    assert outcome.terminal == "succeeded" and model.total_calls == 0
+    assert outcome.terminal == "succeeded" and model.total_calls == 0  # no Planner, no Triage, no Diagnoser
     assert outcome.triage[0].source == "rules"
+
+
+# -- the Planner before the first turn ----------------------------------------------------------------
+
+_PLAN = {
+    "change": ["app.js", ".env", ".contexer/contracts/todo-basics.json", "../../etc/passwd"],
+    "read_first": ["index.html", "C:/Windows/win.ini"],
+    "reuse": ["remaining() already computes the count."],
+    "order": ["Render the list, then update the count in the same render."],
+    "edge_cases": ["Completing the last open task shows 0 left."],
+    "keep": ["The data-testid values in index.html."],
+}
+
+
+async def _template(tmp_path: Path) -> str:
+    """The first instruction of a run with no model, on a copy of the project with the same name."""
+    plain = copy_todo(tmp_path / "plain")
+    agent = RecordingAgent([{"app.js": GOOD_JS}])
+    await _graph(plain, agent).run(contract(plain))
+    return agent.prompts[0]
+
+
+async def test_the_planners_brief_follows_the_first_instruction_and_changes_none_of_it(project: Path, tmp_path: Path) -> None:
+    model = AgentScript(planner=[submit(**_PLAN)])
+    agent = RecordingAgent([{"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS}])
+    outcome = await _graph(project, agent, model=model).run(contract(project))
+
+    assert outcome.terminal == "succeeded"
+    template = await _template(tmp_path)
+    first = agent.prompts[0]
+    assert first.startswith(template) and first != template  # the goal, the checks and the rules as code wrote them
+    brief = first[len(template) :]
+    assert "written by a model" in brief and "Files to change: `app.js`" in brief and "Read first: `index.html`" in brief
+    assert "remaining() already computes the count." in brief and "0 left" in brief
+    for hidden in (".env", ".contexer", "passwd", "win.ini"):
+        assert hidden not in brief
+    assert "remaining() already computes the count." not in agent.prompts[1]  # a repair gets the evidence, not the plan again
+    assert len(model.seen["planner"]) == 1  # once, before the first turn
+    assert "complete-decrements" in str(model.seen["planner"][0][1].content)  # it was shown the checks
+    assert {usage.agent for usage in outcome.agents} >= {"planner", "triage", "diagnoser"}
+    planner = next(usage for usage in outcome.agents if usage.agent == "planner")
+    assert planner.steps == 1 and (planner.tokens_in, planner.tokens_out) == (10, 5)
+    assert (Path(outcome.run_dir) / "agents" / "planner.jsonl").is_file()
+
+
+@pytest.mark.parametrize(
+    "replies",
+    [
+        [RuntimeError("provider down")],
+        [submit(change="app.js")] * 6,  # never the right shape
+        [submit()],  # nothing to say
+        [submit(change=[".env", ".contexer/contracts/todo-basics.json"], read_first=["../outside.txt"])],  # nothing that may be said
+    ],
+)
+async def test_a_planner_with_no_usable_brief_leaves_the_first_instruction_exactly_as_it_was(project: Path, tmp_path: Path, replies: list[Any]) -> None:
+    model = AgentScript(planner=replies)
+    agent = RecordingAgent([{"app.js": GOOD_JS}])
+    outcome = await _graph(project, agent, model=model).run(contract(project))
+
+    assert outcome.terminal == "succeeded"
+    assert agent.prompts[0] == await _template(tmp_path)
+
+
+async def test_the_planner_can_be_turned_off(project: Path) -> None:
+    model = AgentScript(planner=[submit(**_PLAN)])
+    agent = RecordingAgent([{"app.js": GOOD_JS}])
+    settings = RunSettings(max_repair_rounds=2, plan=False)
+    outcome = await GraphController(project, agent, settings, runner=fast_runner(), model=model).run(contract(project))
+
+    assert outcome.terminal == "succeeded" and "planner" not in model.seen
+    assert "written by a model" not in agent.prompts[0]
+
+
+async def test_a_correction_that_changes_no_check_keeps_the_brief_and_pays_for_no_second_one(project: Path) -> None:
+    model = AgentScript(intent=[submit(behaviours=["Tasks can be added"], checks=[])], planner=[submit(**_PLAN)])
+    agent = RecordingAgent([{"app.js": GOOD_JS}])
+    pending = ["Keep it simple."]
+    controller = _graph(project, agent, model=model, corrections=lambda: pending.pop() if pending else None)
+    outcome = await controller.run(contract(project))
+
+    assert outcome.terminal == "succeeded", outcome.reason
+    assert len(model.seen["planner"]) == 1  # the checks did not change, so the brief for them stands
+    [first] = agent.prompts
+    assert "Keep it simple." in first and first.count("Files to change: `app.js`") == 1
+
+
+async def test_a_goal_that_is_drafted_and_approved_is_planned_before_it_is_built(project: Path) -> None:
+    (project / ".contexer" / "contracts" / f"{CONTRACT_ID}.json").unlink()
+    model = AgentScript(intent=[_intent_reply()], planner=[submit(**_PLAN)])
+    agent = RecordingAgent([{"app.js": GOOD_JS}])
+    outcome = await _graph(project, agent, model=model, ask=lambda _r: {"approve": True}).run_goal(GOAL)
+
+    assert outcome.terminal == "succeeded", outcome.reason
+    assert "Files to change: `app.js`" in agent.prompts[0] and agent.prompts[0].index("Rules:") < agent.prompts[0].index("Files to change")
+    assert [usage.agent for usage in outcome.agents][:2] == ["intent", "planner"]
 
 
 # -- intent and approval in the graph ---------------------------------------------------------------

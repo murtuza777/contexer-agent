@@ -18,6 +18,7 @@ from contexer.graph.state import LoopState
 NODES: tuple[str, ...] = (
     "intent",
     "approve",
+    "plan",
     "coder_turn",
     "guard_snapshot",
     "ensure_app",
@@ -47,7 +48,14 @@ def after_intent(state: LoopState) -> str:
 def after_approve(state: LoopState) -> str:
     if _ended(state):
         return "finalize"
-    return "intent" if _corrected(state) else "coder_turn"
+    if _corrected(state):
+        return "intent"
+    # The brief is for the first instruction. Checks approved again after work began go straight to the turn.
+    return "plan" if state.get("n", 0) == 0 else "coder_turn"
+
+
+def after_plan(state: LoopState) -> str:
+    return "finalize" if _ended(state) else "coder_turn"
 
 
 def after_coder_turn(state: LoopState) -> str:
@@ -105,6 +113,7 @@ def after_diagnose(state: LoopState) -> str:
 EDGES: dict[str, Callable[[LoopState], str]] = {
     "intent": after_intent,
     "approve": after_approve,
+    "plan": after_plan,
     "coder_turn": after_coder_turn,
     "guard_snapshot": after_guard_snapshot,
     "ensure_app": after_ensure_app,
@@ -119,7 +128,8 @@ EDGES: dict[str, Callable[[LoopState], str]] = {
 # Where each node can lead; the graph is compiled with exactly these.
 TARGETS: dict[str, tuple[str, ...]] = {
     "intent": ("approve", "finalize"),
-    "approve": ("coder_turn", "intent", "finalize"),
+    "approve": ("plan", "coder_turn", "intent", "finalize"),
+    "plan": ("coder_turn", "finalize"),
     "coder_turn": ("guard_snapshot", "intent", "finalize"),
     "guard_snapshot": ("ensure_app", "finalize"),
     "ensure_app": ("test", "finalize"),

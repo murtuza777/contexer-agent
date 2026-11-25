@@ -20,12 +20,14 @@ from pydantic import BaseModel
 from contexer.appserver import open_app
 from contexer.browser.freeze import Confirmed
 from contexer.browser.tools import BrowserSession
+from contexer.contract import ContractStore
 from contexer.crew import AgentSpec, run_agent
 from contexer.crew.base import MAX_IDENTICAL_CALLS, MAX_TOOL_CALLS_PER_REPLY
 from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
 from contexer.crew.challenger import challenge
 from contexer.crew.diagnoser import MAX_CAUSE_CHARS, Failure, RepairBrief, diagnose, fix_prompt, validated_brief
 from contexer.crew.intent import MAX_BEHAVIOUR_CHARS, MAX_BEHAVIOURS, run_intent
+from contexer.crew.planner import plan_task
 from contexer.crew.reviewer import review
 from contexer.crew.tester import Finding, run_tester
 from contexer.crew.triage import AttemptView, Situation, triage
@@ -348,9 +350,13 @@ async def test_each_agent_has_exactly_the_tools_in_the_audit_table(tmp_path: Pat
     reviewer = ScriptedChatModel(submit(notes=[]))
     await review(REVIEW_DIFF, work, reviewer, run_project_commands=False, run_dir=None)
     assert reviewer.bound_tools == ["read_file", "grep", "list_changed_files", "submit"]
+    planner = ScriptedChatModel(submit())
+    await plan_task(ContractStore(work).load("todo-basics"), planner, work, run_dir=None)
+    assert planner.bound_tools == ["read_file", "grep", "submit"]  # the Diagnoser's two, and no tool that writes
     assert _fingerprint(work) == before  # and none of them wrote a file
 
     audit = (Path(__file__).resolve().parents[1] / "docs" / "architecture.md").read_text(encoding="utf-8")
     table = audit[audit.index("### Tool audit") :]
     for name in [*browser_tools, "record_finding", "read_file", "grep", "list_changed_files"]:
         assert f"`{name}`" in table, f"{name} is missing from the tool audit table"
+    assert "| Planner | `read_file`, `grep` | No." in table, "the Planner is missing from the tool audit table"

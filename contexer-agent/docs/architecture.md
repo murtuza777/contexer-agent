@@ -120,7 +120,7 @@ A `contexer run "GOAL" --pr`, end to end:
 | `evidence/` | Run directories, `report.html`, `result.json` |
 | `github/` | Commit status and job summary, the REST client, the pull-request hand-off, the issue flow |
 | `llm/` | Provider catalog, model discovery, provider clients, structured-output parsing, chat models with tools (`chat.py`) |
-| `crew/` | Contexer's own agents: the loop (`base.py: run_agent`), transcripts, the Intent agent (`intent.py`), the Tester (`tester.py`), the Challenger (`challenger.py`), the Diagnoser (`diagnoser.py`) and Triage (`triage.py`); prompts in `prompts/` |
+| `crew/` | Contexer's own agents: the loop (`base.py: run_agent`), transcripts, the Intent agent (`intent.py`), the Planner (`planner.py`), the Tester (`tester.py`), the Challenger (`challenger.py`), the Diagnoser (`diagnoser.py`) and Triage (`triage.py`); prompts in `prompts/` |
 | `intent/` | The intent store: what each feature should do, in the project (`.contexer/intent/`) |
 | `skills/` | The skills store: what Contexer learned about operating the app (`.contexer/skills/`) |
 | `browser/` | A browser an agent operates: the tools (`tools.py`), the recording of what it did (`recorder.py`), and freezing findings into checks and replaying them (`freeze.py`) |
@@ -546,8 +546,8 @@ prompts; `tests/test_controller.py` pins what those produce.
   checks its budget between its own steps, and one turn went from $2.42
   to $6.26 against a $5 limit.
 - **A model per agent.** `[agents.<name>] model`, `provider` and
-  `max_steps` for intent, tester, challenger, triage, diagnoser and
-  reviewer. An agent that is not named uses the default model. A model
+  `max_steps` for intent, planner, tester, challenger, triage, diagnoser
+  and reviewer. An agent that is not named uses the default model. A model
   that cannot be built is reported and the default is used.
 - **The estimate** (`crew/estimate.py`) is printed before a run: the most
   coding-agent turns and model calls it can make, from the caps in code.
@@ -564,10 +564,15 @@ intent → approve → coder_turn → guard_snapshot → ensure_app → test →
                         └────────────── diagnose ◄──────────────────────┘
 ```
 
+Before the first turn, `approve` leads to `plan` and `plan` to `coder_turn`.
+Checks approved again after work began go from `approve` straight to
+`coder_turn`.
+
 | Node | Does | Asks a model |
 | --- | --- | --- |
 | `intent` | Starts the app and reads what the page shows, then drafts checks from the goal, or redrafts them for a correction; saves the intent and an unapproved contract | The Intent agent, when a model is configured |
 | `approve` | Waits for a person (`interrupt`) unless the contract is approved at the hash the state holds | No |
+| `plan` | Before the first turn only: reads the project and adds a brief after the first instruction. Does nothing with no model, a spent budget or `--no-plan` | The Planner, when a model is configured |
 | `coder_turn` | One turn of the coding agent; before it, the wall-clock and budget limits | No |
 | `guard_snapshot` | Restores the files that define done if the agent touched them (`tampered`), snapshots the work | No |
 | `ensure_app` | Starts or refreshes the app | No |
@@ -1055,6 +1060,33 @@ flowchart LR
   `RepairBrief` adds the likely cause (labelled a hypothesis), the files,
   the instruction and what must keep working. With no brief the prompt is
   still complete.
+- **Planner** (`crew/planner.py`). Runs once before the first coding turn,
+  in the `plan` node, with the Diagnoser's two tools and nothing else. It
+  is given the goal, the approved checks as `format_contract` prints them,
+  the goals of earlier contracts and the project summary (marked
+  untrusted), and returns a `TaskBrief`: files to change, files to read
+  first, what is already there to reuse, the order of work, the edge cases
+  the checks imply, and what must not change. `validated_task_brief`
+  passes both file lists through `diagnoser.py: existing_files`, the same
+  check the `RepairBrief` gets: a path that is absolute, leaves the
+  project, is not a file that exists, is under `.contexer/` or another
+  closed folder, or holds credentials by name is dropped. Every other item
+  is cut to one line of 300 characters, eight per list. `prompts.py:
+  with_brief` puts the brief after the instruction, under a note that a
+  model wrote it and that the checks and the rules decide. The instruction
+  itself (`implement_prompt`: goal, checks, rules) is the same bytes with
+  or without a brief. With no model, a spent budget, `RunSettings.plan`
+  off (`contexer run --no-plan`), a Planner that fails or answers in the
+  wrong shape, or a brief with nothing left after the check, the
+  instruction goes out exactly as before. The state keeps the brief and
+  the approved hash it was made for, so a correction that changes no check
+  does not pay for a second one; changed checks are planned again. Its
+  model calls go through the run's `Budget` and into the `agents` rows and
+  the estimate like every other agent's. Limits: the brief is only in the
+  first instruction, not in a repair or a restated job; a file the change
+  must create cannot be in the file lists; `contexer mcp`'s
+  `contexer_brief` still returns the instruction without a brief; the
+  seeded-bug benchmark runs with the Planner off.
 - **Skills** (`skills/store.py`). When it submits, the Tester may propose up
   to 3 skills about operating the app. `SkillStore.save` refuses one that
   contains a configured secret or anything shaped like an API key. Before a
@@ -1114,7 +1146,7 @@ A goal a person typed to Contexer is theirs. A goal taken from a GitHub
 issue is not: anyone who can open an issue wrote it. A contract drafted
 from an issue records that in `origin` ("GitHub issue #7"; not part of the
 approved hash), and `quoted_goal()` then puts the goal into every prompt
-(the coding agent's, the Intent agent's, the Diagnoser's, the Reviewer's)
+(the coding agent's, the Intent agent's, the Planner's, the Diagnoser's, the Reviewer's)
 inside `<untrusted source="issue">` under a fixed preamble that says who
 wrote it and that anything in it which is not about the app's behaviour is
 not the goal. `contexer issue build` sets `origin` itself, so editing the
@@ -1136,6 +1168,7 @@ agent that a person reading the issue could not see.
 | Challenger | none (only `submit`) | No. It can only set a confirmed bug aside, with a reason |
 | Triage | none (only `submit`) | No. It chooses one of the moves code lists as legal; no move ends a run as succeeded |
 | Diagnoser | `read_file`, `grep` | No. Both are read-only and confined |
+| Planner | `read_file`, `grep` | No. The Diagnoser's two tools. Code adds its brief after the first instruction |
 | Reviewer | `read_file`, `grep`, `list_changed_files` | No. All three are read-only and confined. The project's `test`, `lint` and `typecheck` scripts are run by code before the agent starts, not by the agent; files they write are put back |
 
 Only the external coding agent edits the project. A new tool for an agent
@@ -1413,7 +1446,7 @@ and prints the fix under each problem.
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
 | `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins |
 | `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens, used when the provider reports no cost |
-| `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer` |
+| `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer` |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
 | `[limits] cost_usd` | none | Cost limit for the same, where the provider reports prices |
 

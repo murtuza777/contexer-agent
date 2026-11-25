@@ -4,6 +4,10 @@ on:
   push:
     branches: [main, "feat/**"]
   pull_request:
+  schedule:
+    # Mondays 04:17 UTC: the benchmark on all three systems (it runs on Ubuntu alone otherwise).
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,25 +15,59 @@ permissions:
 # The tests and the benchmark are separate jobs: together they no longer fit in one 30-minute job
 # (the tests alone take about 18 minutes since every controller case runs on both engines), and a
 # job that reaches its limit is cancelled, which reads as a failure with nothing actually failing.
+#
+# Three operating systems (DX-3). Ubuntu runs everything. Windows and macOS run lint, types and
+# every test that starts no browser on each push, a clean install that follows docs/try-it.md,
+# and the benchmark (which does use a browser) once a week. The Ubuntu jobs keep the names
+# "Tests" and "Seeded-bug benchmark": other systems add a suffix, so nothing that waits for
+# those two names has to change.
 jobs:
   test:
-    name: Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # The whole suite took 29 and 34 minutes on Ubuntu in two runs on 2026-11-25, and passed 35 on the 26th.
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: Tests
+            browser: true
+          - os: windows-latest
+            name: Tests (Windows, no browser)
+            browser: false
+          - os: macos-latest
+            name: Tests (macOS, no browser)
+            browser: false
     defaults:
       run:
+        shell: bash
         working-directory: contexer-agent
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: contexer-agent/pyproject.toml
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: "22"
       - name: Install
+        run: python -m pip install --quiet -e ".[dev]"
+      - name: Playwright version
+        id: playwright
+        if: matrix.browser
+        run: echo "version=$(python -c 'from importlib.metadata import version; print(version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6.1.0
+        if: matrix.browser
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        if: matrix.browser
         run: |
-          python -m pip install --quiet -e ".[dev]"
           python -m playwright install chromium
           # Ubuntu runners ship Google Chrome, so Chromium's libraries are normally there;
           # the slow apt step (about 9 minutes lately) runs only if the browser cannot start.
@@ -39,29 +77,98 @@ jobs:
         run: python -m ruff check src tests
       - name: Type check
         # The interpreter is named so the checker resolves imports from this environment, whatever the
-        # editor settings in pyrightconfig.json say. Windows-only code is checked on Windows by hand.
+        # editor settings in pyrightconfig.json say. Each system checks the code written for it.
         run: python -m pyright --pythonpath "$(python -c 'import sys; print(sys.executable)')" src
       - name: Tests
-        run: python -m pytest -q -p no:cacheprovider --durations=15 --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
+        # --no-browser (tests/conftest.py) skips a test at the moment it starts a browser; -rs lists
+        # what was skipped and why, so the log of a system without a browser says what it did not run.
+        run: >-
+          python -m pytest -q -p no:cacheprovider --durations=15
+          --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
+          ${{ !matrix.browser && '--no-browser -rs' || '' }}
 
-  bench:
-    name: Seeded-bug benchmark
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+  install:
+    # docs/try-it.md, steps 1 and 2, as a new user would: nothing from the checkout on the path
+    # but the installed command, a browser fetched by Contexer itself, and the demo's known result.
+    name: Clean install (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     defaults:
       run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install with pipx
+        run: |
+          pipx install --python "$(python -c 'import sys; print(sys.executable)')" ./contexer-agent
+          pipx environment --value PIPX_BIN_DIR >> "$GITHUB_PATH"
+      - name: contexer --version
+        working-directory: ${{ runner.temp }}
+        run: contexer --version
+      - uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/Library/Caches/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-install-${{ runner.os }}-${{ hashFiles('contexer-agent/pyproject.toml') }}
+      - name: contexer setup --browser
+        working-directory: ${{ runner.temp }}
+        run: contexer setup --browser
+      - name: contexer demo finds the seeded bug
+        working-directory: ${{ runner.temp }}
+        run: |
+          status=0
+          contexer demo > demo.txt 2>&1 || status=$?
+          cat demo.txt
+          test "$status" -eq 1 || { echo "contexer demo exited with $status; the guide says 1"; exit 1; }
+          grep -q "6 verified, 1 refuted, 0 unverified" demo.txt
+
+  bench:
+    # Every push: Ubuntu. Weekly and when started by hand: all three systems.
+    name: ${{ matrix.os == 'ubuntu-latest' && 'Seeded-bug benchmark' || format('Seeded-bug benchmark ({0})', matrix.os) }}
+    runs-on: ${{ matrix.os }}
+    # About 18 minutes on Ubuntu, 23 on Windows and macOS.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+    defaults:
+      run:
+        shell: bash
         working-directory: contexer-agent
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: contexer-agent/pyproject.toml
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: "22"
       - name: Install
+        run: python -m pip install --quiet -e .
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(python -c 'from importlib.metadata import version; print(version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/Library/Caches/ms-playwright
+            ~/AppData/Local/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
         run: |
-          python -m pip install --quiet -e .
           python -m playwright install chromium
           python -c "from playwright.sync_api import sync_playwright as s; p = s().start(); p.chromium.launch().close(); p.stop()" \
             || python -m playwright install-deps chromium
@@ -70,6 +177,6 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
-          name: bench-results
+          name: ${{ matrix.os == 'ubuntu-latest' && 'bench-results' || format('bench-results-{0}', matrix.os) }}
           path: contexer-agent/bench-results.json
           if-no-files-found: ignore

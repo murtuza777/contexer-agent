@@ -61,7 +61,7 @@ The same groups as `contexer --help`:
 | `contexer test --again` | Replays the checks the last run saved, with no model; explores further only when they pass |
 | `contexer test --correct "..."` | Records what you meant ("deleting should ask first") in the intent and tests again |
 | `contexer run "GOAL"` / `--contract ID` | Approve the checklist, drive the coding agent, prove, repair, and keep the best attempt |
-| `contexer run --resume RUN` | Continue a run that was stopped; `--correct "..."` changes what done means first. `--max-usd N` is one budget for the whole run, `--no-review` skips the review of the diff, `--json` prints the run as one event per line for CI, `--verbose` keeps the agent's tool calls in the output |
+| `contexer run --resume RUN` | Continue a run that was stopped; `--correct "..."` changes what done means first. `--max-usd N` is one budget for the whole run, `--no-review` skips the review of the diff, `--no-plan` skips the brief before the first turn, `--json` prints the run as one event per line for CI, `--verbose` keeps the agent's tool calls in the output |
 | `contexer run ... --pr` / `--issue N` | End in a pull request with the evidence; with `--issue` the goal comes from the issue and the PR closes it |
 | `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
 | `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |
@@ -307,5 +307,8 @@ The suite (987 tests, about half an hour on a laptop) runs real Chromium against
 for the dev-server tests, and real git for snapshots. It needs no network and
 no model. The benchmark's React + Vite fixture runs `npm ci` once, so the
 benchmark needs network the first time. Live-service tests skip themselves when their prerequisites are
-missing. CI runs both commands on Linux; see
+missing. CI runs both commands on Linux. On Windows and macOS it runs the
+tests that start no browser (`pytest --no-browser` skips a test at the moment
+it starts one), installs the package cleanly and runs `contexer demo`, and
+runs the benchmark once a week; see
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
