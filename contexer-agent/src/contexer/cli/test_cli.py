@@ -472,7 +472,9 @@ class _Job:
             # Replay shows that a bug's steps end badly, not why. A second look sets aside the ones that are the
             # tester's doing; it can only remove, and what it removes is shown with the reason.
             with self.console.status("[dim]Challenging the confirmed bugs...[/dim]"):
-                challenged = await challenge(report.bugs, spec.as_text(), chat, run_dir=self.run_dir.path, budget=self.budget)
+                challenged = await challenge(
+                    report.bugs, spec.as_text(), chat, run_dir=self.run_dir.path, budget=self.budget, secrets=secrets
+                )
             if challenged.status != "skipped":
                 self._spent("challenger", challenged.steps, challenged.tokens_in, challenged.tokens_out, challenged.cost_usd)
             report.bugs = challenged.standing
@@ -578,6 +580,7 @@ class _Job:
                 assume=assume,
                 run_dir=self.run_dir.path,
                 budget=self.budget,
+                secrets=self.credentials,
             )
         self._spent("intent", first.steps, first.tokens_in, first.tokens_out, first.cost_usd)
         spec, checks, dropped = first.spec, first.checks, list(first.dropped)
@@ -599,6 +602,7 @@ class _Job:
                     ui_snapshot=snapshot,
                     run_dir=self.run_dir.path,
                     budget=self.budget,
+                    secrets=self.credentials,
                 )
             self._spent("intent", second.steps, second.tokens_in, second.tokens_out, second.cost_usd)
             # Asked once: whatever the agent would ask now is left for `--correct`.

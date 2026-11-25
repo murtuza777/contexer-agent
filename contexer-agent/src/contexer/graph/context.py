@@ -19,11 +19,14 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from contexer.agents.base import CodingAgentAdapter
 from contexer.appserver import RunningApp
+from contexer.browser.tools import sign_in_secrets
 from contexer.checkpoint import ShadowRepo
+from contexer.config.project import ProjectConfigError, load_project_config
 from contexer.contract import Contract, ContractStore
 from contexer.controller.models import RunOutcome, RunSettings
 from contexer.controller.shared import ContractGuard
 from contexer.crew.budget import Budget
+from contexer.crew.transcript import environment_secrets
 from contexer.evidence.rundir import RunDir, write_whole
 from contexer.gate.models import RunResult
 from contexer.intent.store import IntentStore
@@ -104,6 +107,18 @@ class RunContext:
 
     def model_for(self, agent: str) -> BaseChatModel | None:
         return self.models.get(agent) or self.model
+
+    def secrets(self) -> list[str]:
+        """What no agent of this run may be sent: the passwords and codes ``[auth]`` types, and the keys in the environment.
+
+        The same list ``contexer test`` gives its agents. A page, a diff or a log can show the test
+        account's password, and only this list tells the masker what it is.
+        """
+        try:
+            typed = sign_in_secrets(load_project_config(self.project).auth)
+        except ProjectConfigError:
+            typed = []
+        return [*typed, *environment_secrets()]
 
     def spent(self, coding_usd: float) -> str:
         """Tell the budget what the coding agent has spent; returns why the whole run must stop, or ''."""

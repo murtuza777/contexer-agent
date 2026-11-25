@@ -107,11 +107,13 @@ async def run_intent(
     run_dir: Path | None = None,
     budget: Budget | None = None,
     origin: str = "",
+    secrets: Sequence[str] = (),
 ) -> IntentResult:
     """Write or update the intent for ``goal``.
 
     With ``correction``, the stored intent is updated and only the checks the
-    correction affects change. With ``assume``, nothing is asked.
+    correction affects change. With ``assume``, nothing is asked. ``secrets`` are
+    masked in what the model is sent (the page may show the ``[auth]`` password).
     """
     spec = stored or IntentSpec(id=slugify(goal), goal=goal.strip())
     if correction and correction.strip():
@@ -128,7 +130,7 @@ async def run_intent(
         max_output_tokens=_MAX_OUTPUT_TOKENS,
     )
     task = _task(spec, existing, repo_summary, ui_snapshot, updating=bool(correction), assume=assume, origin=origin)
-    ran = await run_agent(agent, model, [], task, run_dir=run_dir, budget=budget)
+    ran = await run_agent(agent, model, [], task, run_dir=run_dir, secrets=list(secrets), budget=budget)
     result.status, result.error, result.steps = ran.status, ran.error, ran.steps
     result.tokens_in, result.tokens_out, result.cost_usd = ran.tokens_in, ran.tokens_out, ran.cost_usd
     if not isinstance(ran.output, IntentDraft):
@@ -157,7 +159,7 @@ async def run_intent(
             timeout=_TIMEOUT,
             max_output_tokens=_MAX_OUTPUT_TOKENS,
         )
-        again = await run_agent(fixing, model, [], _fix_task(invalid), run_dir=run_dir, budget=budget)
+        again = await run_agent(fixing, model, [], _fix_task(invalid), run_dir=run_dir, secrets=list(secrets), budget=budget)
         result.steps += again.steps
         result.tokens_in += again.tokens_in
         result.tokens_out += again.tokens_out

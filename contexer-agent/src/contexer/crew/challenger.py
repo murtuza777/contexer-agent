@@ -75,8 +75,12 @@ async def challenge(
     *,
     run_dir: Path | None = None,
     budget: Budget | None = None,
+    secrets: Sequence[str] = (),
 ) -> ChallengeResult:
-    """Review ``confirmed`` bugs. Returns the ones that stand and the ones set aside, in their original order."""
+    """Review ``confirmed`` bugs. Returns the ones that stand and the ones set aside, in their original order.
+
+    ``secrets`` are masked in what the model is sent: the evidence is what the page showed.
+    """
     items = list(confirmed)
     result = ChallengeResult(standing=items)
     if not items or (budget is not None and budget.exhausted()):
@@ -84,7 +88,7 @@ async def challenge(
     spec = AgentSpec(
         name="challenger", system_prompt=challenger_prompt(), output_schema=Verdicts, max_steps=3, timeout=180.0
     )
-    ran = await run_agent(spec, model, [], _task(items, intent), run_dir=run_dir, budget=budget)
+    ran = await run_agent(spec, model, [], _task(items, intent), run_dir=run_dir, secrets=list(secrets), budget=budget)
     result.status, result.error, result.steps = ran.status, ran.error, ran.steps
     result.tokens_in, result.tokens_out, result.cost_usd = ran.tokens_in, ran.tokens_out, ran.cost_usd
     if not isinstance(ran.output, Verdicts):

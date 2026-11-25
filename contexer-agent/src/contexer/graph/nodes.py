@@ -101,6 +101,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             run_dir=ctx.run.path,
             budget=ctx.budget,
             origin=(existing.origin if existing is not None else "") or state.get("goal_origin", ""),
+            secrets=ctx.secrets(),
         )
         ctx.intents.save(result.spec)
         ctx.intents.save_checks(result.spec.id, result.checks)
@@ -446,6 +447,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             run_dir=ctx.run.path,
             budget=ctx.budget,
             max_steps=_steps(ctx, "reviewer", DEFAULT_REVIEW_STEPS),
+            secrets=ctx.secrets(),
         )
         # A project command may write files (a formatter, a snapshot test). What passed is the snapshot.
         if ctx.shadow.changed_paths(passed, ctx.shadow.snapshot()):
@@ -492,7 +494,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             return {"correction": correction, "move": ""}
         n = state["n"]
         situation = _situation(ctx, state)
-        decision = await triage(situation, ctx.model_for("triage"), run_dir=ctx.run.path, budget=ctx.budget)
+        decision = await triage(situation, ctx.model_for("triage"), run_dir=ctx.run.path, budget=ctx.budget, secrets=ctx.secrets())
         updates: dict[str, Any] = {
             "move": decision.move,
             "decisions": [*state.get("decisions", []), decision.model_dump(mode="json")],
@@ -597,6 +599,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 run_dir=ctx.run.path,
                 budget=ctx.budget,
                 max_steps=_steps(ctx, "diagnoser", DEFAULT_DIAGNOSER_STEPS),
+                secrets=ctx.secrets(),
             )
             updates["agents"] = _used(state, "diagnoser", found.steps, found.tokens_in, found.tokens_out, _cost(ctx, found))
             section = brief_section(found.brief)
