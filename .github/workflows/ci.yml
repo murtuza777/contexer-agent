@@ -25,7 +25,8 @@ jobs:
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    # The whole suite took 29 and 34 minutes on Ubuntu in two runs on 2026-11-25.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -79,11 +80,12 @@ jobs:
         # editor settings in pyrightconfig.json say. Each system checks the code written for it.
         run: python -m pyright --pythonpath "$(python -c 'import sys; print(sys.executable)')" src
       - name: Tests
-        # --no-browser (tests/conftest.py) skips a test at the moment it starts a browser.
+        # --no-browser (tests/conftest.py) skips a test at the moment it starts a browser; -rs lists
+        # what was skipped and why, so the log of a system without a browser says what it did not run.
         run: >-
           python -m pytest -q -p no:cacheprovider --durations=15
           --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
-          ${{ !matrix.browser && '--no-browser' || '' }}
+          ${{ !matrix.browser && '--no-browser -rs' || '' }}
 
   install:
     # docs/try-it.md, steps 1 and 2, as a new user would: nothing from the checkout on the path
@@ -133,11 +135,12 @@ jobs:
     # Every push: Ubuntu. Weekly and when started by hand: all three systems.
     name: ${{ matrix.os == 'ubuntu-latest' && 'Seeded-bug benchmark' || format('Seeded-bug benchmark ({0})', matrix.os) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # About 18 minutes on Ubuntu, 23 on Windows and macOS.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request') && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
     defaults:
       run:
         shell: bash
