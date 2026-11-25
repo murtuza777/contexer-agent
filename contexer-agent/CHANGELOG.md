@@ -26,6 +26,11 @@ and [the tickets](docs/production/tickets.md).
   files are kept. It warns when `contexer` is not on the PATH.
 - A `contexer_verify` that passes every approved contract is remembered, so the stop hook does not
   replay the same files again when the agent stops.
+- **[What Contexer sends, and what it does not do](docs/data-and-limits.md).** One page for a
+  security review: which command calls which model, what each prompt contains, what is kept out
+  and where that stops, every other network destination, what stays on disk, and what Contexer
+  does not control about the coding agent it starts. Each row names the code behind it. No code
+  changed.
 
 ### Fixed
 
