@@ -110,8 +110,16 @@ def init(
     ci: bool = typer.Option(False, "--ci", help="Also write a GitHub Actions workflow for the gate."),
     issues: bool = typer.Option(False, "--issues", help="Also write a workflow that builds labelled issues into pull requests."),
     repo_root: Path = typer.Option(Path("."), "--repo-root", help="Repository root, for the workflow file."),
+    agent: str | None = typer.Option(
+        None, "--agent", help="Also hold a coding agent you work in to the checks: claude-code, codex or opencode."
+    ),
 ) -> None:
-    """Detect how the app starts, prepare .contexer/, and add the merge gate (--ci) or issue (--issues) workflows."""
+    """Detect how the app starts, prepare .contexer/, and add the merge gate (--ci), the issue workflow (--issues)
+    or a stop hook for your coding agent (--agent)."""
+    from contexer.integrations.agent_setup import AGENTS
+
+    if agent is not None and agent not in AGENTS:
+        raise typer.BadParameter(f"'{agent}' is not an agent Contexer knows. Choose one of: {', '.join(AGENTS)}.", param_hint="--agent")
     console = Console()
     project = project_dir.resolve()
     context = RepositoryInspector().inspect(project)
@@ -147,6 +155,9 @@ def init(
                 "the file says how.[/]"
             )
 
+    if agent is not None:
+        _write_stop_hook(console, project, agent)
+
     console.print()
     rows = [] if startable else [("First", f"set {escape('[app]')} start in contexer.toml to the command that starts your app")]
     rows += [
@@ -154,6 +165,30 @@ def init(
         ("Later", "contexer verify --all [dim]· replay every approved check, with no model[/]"),
     ]
     term.fields(console, rows, indent=0)
+
+
+def _write_stop_hook(console: Console, project: Path, agent: str) -> None:
+    """Have the agent's own harness run `contexer hook stop` when the agent says it is done."""
+    from contexer.integrations.agent_setup import install_stop_hook
+
+    done = install_stop_hook(project, agent)
+    if done.status == "unsupported":
+        term.note(console, "warn", escape(done.note))
+        return
+    assert done.path is not None
+    where = escape(term.path(done.path))
+    if done.status == "unreadable":
+        term.note(console, "warn", f"{where} is not JSON Contexer can read; left unchanged")
+        return
+    if done.status == "present":
+        console.print(f"{term.mark('pass')} {where} already runs the stop hook")
+    else:
+        console.print(
+            f"{term.mark('pass')} Wrote the stop hook to {where}: "
+            f"[dim]{agent} cannot end a turn while an approved check fails[/]"
+        )
+    if done.note:
+        console.print(f"  [dim]{escape(done.note)}[/]")
 
 
 def _write_workflow(console: Console, path: Path, text: str) -> None:

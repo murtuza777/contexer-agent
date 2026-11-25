@@ -603,6 +603,16 @@ an agent a person is already using calls Contexer (not built).
   agent cannot end its turn until the contract passes or the cap is
   reached.
 - **Tests.** The hook script run against a failing and a passing project.
+- **Built 2026-11-26**, as a command (`contexer hook stop`) and not a
+  shell script around `contexer verify --json`, so it is the same on
+  Windows. Claude Code and Codex are written for; OpenCode has no hook
+  that can refuse a stop (its issue asking for one was closed as not
+  planned) and `init` says so. Added beyond the ticket: nothing is
+  replayed when nothing changed since a pass. Acceptance run made on
+  2026-11-26 in Claude Code 2.1.325 on the todo fixture with the count
+  bug: told only to reply "done", the agent was refused once, fixed
+  `app.js`, and the second replay passed (6 turns). Open: no run inside
+  Codex; the hook command assumes `contexer` is on the agent's PATH.
 
 ### BRIEF-1 The first instruction is a brief, not a template
 - **Type.** Agent architecture. **Priority.** P1. **Effort.** M.

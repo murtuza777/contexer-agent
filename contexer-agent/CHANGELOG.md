@@ -13,6 +13,12 @@ and [the tickets](docs/production/tickets.md).
   (replay it in a browser and say what was seen), `contexer_brief` (the instruction for it) and
   `contexer_status` (the last run). No tool approves a contract, edits one or changes a setting, and
   a contract is named by its id, never by a path. Adds the dependency `mcp>=2.3,<3.0`.
+- **A stop hook: the agent cannot say "done" while an approved check fails.**
+  `contexer init --agent claude-code` (or `codex`) adds a Stop hook to the agent's project settings,
+  keeping what is there. The hook runs `contexer hook stop`, which replays the approved contracts
+  and refuses the stop with what the browser saw. After three refusals in a row it lets the stop
+  through and says the work is not proven. Nothing is replayed when no file and no contract changed
+  since the last pass. OpenCode has no hook that can refuse a stop, and `init` says so.
 
 ### Fixed
 

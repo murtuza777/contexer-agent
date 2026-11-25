@@ -30,18 +30,15 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from contexer import __version__
-from contexer.appserver import AppStartError, open_app
 from contexer.checkpoint.lock import LOCK_FILE, RunLocked, run_lock
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.contract.store import CONTEXER_DIR
 from contexer.controller.prompts import implement_prompt
-from contexer.evidence import RunDir, write_evidence
 from contexer.evidence.rundir import RUNS_DIR
-from contexer.gate import GateDecision, RunResult
-from contexer.gate.session import VerificationSession
+from contexer.gate import RunResult
+from contexer.integrations.replay import replay, verdict
 from contexer.verification.models import format_contract
 from contexer.verification.runner import CheckRunner
-from contexer.verification.verifier import Verifier
 from contexer.workflow.inspector import RepositoryInspector
 
 TOOL_NAMES = ("contexer_checks", "contexer_verify", "contexer_brief", "contexer_status")
@@ -93,7 +90,7 @@ def build_server(project_dir: str | Path, *, runner: CheckRunner | None = None) 
             result = await anyio.to_thread.run_sync(lambda: _replay_locked(project, chosen, make_runner))
         except RunLocked as exc:
             raise ToolError(f"Not replayed: {exc}") from None
-        return _verdict(result)
+        return verdict(result, then="Then call contexer_verify again.")
 
     @server.tool(name="contexer_brief", annotations=reads, structured_output=False)
     def contexer_brief(contract: str = "") -> str:
@@ -196,51 +193,7 @@ def _checks(project: Path, contract: str) -> str:
 def _replay_locked(project: Path, contracts: list[Contract], make_runner: Callable[[], CheckRunner]) -> RunResult:
     """Replay in a thread of its own: starting the app blocks, and the server must go on answering."""
     with run_lock(project, "contexer mcp (verify)"):
-        return asyncio.run(_replay(project, contracts, make_runner()))
-
-
-async def _replay(project: Path, contracts: list[Contract], runner: CheckRunner) -> RunResult:
-    run = RunDir.create(project)
-    session = VerificationSession(project, run, verifier=Verifier(llm_provider=None, runner=runner))
-    try:
-        with open_app(project, None, log_path=run.server_log) as app:
-            await session.observe(app)
-            result = await session.verify(app, contracts, require_approval=True, judged_policy="advisory")
-    except AppStartError as exc:
-        decision = GateDecision(outcome="error", reasons=[str(exc)])
-        result = session.result(None, [], decision, require_approval=True, error=str(exc))
-        result.server_log_tail = exc.log_tail
-    write_evidence(result, run)
-    return result
-
-
-def _verdict(result: RunResult) -> str:
-    decision = result.decision
-    lines = [decision.headline()]
-    failures: list[str] = []
-    for held in result.contracts:
-        for item in held.verification.criteria_results if held.verification is not None else []:
-            line = f"- [{item.criterion_id}] {item.verdict}: {item.description}"
-            if item.check_result is not None and item.check_result.flaky:
-                line += " (flaky: it failed on the first replay and passed on the second)"
-            lines.append(line)
-            if not item.passed:
-                failures.append(item.check_result.failure_report() if item.check_result is not None else f"[{item.criterion_id}] {item.evidence}")
-        if held.error:
-            failures.append(f"[{held.contract.id}] {held.error}")
-    if decision.outcome == "pass":
-        lines.append("Every approved check passed in the browser.")
-    else:
-        lines.append("Not done: fix what is below and call contexer_verify again. Do not edit the checks.")
-        lines.extend(reason for reason in decision.reasons if reason not in lines)
-        if failures:
-            lines.append("\nWhat the browser saw:")
-            lines.extend(failures)
-        if result.server_log_tail:
-            lines.append("\nThe end of the app's log:\n" + result.server_log_tail[-2000:])
-    if result.run_dir:
-        lines.append(f"\nEvidence: {Path(result.run_dir) / 'report.html'}")
-    return "\n".join(lines)
+        return asyncio.run(replay(project, contracts, make_runner()))
 
 
 def _status(project: Path, contract: str) -> str:
