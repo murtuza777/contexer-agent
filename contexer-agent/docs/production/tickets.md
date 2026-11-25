@@ -706,8 +706,8 @@ an agent a person is already using calls Contexer (not built).
 - **Accept.** Green on three systems; the guide's commands run as written.
 - **Built 2026-11-26**, in `ci.yml` and `tests/conftest.py`
   (`pytest --no-browser`). Green on all three: lint, types, the tests
-  that start no browser (807 of 1,080 on Windows, 806 on macOS; all 1,080
-  on Ubuntu), and a clean pipx install that runs steps 1 and 2 of the
+  that start no browser (824 of 1,099 on Windows, 823 on macOS; 1,094 on
+  Ubuntu, where 5 skip for other reasons), and a clean pipx install that runs steps 1 and 2 of the
   guide. The benchmark is 46 of 46 on Ubuntu and Windows. Open: **on macOS
   the benchmark missed `shop/load-crash`** in the one run it has had (all 8
   checks passed on the buggy app, a false pass), so the weekly macOS
