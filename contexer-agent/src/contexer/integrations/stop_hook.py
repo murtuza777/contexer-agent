@@ -108,6 +108,27 @@ def main(raw: str, project_dir: str | Path | None, *, cwd_from_env: str = "", ma
         return json.dumps({"systemMessage": f"Contexer's stop hook failed, so nothing was checked: {text}"})
 
 
+def whole_fingerprint(project: Path, contracts: list[Contract]) -> str:
+    """The fingerprint to record when ``contracts`` pass, if they are every approved contract; else empty.
+
+    For a caller that replays on the agent's request (``contexer_verify``): a pass of everything that defines
+    done need not be replayed again when the agent stops. Take it before the replay, under the run lock.
+    """
+    try:
+        approved = [c for c in ContractStore(project).list() if c.status == "approved"]
+    except ContractError:
+        return ""
+    if sorted(c.id for c in approved) != sorted(c.id for c in contracts):
+        return ""
+    return _fingerprint(project, approved)
+
+
+def record_pass(project: Path, fingerprint: str) -> None:
+    """Note that the files and contracts behind ``fingerprint`` passed, keeping whose session it is."""
+    if fingerprint:
+        _write_state(project, str(_read_state(project).get("session") or ""), 0, fingerprint, "pass")
+
+
 # -- internals ----------------------------------------------------------------------------------------
 
 

@@ -24,6 +24,8 @@ and [the tickets](docs/production/tickets.md).
   the agent's instructions (a skill for Claude Code, a marked section of `AGENTS.md` for Codex and
   OpenCode): read the checks first, verify before saying done, never edit `.contexer/`. Existing
   files are kept. It warns when `contexer` is not on the PATH.
+- A `contexer_verify` that passes every approved contract is remembered, so the stop hook does not
+  replay the same files again when the agent stops.
 
 ### Fixed
 
