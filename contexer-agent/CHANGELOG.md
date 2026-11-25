@@ -16,6 +16,32 @@ and [the tickets](docs/production/tickets.md).
 
 ### Fixed
 
+- **What the app prints is masked before it is kept.** A dev server that printed a key or the test
+  account's password at start-up had it written to `server.log` and `result.json`, shown in the
+  report, and sent to the model provider in the Diagnoser's task and to the coding agent in the
+  repair prompt. Each line is now masked as it is recorded, so every reader of the log gets the
+  masked text.
+- **The task an agent is given is masked, not only what its tools return.** The diff, the failure
+  report and the log tail in the first message of an agent's prompt went to the provider as built.
+  A task with no secret in it is sent unchanged, byte for byte. For that to hold, the `sk-...` key
+  shape now has to start a word: a test id or a class name such as `task-remaining-count-label-wide`
+  was masked from `sk-` on, in tool results and transcripts too.
+- **Check drafting without tools marks and masks what the app says.** The page, the project summary
+  and the front-end source excerpt went to the drafting model with no `<untrusted>` marker and no
+  masking (`contexer verify` with a goal, `contexer contract draft`, and `contexer issue draft` and
+  `contexer run` when no crew model is configured). They are now wrapped and masked like in every
+  agent's task, and the injection tests cover this channel.
+- **In `contexer run`, the agents know the `[auth]` password.** The Intent agent, Triage, the
+  Diagnoser and the Reviewer were given no list of secrets, so a page, a diff or a failure that
+  showed the test account's password sent it to the provider. They get the same list `contexer test`
+  gives its Tester. The Intent agent and the Challenger of `contexer test`, and the Intent agent of
+  `contexer issue draft`, get it too.
+- **`contexer run --issue N` reads the issue as GitHub shows it.** It built the goal from the raw
+  title and body, so an HTML comment or invisible characters in an issue reached the agents unseen
+  by the person who ran it. It now uses the same reading as the Actions path.
+- The masker knows the `[auth]` password, the exact values of the key variables Contexer knows by
+  name, and three key shapes; `SECURITY.md` and `docs/architecture.md` now say that, and what passes
+  unmasked.
 - **A run could end as succeeded on checks that had since been corrected.** Attempt 1 passed, the
   review asked for one repair, the checks were corrected, and a later attempt that failed the new
   checks was undone back to attempt 1 and reported as proven. Approving changed checks now drops

@@ -31,8 +31,34 @@ Reports in these areas are especially useful:
 The measures in place are listed in
 [docs/architecture.md](contexer-agent/docs/architecture.md) §17.
 
+## What is masked, and what is not
+
+Contexer sends prompts to the model provider you configure. Before a prompt
+is sent, and before the app's log is kept, three kinds of value are replaced:
+
+- the password, token or one-time code the `[auth]` sign-in types;
+- the exact values of the provider keys and tokens Contexer knows by
+  variable name (the model provider keys, `GITHUB_TOKEN`, `GH_TOKEN`,
+  `CONTEXER_GITHUB_TOKEN`, `CODEX_API_KEY`, the Langfuse keys);
+- anything shaped like an OpenRouter, OpenAI-style (`sk-...`) or Google
+  (`AIza...`) key.
+
+This covers the dev server's log (in `server.log`, `result.json`, the report
+and every prompt that quotes it), the task each of Contexer's agents is
+given, what their tools return, and their transcripts.
+
+Nothing else is recognised. A secret of your app under another variable name
+(`DATABASE_URL`, `STRIPE_SECRET_KEY`), a key of another shape (AWS, a GitHub
+`ghp_...` token, a JWT), or a value that is encoded or split over lines
+passes unchanged if the app prints it, shows it on a page, or keeps it in a
+file an agent reads. Masking is a second line, not a guarantee: the first is
+a test environment that holds no real secret. The details are in
+[docs/architecture.md](contexer-agent/docs/architecture.md), "Masking".
+
 ## Using Contexer safely
 
 - Use a dedicated test account for `[auth]`, never a real one.
+- Run the app Contexer starts with test data and test keys only: what it
+  prints and shows can reach the model provider.
 - Keep keys in the environment or `~/.contexer/`, not in the repository.
 - Give CI the smallest GitHub token permissions the workflow needs.
