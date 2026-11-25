@@ -13,6 +13,7 @@
 | Document | Covers |
 | --- | --- |
 | [Architecture](architecture.md) | Every module, data format, algorithm, constant and security measure |
+| [What Contexer sends, and what it does not do](data-and-limits.md) | Which command calls which model, what each prompt contains, other network destinations, what stays on disk, and the limits |
 | [Benchmark results](../bench/RESULTS.md) | Seeded-bug catch rate and false failures |
 
 ## How it was built

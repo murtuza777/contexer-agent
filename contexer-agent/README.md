@@ -68,9 +68,10 @@ The same groups as `contexer --help`:
 | `contexer contract draft "GOAL"` / `list` / `show ID` | Create and review contracts |
 | `contexer contract approve ID` | Lock a contract at its current content (sha256). Any later edit needs re-approval |
 | `contexer runs` | Recent runs with outcome, check counts and report paths |
+| `contexer runs prune --keep N` | Remove all but the newest N run folders (20 by default) and their snapshots. Lists them with sizes and asks first; `--dry-run` only lists, `--yes` does not ask. A stopped run that can still be resumed is kept unless `--include-unfinished` is given |
 | `contexer restore RUN --attempt N` / `--stopped` / `--undo` | Put the files back to a snapshot a run took |
 | `contexer mcp` | Serve the approved checks to the coding agent you already work in, over MCP (see below) |
-| `contexer mcp` | Serve the approved checks to the coding agent you already work in, over MCP (see below) |
+| `contexer init --agent NAME` | Set up the coding agent you work in: the MCP server, a stop hook and its instructions (see below) |
 | **CI and GitHub** | |
 | `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
 | `contexer issue draft N` / `build N --by LOGIN` / `event` | Post an issue's checks for approval; build them once approved; in Actions, act on the triggering event |
@@ -94,7 +95,28 @@ Useful options:
 is stopped and the project put back; `contexer restore RUN --stopped` brings
 the unfinished work back).
 
-## Inside your coding agent (MCP)
+## Inside your coding agent
+
+One command sets up the agent you already work in:
+
+```bash
+contexer init --agent claude-code   # or: codex, opencode
+```
+
+| | Claude Code | Codex | OpenCode |
+| --- | --- | --- | --- |
+| MCP server | `.mcp.json` | `.codex/config.toml` | you run `opencode mcp add` |
+| Stop hook | `.claude/settings.json` | `.codex/hooks.json` | none: it cannot refuse a stop |
+| Instructions | `.claude/skills/contexer/SKILL.md` | `AGENTS.md` | `AGENTS.md` |
+
+What you already have in those files is kept, each thing is added once,
+and a file Contexer cannot read is left alone. Codex reads a project's
+`.codex/` folder only once you trust the project. The agent starts
+Contexer by the name `contexer`, so it must be on the PATH the agent sees.
+
+The two sections below say what the server and the hook do.
+
+### The MCP server
 
 `contexer mcp` is a Model Context Protocol server on stdio. An agent you are
 already working in starts it and can then ask Contexer four things:
@@ -121,32 +143,37 @@ a terminal, with `contexer contract approve ID`. `contexer_verify` starts the
 app, runs your `[app] reset` if you have one, and writes its evidence under
 `.contexer/runs`; it changes nothing else.
 
-## Inside your coding agent (MCP)
+### The stop hook
 
-`contexer mcp` is a Model Context Protocol server on stdio. An agent you are
-already working in starts it and can then ask Contexer four things:
-
-| Tool | What the agent gets |
-| --- | --- |
-| `contexer_checks` | The approved contract: every check's steps and what it expects |
-| `contexer_verify` | The checks replayed in a real browser: passed, or what was expected and what the browser saw |
-| `contexer_brief` | The instruction a Contexer run would give for the contract |
-| `contexer_status` | How the last run in the project ended |
-
-For Claude Code, from the project folder:
+An agent that may call a verifier may also not call it. A hook is code, so
+it does not depend on the agent remembering:
 
 ```bash
-claude mcp add contexer -- contexer mcp
+contexer init --agent claude-code   # or: codex
 ```
 
-For any other agent, add a stdio server whose command is `contexer` with the
-argument `mcp` (and `--dir PATH` when the agent does not start it in the
-project folder).
+This adds one Stop hook to the agent's project settings
+(`.claude/settings.json`, or `.codex/hooks.json`) and keeps what you already
+have there. When the agent says it is done, its own harness runs
+`contexer hook stop`, which replays the approved contracts:
 
-No tool approves a contract, edits one or changes a setting. You approve, in
-a terminal, with `contexer contract approve ID`. `contexer_verify` starts the
-app, runs your `[app] reset` if you have one, and writes its evidence under
-`.contexer/runs`; it changes nothing else.
+- **A check fails:** the stop is refused and the agent is handed what was
+  expected and what the browser saw. It keeps working.
+- **Still failing after three tries in a row:** the stop goes through and you
+  are told, in the agent's own window, that the work is not proven.
+- **Nothing changed since the checks last passed:** nothing is replayed, so a
+  turn that only answered a question costs about two seconds.
+- **No approved contract, or a `contexer run` is working here:** the hook
+  stands aside.
+
+The hook never approves, edits or skips a check, and writes only under
+`.contexer/`. If Contexer itself breaks, the stop goes through and says why.
+
+| Agent | Can a stop be refused? |
+| --- | --- |
+| Claude Code | Yes |
+| Codex | Yes, once you have trusted the hook (`/hooks` in Codex) |
+| OpenCode | No: it has no hook that can refuse a stop. Use `contexer mcp` and ask it to call `contexer_verify` |
 
 ## Project files
 
@@ -257,6 +284,8 @@ correct app fails "shows 2 entries" because an earlier check added one.
 | `opencode/` | The OpenCode HTTP client the OpenCode adapter uses |
 | `demo/` | The todo app with a seeded bug behind `contexer demo` |
 
+What each command sends to a model, every other network destination and what
+stays on disk are in [docs/data-and-limits.md](docs/data-and-limits.md).
 The full technical reference is [docs/architecture.md](docs/architecture.md).
 The design of the agents, with tickets and results per phase, is in
 [docs/agentic/architecture.md](docs/agentic/architecture.md). All documents

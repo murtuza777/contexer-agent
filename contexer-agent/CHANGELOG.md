@@ -22,6 +22,31 @@ and [the tickets](docs/production/tickets.md).
   (`shop/load-crash`) in its first run; it caught all 46 on Ubuntu and Windows.
 - `pytest --no-browser` skips a test at the moment it starts a browser and runs every other test
   whole, for a machine with no Chromium.
+- **A stop hook: the agent cannot say "done" while an approved check fails.**
+  `contexer init --agent claude-code` (or `codex`) adds a Stop hook to the agent's project settings,
+  keeping what is there. The hook runs `contexer hook stop`, which replays the approved contracts
+  and refuses the stop with what the browser saw. After three refusals in a row it lets the stop
+  through and says the work is not proven. Nothing is replayed when no file and no contract changed
+  since the last pass. OpenCode has no hook that can refuse a stop, and `init` says so.
+- **`contexer init --agent NAME` sets a coding agent up in one command.** Beside the stop hook it
+  registers the MCP server (`.mcp.json` for Claude Code, `.codex/config.toml` for Codex) and writes
+  the agent's instructions (a skill for Claude Code, a marked section of `AGENTS.md` for Codex and
+  OpenCode): read the checks first, verify before saying done, never edit `.contexer/`. Existing
+  files are kept. It warns when `contexer` is not on the PATH.
+- A `contexer_verify` that passes every approved contract is remembered, so the stop hook does not
+  replay the same files again when the agent stops.
+- **[What Contexer sends, and what it does not do](docs/data-and-limits.md).** One page for a
+  security review: which command calls which model, what each prompt contains, what is kept out
+  and where that stops, every other network destination, what stays on disk, and what Contexer
+  does not control about the coding agent it starts. Each row names the code behind it. No code
+  changed.
+- **`contexer runs prune --keep N`: remove old runs.** Run folders and snapshots were never removed.
+  Prune keeps the newest N runs (20 by default), lists the rest with their sizes, asks, then removes
+  those folders and their snapshots and collects the snapshot repository, reporting the space freed.
+  `--dry-run` only lists; `--yes` does not ask; with no terminal and no `--yes` nothing is removed.
+  It removes nothing while a run holds the project's lock (exit 2). A stopped run that can still be
+  resumed is kept unless `--include-unfinished` is given. It deletes only run folders directly inside
+  `.contexer/runs` and never follows a symlink or a junction. `contexer runs` itself is unchanged.
 
 ### Fixed
 
