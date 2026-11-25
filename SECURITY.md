@@ -31,6 +31,14 @@ Reports in these areas are especially useful:
 The measures in place are listed in
 [docs/architecture.md](contexer-agent/docs/architecture.md) §17.
 
+## What leaves the machine
+
+[What Contexer sends, and what it does not do](contexer-agent/docs/data-and-limits.md)
+lists, per command, which model is called and what text each prompt holds,
+every other network destination, and what is kept on disk. It also states
+what the masking misses and what Contexer does not control about the coding
+agent it starts. Read it before allowing Contexer on a repository.
+
 ## What is masked, and what is not
 
 Contexer sends prompts to the model provider you configure. Before a prompt
