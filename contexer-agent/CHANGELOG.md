@@ -6,6 +6,14 @@ An audit of the whole system on 2026-11-24: [what was found](docs/production/aud
 [the research behind the plan](docs/production/research.md), [the roadmap](docs/production/roadmap.md)
 and [the tickets](docs/production/tickets.md).
 
+### Added
+
+- **`contexer mcp`: Contexer inside the coding agent you already use.** A Model Context Protocol
+  server on stdio with four tools: `contexer_checks` (the approved contract), `contexer_verify`
+  (replay it in a browser and say what was seen), `contexer_brief` (the instruction for it) and
+  `contexer_status` (the last run). No tool approves a contract, edits one or changes a setting, and
+  a contract is named by its id, never by a path. Adds the dependency `mcp>=2.3,<3.0`.
+
 ### Fixed
 
 - **A run could end as succeeded on checks that had since been corrected.** Attempt 1 passed, the

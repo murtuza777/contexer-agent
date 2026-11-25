@@ -707,6 +707,19 @@ Refs per run: `<run>/0` (baseline), `<run>/<n>` (attempts), `<run>/stopped`,
 
 ## 11. Coding agent adapters
 
+Two directions. Below, Contexer starts an agent headless and drives it. The
+other way round, an agent a person is already working in calls Contexer:
+`contexer mcp` (`integrations/mcp_server.py`) is a Model Context Protocol
+server on stdio, built on the official `mcp` SDK. Its tools are
+`contexer_checks`, `contexer_verify`, `contexer_brief` and `contexer_status`,
+each taking at most one optional string (`contract`, an id matched against
+the project's contracts and never opened as a path). `contexer_verify` takes
+the run lock, replays in a worker thread so the server keeps answering, and
+returns the same expected-and-actual report a repair prompt carries. Nothing
+in the module prints, because stdout carries the protocol. No tool writes
+what defines done; `tests/test_mcp_server.py` drives the server with a real
+client and holds that.
+
 `agents/base.py: CodingAgentAdapter.run_turn(workdir, prompt, *, session_id,
 timeout, budget_usd, on_progress) -> AgentTurn` with `status`
 (`completed`, `failed`, `timeout`, `budget_exceeded`, `cancelled`),
@@ -1208,7 +1221,7 @@ the help.
 | Group (`contexer --help`) | Commands |
 | --- | --- |
 | Get started | `setup`, `demo`, `doctor`, `init` |
-| Build and prove | `test`, `run`, `verify`, `contract` (`draft`, `list`, `show`, `approve`), `runs`, `restore` |
+| Build and prove | `test`, `run`, `verify`, `contract` (`draft`, `list`, `show`, `approve`), `runs`, `restore`, `mcp` |
 | CI and GitHub | `replay`, `issue` (`draft`, `build`, `event`) |
 | More | `models`, `bench` |
 
