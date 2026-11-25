@@ -100,6 +100,13 @@ class ShadowRepo:
             self._git("update-ref", f"refs/contexer/{ref}", commit)
         return commit
 
+    def tree(self) -> str:
+        """The id of the current files as a tree: the same files give the same id. Records no snapshot."""
+        self._ensure()
+        self._freeze_ignored()
+        self._git("add", "--all", "--", ".")
+        return self._git("write-tree").strip()
+
     def restore(self, commit: str) -> None:
         """Make the work tree match ``commit`` (ignored files are left alone)."""
         self._ensure()

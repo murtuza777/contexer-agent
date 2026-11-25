@@ -603,6 +603,16 @@ an agent a person is already using calls Contexer (not built).
   agent cannot end its turn until the contract passes or the cap is
   reached.
 - **Tests.** The hook script run against a failing and a passing project.
+- **Built 2026-11-26**, as a command (`contexer hook stop`) and not a
+  shell script around `contexer verify --json`, so it is the same on
+  Windows. Claude Code and Codex are written for; OpenCode has no hook
+  that can refuse a stop (its issue asking for one was closed as not
+  planned) and `init` says so. Added beyond the ticket: nothing is
+  replayed when nothing changed since a pass. Acceptance run made on
+  2026-11-26 in Claude Code 2.1.325 on the todo fixture with the count
+  bug: told only to reply "done", the agent was refused once, fixed
+  `app.js`, and the second replay passed (6 turns). Open: no run inside
+  Codex; the hook command assumes `contexer` is on the agent's PATH.
 
 ### BRIEF-1 The first instruction is a brief, not a template
 - **Type.** Agent architecture. **Priority.** P1. **Effort.** M.
@@ -668,6 +678,17 @@ an agent a person is already using calls Contexer (not built).
 - **Files.** `cli/init_cli.py`, new `integrations/`.
 - **Accept.** In Claude Code on the demo app, "fix the count" ends with
   the agent having run `contexer verify` and reporting its result.
+- **Built 2026-11-26.** Acceptance run made in Claude Code 2.1.325 on the
+  todo fixture with the count bug, after `contexer init --agent
+  claude-code`: the agent loaded the skill, called `contexer_checks`,
+  edited `app.js`, called `contexer_verify` and reported "PASS: 7
+  verified"; the stop hook then replayed and let it stop (10 turns). The
+  same prompt with no Contexer set up ended with "I haven't run it in a
+  browser or against the checks". The run was headless with the four
+  tools allowed on the command line; an interactive session asks once.
+  Open: no run in Codex or OpenCode (Codex's file shapes are from its
+  documentation); OpenCode's server is not written, only pointed to;
+  no further items.
 
 ### DX-2 Evidence in the pull request
 - **Type.** New capability. **Priority.** P1. **Effort.** M.
@@ -765,6 +786,14 @@ an agent a person is already using calls Contexer (not built).
 ## Documents and clean-up
 
 ### DOC-1 What Contexer sends, and what it does not do
+- **Built 2026-11-26.** [data-and-limits.md](../data-and-limits.md), linked
+  from both READMEs, `SECURITY.md` and the docs index. Left open, all found
+  while reading the code and none changed here: the drafting model's prompt
+  carries page and source text unmasked and outside `<untrusted>`; masking
+  covers tool results, not a diff or server log placed in a prompt; the
+  coding agent inherits every model key in the environment, which
+  `SECURITY.md` lists as a thing to report; what Chromium and the libraries
+  send on their own was not examined.
 - **Type.** Documentation. **Priority.** P0. **Effort.** S.
 - **Do.** One page: which text goes to which provider for each command;
   that nothing else leaves the machine; web apps only; never writes code;

@@ -765,6 +765,29 @@ in the module prints, because stdout carries the protocol. No tool writes
 what defines done; `tests/test_mcp_server.py` drives the server with a real
 client and holds that.
 
+The server is something the agent may call. The stop hook is something it
+cannot skip. `contexer init --agent claude-code|codex`
+(`integrations/agent_setup.py`) adds one Stop hook to the agent's project
+settings; the agent's harness then runs `contexer hook stop`
+(`integrations/stop_hook.py`) each time the agent ends a turn. It takes the
+run lock, replays the approved contracts with `integrations/replay.py` (the
+code `contexer_verify` uses) and prints `{"decision": "block", "reason":
+...}` while one fails. Its state is `.contexer/hook-state.json`: the
+session, the blocks in a row (the stop goes through after `--max-blocks`,
+three by default, with a message to the person), and a fingerprint of the
+project's files (the snapshot repository's tree id) and approved contracts,
+so nothing is replayed when nothing changed since a pass. It always exits
+0, and an exception inside Contexer lets the stop through. OpenCode has no
+hook that can refuse a stop, so nothing is written for it.
+
+`init --agent` (`agent_setup.set_up`) does three things per agent, each in
+the file that agent reads: the server (`.mcp.json`; a table appended to
+`.codex/config.toml`, which is parsed to check and never rewritten; for
+OpenCode a pointer to `opencode mcp add`, because where servers sit in its
+config changed between versions), the hook, and the instructions (a skill
+at `.claude/skills/contexer/SKILL.md`, or a block in `AGENTS.md` that
+starts with a marker so it is added once).
+
 `agents/base.py: CodingAgentAdapter.run_turn(workdir, prompt, *, session_id,
 timeout, budget_usd, on_progress) -> AgentTurn` with `status`
 (`completed`, `failed`, `timeout`, `budget_exceeded`, `cancelled`),
