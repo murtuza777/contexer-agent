@@ -39,6 +39,7 @@ from contexer import __version__
 from contexer.appserver import AppStartError, RunningApp, open_app
 from contexer.browser.freeze import Confirmed, ReplayReport, draft_contract, freeze, replay_findings, write_unconfirmed
 from contexer.browser.tools import BrowserSession, credential_secrets
+from contexer.checkpoint.lock import RunLocked, run_lock
 from contexer.cli import term
 from contexer.cli.gate_cli import DirOption, UrlOption
 from contexer.contract import ContractStore
@@ -243,23 +244,28 @@ def test(
             raise typer.Exit(code=2) from None
 
     try:
-        result = asyncio.run(
-            run_test(
-                project,
-                goal,
-                model_factory,
-                url=url,
-                steps=steps,
-                save=save,
-                console=console,
-                mode="again" if again else "explore",
-                correction=correct,
-                assume=yes or not is_interactive(),
-                stored=stored,
-                budget=budget,
-                use_skills=not no_skills,
+        # The tester starts the app and may reset it; a run doing the same in this folder would trip over it.
+        with run_lock(project, "contexer test"):
+            result = asyncio.run(
+                run_test(
+                    project,
+                    goal,
+                    model_factory,
+                    url=url,
+                    steps=steps,
+                    save=save,
+                    console=console,
+                    mode="again" if again else "explore",
+                    correction=correct,
+                    assume=yes or not is_interactive(),
+                    stored=stored,
+                    budget=budget,
+                    use_skills=not no_skills,
+                )
             )
-        )
+    except RunLocked as exc:
+        term.note(console, "fail", f"[red]Not started:[/] {escape(str(exc))}")
+        raise typer.Exit(code=2) from None
     except KeyboardInterrupt:
         _quiet_interrupted_shutdown()
         console.print()

@@ -12,7 +12,7 @@ from contexer.contract import Contract
 from contexer.contract.store import CONTEXER_DIR, CONTRACTS_DIR
 from contexer.controller.models import RunOutcome
 from contexer.evidence.report import write_evidence
-from contexer.evidence.rundir import RunDir
+from contexer.evidence.rundir import RunDir, write_whole
 from contexer.gate.models import AgentRow, AgentRunSummary, AttemptRow, GateDecision, ReviewRow, RunResult, TriageRow
 from contexer.intent.store import INTENT_DIR
 
@@ -76,7 +76,7 @@ def write_run_evidence(project: Path, outcome: RunOutcome, run: RunDir) -> None:
         )
     report.duration_seconds = outcome.duration_seconds
     write_evidence(report, run)
-    (run.path / "run.json").write_text(outcome.model_dump_json(indent=2, exclude={"final"}), encoding="utf-8")
+    write_whole(run.path / "run.json", outcome.model_dump_json(indent=2, exclude={"final"}))
 
 
 

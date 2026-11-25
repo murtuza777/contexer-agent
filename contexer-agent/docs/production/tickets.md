@@ -280,6 +280,10 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   repair turn; the report says flaky. The gate benchmark's catch rate is
   unchanged and its time is measured.
 - **Tests.** `test_a_check_that_passes_on_the_second_replay_is_flaky`.
+- **Done 2026-11-25**, with the proposed answer to *Decide first*: a flaky
+  pass counts for the run and holds the pull request as a draft. The owner
+  can still reverse that. Not done: the gate benchmark's time was not
+  measured on this machine (CI runs the seeded-bug benchmark).
 
 ### REL-7 Files a resume depends on are written whole; one lock for both commands
 - **Type.** Reliability. **Priority.** P2. **Effort.** S.
@@ -291,6 +295,7 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   `checkpoint/lock.py`, `cli/test_cli.py`.
 - **Tests.** `test_a_truncated_run_file_is_a_resume_error`,
   `test_two_starts_at_once_take_one_lock`.
+- **Done 2026-11-25.** See [audit.md](audit.md) §5.1 and the changelog.
 
 ### REL-8 The issue flow, run on a real repository
 - **Type.** Reliability. **Priority.** P1. **Effort.** M. **Depends on.**

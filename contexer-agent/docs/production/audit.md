@@ -154,12 +154,12 @@ standard.
 | L3 | A model gets two corrections for the whole run of an agent, not per mistake. Three narrated steps in a 40-step Tester run end it | **Fixed 2026-11-25** (`REL-4`) | Medium for weak models |
 | L4 | Provider errors: two retries inside the SDK, then the agent ends. No backoff of Contexer's own, no second provider | Partial; every agent degrades safely to rules | Low |
 | L5 | An unexpected exception in a node ends in a traceback with no `run.json` and the files left mid-attempt | **Fixed 2026-11-25** (`REL-5`). A snapshot store that cannot be written still ends the command with its own message and no `run.json` | Medium |
-| L6 | A failed check is replayed once. A flaky check sends the coding agent to repair nothing | Missing (in readiness.md) | Medium |
+| L6 | A failed check is replayed once. A flaky check sends the coding agent to repair nothing | **Fixed 2026-11-25** (`REL-6`) | Medium |
 | L7 | One failed coding-agent turn with no changes ends the run as `agent_error`; a transient failure is not tried again | Missing | Low |
 | L8 | The review's commands have no baseline: an `npm test` that failed before the change triggers a paid repair turn | Partial | Low |
 | L9 | Dependency install, app start, the review's commands and git run on the event loop; Ctrl+C waits for them | Open (in readiness.md) | Medium |
-| L10 | `run.json` and the per-attempt result are written in place; a kill mid-write leaves a file a resume cannot read | Partial | Low |
-| L11 | The run lock is check-then-write, and `contexer test` takes no lock | Partial | Low |
+| L10 | `run.json` and the per-attempt result are written in place; a kill mid-write leaves a file a resume cannot read | **Fixed 2026-11-25** (`REL-7`) | Low |
+| L11 | The run lock is check-then-write, and `contexer test` takes no lock | **Fixed 2026-11-25** (`REL-7`) | Low |
 
 What holds, and was read to hold: a run ends `succeeded` only on a gate
 pass recomputed in `finalize` (with the hole closed in §4 item 1); every

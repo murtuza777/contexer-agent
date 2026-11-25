@@ -24,7 +24,7 @@ from contexer.contract import Contract, ContractStore
 from contexer.controller.models import RunOutcome, RunSettings
 from contexer.controller.shared import ContractGuard
 from contexer.crew.budget import Budget
-from contexer.evidence.rundir import RunDir
+from contexer.evidence.rundir import RunDir, write_whole
 from contexer.gate.models import RunResult
 from contexer.intent.store import IntentStore
 from contexer.verification.runner import CheckRunner
@@ -137,7 +137,7 @@ class RunContext:
 
     def save_result(self, n: int, result: RunResult) -> None:
         self._results[n] = result
-        (self.attempt_dir(n).path / _RESULT_FILE).write_text(result.model_dump_json(), encoding="utf-8")
+        write_whole(self.attempt_dir(n).path / _RESULT_FILE, result.model_dump_json())
 
     def result(self, n: int | None) -> RunResult | None:
         if n is None:

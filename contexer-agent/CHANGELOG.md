@@ -34,6 +34,16 @@ and [the tickets](docs/production/tickets.md).
   they were, the unfinished work is kept as a snapshot, `run.json` and the report are written with
   the new end state `internal_error` (exit code 3), the traceback is kept in the run folder as
   `crash.txt` with keys masked, and nothing is committed or pushed.
+- **A check that fails is replayed once more, after the reset.** One that passes the second time is
+  marked flaky: it counts as passed, no repair turn is spent on it, and the report, the terminal and
+  the pull request name it. A pull request with a flaky check is opened as a draft, because a slow
+  page and an intermittent bug look the same. **A check that really fails now takes two replays**,
+  so a failing run is slower. `CheckRunner(replay_failed=False)` turns it off.
+- `run.json`, each attempt's result and the marker of a stopped run are written to a temporary name
+  and renamed, so a kill in the middle of a write leaves the old file whole. A run file that cannot
+  be read is a plain "cannot be continued" on resume.
+- The run lock is created with an exclusive open: of two runs started at the same moment exactly one
+  goes on. `contexer test` takes the same lock.
 - A sign-in that breaks outside its own steps (the browser closing, say) is reported as "could not
   sign in" instead of ending the command.
 

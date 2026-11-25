@@ -608,3 +608,36 @@ async def test_an_exception_in_a_node_restores_and_reports(project: Path, monkey
     crash = (run_dir / "crash.txt").read_text(encoding="utf-8")
     assert "Traceback" in crash and "TypeError" in crash and key not in crash
     assert (run_dir / "report.html").is_file() or (run_dir / "report.md").is_file()
+
+
+# -- REL-7: files a resume depends on are written whole ------------------------------------------
+
+
+async def test_a_truncated_run_file_is_a_resume_error(project: Path) -> None:
+    controller = _graph(project, RecordingAgent([{"app.js": GOOD_JS}]))
+    outcome = await controller.run(contract(project))
+    run_file = Path(outcome.run_dir) / "run.json"
+    whole = run_file.read_text(encoding="utf-8")
+    run_file.write_text(whole[: len(whole) // 2], encoding="utf-8")  # as a kill in the middle of a write leaves it
+
+    with pytest.raises(ResumeError, match="run.json"):
+        await _graph(project, ScriptedAgent([])).resume(outcome.run_id)
+
+
+def test_a_file_a_resume_depends_on_is_never_seen_half_written(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.evidence import rundir
+
+    target = tmp_path / "run.json"
+    target.write_text('{"old": true}', encoding="utf-8")
+
+    def dies(_source: Any, _target: Any) -> None:
+        raise OSError("killed before the rename")
+
+    monkeypatch.setattr(rundir.os, "replace", dies)
+    with pytest.raises(OSError):
+        rundir.write_whole(target, '{"new": true}')
+    assert target.read_text(encoding="utf-8") == '{"old": true}'  # the old file is still whole
+    monkeypatch.undo()
+    rundir.write_whole(target, '{"new": true}')
+    assert target.read_text(encoding="utf-8") == '{"new": true}'
+    assert [p.name for p in tmp_path.iterdir()] == ["run.json"]  # no temporary file is left

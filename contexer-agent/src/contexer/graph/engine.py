@@ -12,6 +12,7 @@ prompts; ``tests/test_controller.py`` pins what those produce.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -197,8 +198,19 @@ class GraphController:
             for row in values.get("agents") or []:
                 ctx.budget.spend(int(row.get("tokens_in") or 0), int(row.get("tokens_out") or 0), row.get("cost_usd"))
             ctx.budget.other_usd = float(values.get("cost_usd") or 0.0)
+        for saved in sorted(ctx.run.path.glob("attempt-*/result.json")):
+            try:
+                json.loads(saved.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise ResumeError(
+                    f"Run '{ctx.run.run_id}' cannot be continued: {saved.parent.name}/{saved.name} cannot be read "
+                    f"({type(exc).__name__}). The run was probably killed while writing it. Start a new run."
+                ) from exc
         marker = ctx.run.path / STOPPED_FILE
-        stopped_work = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
+        try:
+            stopped_work = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
+        except (OSError, ValueError) as exc:
+            raise ResumeError(f"Run '{ctx.run.run_id}' cannot be continued: {marker.name} cannot be read ({type(exc).__name__}).") from exc
         marker.unlink(missing_ok=True)
         current = values.get("current")
         if not current:
@@ -312,7 +324,13 @@ class GraphController:
         path = ctx.run.path / "run.json"
         if not path.is_file():
             raise ResumeError(f"Run '{ctx.run.run_id}' finished, but its run.json is missing.")
-        outcome = RunOutcome.model_validate_json(path.read_text(encoding="utf-8"))
+        try:
+            outcome = RunOutcome.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ResumeError(
+                f"Run '{ctx.run.run_id}' finished, but its run.json cannot be read ({type(exc).__name__}). "
+                "There is nothing left to continue; start a new run."
+            ) from exc
         self.on_event("app", f"Run {ctx.run.run_id} had already finished ({outcome.terminal}); nothing was run.")
         self.last_outcome = outcome
         return outcome

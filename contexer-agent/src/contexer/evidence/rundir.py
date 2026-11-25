@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import os
 import secrets
 import time
 from dataclasses import dataclass
@@ -39,3 +41,23 @@ class RunDir:
     @property
     def server_log(self) -> Path:
         return self.path / "server.log"
+
+
+def write_whole(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` so that a reader sees the old file or the new one, never half of one.
+
+    A resume reads these files. A process killed in the middle of a plain write leaves a file that cannot
+    be read; here the text goes to a temporary name beside it and is renamed over the old file.
+    """
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            with contextlib.suppress(OSError):  # not every filesystem can; the rename still holds
+                os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            temporary.unlink()
+        raise

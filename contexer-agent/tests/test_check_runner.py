@@ -263,3 +263,77 @@ async def test_timeout_scale_gives_a_slow_dev_server_time_to_answer(tmp_path: Pa
     assert not strict.passed
     assert patient.passed
     assert runner.expect_timeout == 2.0  # the scale applies to that run only
+
+
+# -- REL-6: a check that fails is replayed once more ---------------------------------------------
+
+
+@pytest.fixture
+def slow_first_load():
+    """An app whose first page load shows "Loading" and every later one "Ready"."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    loads = {"n": 0}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path != "/":
+                self.send_error(404)
+                return
+            loads["n"] += 1
+            word = "Loading" if loads["n"] == 1 else "Ready"
+            body = f"<!doctype html><title>t</title><h1>{word}</h1>".encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/", loads
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+READY = {"steps": [], "expect": [{"kind": "text", "target": {"role": "heading"}, "equals": "Ready"}]}
+
+
+@pytest.mark.anyio
+async def test_a_check_that_passes_on_the_second_replay_is_flaky(slow_first_load, runner: CheckRunner) -> None:
+    url, loads = slow_first_load
+    resets: list[int] = []
+
+    async def reset() -> None:
+        resets.append(loads["n"])
+
+    [result] = await runner.run(url, [("crit-ready", check(READY))], before_each=reset)
+
+    assert result.passed
+    assert result.flaky
+    assert '"Loading"' in result.first_failure
+    assert "flaky" in result.summary()
+    assert resets == [0, 1]  # the app was reset again before the second replay
+
+
+@pytest.mark.anyio
+async def test_a_check_that_fails_twice_is_failed_and_not_flaky(app_url: str, runner: CheckRunner) -> None:
+    [result] = await runner.run(
+        app_url,
+        [("crit-cart", check({"steps": [ADD_TO_CART], "expect": [{"kind": "text", "target": CART_COUNT, "equals": "2"}]}))],
+    )
+    assert not result.passed and not result.flaky and result.first_failure == ""
+
+
+@pytest.mark.anyio
+async def test_the_second_replay_can_be_turned_off(slow_first_load) -> None:
+    url, loads = slow_first_load
+    once = CheckRunner(action_timeout=1.0, expect_timeout=1.0, replay_failed=False)
+    [result] = await once.run(url, [("crit-ready", check(READY))])
+    assert not result.passed and loads["n"] == 1
