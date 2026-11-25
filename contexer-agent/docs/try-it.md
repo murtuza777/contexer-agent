@@ -226,6 +226,10 @@ no network or model):
 python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
 ```
 
+Add `--no-browser` to skip each test at the moment it starts a browser; the
+rest run whole, in about 12 minutes. CI does that on Windows and macOS, and runs
+everything on Linux.
+
 Measure accuracy on the seeded-bug benchmark (about 10 minutes; do not run
 other heavy jobs at the same time):
 
