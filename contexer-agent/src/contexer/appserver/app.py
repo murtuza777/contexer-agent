@@ -10,6 +10,7 @@ from typing import Literal
 
 from contexer.appserver.detect import StartPlanError, plan_start
 from contexer.appserver.devserver import DevServer, DevServerError
+from contexer.browser.tools import sign_in_secrets
 from contexer.config.project import AppSettings, ProjectConfigError, load_project_config
 from contexer.workflow.app_server import StaticAppServer
 from contexer.workflow.inspector import RepositoryContext, RepositoryInspector
@@ -78,7 +79,7 @@ def open_app(
     except StartPlanError as exc:
         raise AppStartError(str(exc)) from exc
 
-    server = DevServer(plan, log_path=log_path, on_status=on_status)
+    server = DevServer(plan, log_path=log_path, on_status=on_status, secrets=_sign_in_secrets(project))
     try:
         try:
             ready_url = server.start()
@@ -94,3 +95,11 @@ def open_app(
         )
     finally:
         server.stop()
+
+
+def _sign_in_secrets(project: Path) -> list[str]:
+    """What the project's ``[auth]`` sign-in types as a password or a code: an app may print it when it starts."""
+    try:
+        return sign_in_secrets(load_project_config(project).auth)
+    except ProjectConfigError:
+        return []

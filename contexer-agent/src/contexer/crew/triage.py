@@ -16,6 +16,7 @@ judgment, and keeps the answer inside limits a model cannot move:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal, get_args
 
@@ -151,14 +152,18 @@ async def triage(
     *,
     run_dir: Path | None = None,
     budget: Budget | None = None,
+    secrets: Sequence[str] = (),
 ) -> TriageDecision:
-    """Choose the next move. Never raises; never returns a move that :func:`legal_moves` does not list."""
+    """Choose the next move. Never raises; never returns a move that :func:`legal_moves` does not list.
+
+    ``secrets`` are masked in what the model is sent: the findings are what the page showed.
+    """
     fallback = rule_move(situation)
     legal = legal_moves(situation)
     if model is None or (budget is not None and budget.exhausted()):
         return fallback
     spec = AgentSpec(name="triage", system_prompt=triage_prompt(), output_schema=_Choice, max_steps=3, timeout=120.0, max_output_tokens=1000)
-    ran = await run_agent(spec, model, [], _task(situation, legal), run_dir=run_dir, budget=budget)
+    ran = await run_agent(spec, model, [], _task(situation, legal), run_dir=run_dir, secrets=list(secrets), budget=budget)
     usage = {"steps": ran.steps, "tokens_in": ran.tokens_in, "tokens_out": ran.tokens_out, "cost_usd": ran.cost_usd}
     if not isinstance(ran.output, _Choice):
         why = f"Triage gave no usable answer ({ran.status}{': ' + ran.error if ran.error else ''}); the rules decided."
