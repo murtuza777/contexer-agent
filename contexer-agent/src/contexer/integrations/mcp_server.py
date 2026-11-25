@@ -36,6 +36,7 @@ from contexer.contract.store import CONTEXER_DIR
 from contexer.controller.prompts import implement_prompt
 from contexer.evidence.rundir import RUNS_DIR
 from contexer.gate import RunResult
+from contexer.integrations import stop_hook
 from contexer.integrations.replay import replay, verdict
 from contexer.verification.models import format_contract
 from contexer.verification.runner import CheckRunner
@@ -193,7 +194,11 @@ def _checks(project: Path, contract: str) -> str:
 def _replay_locked(project: Path, contracts: list[Contract], make_runner: Callable[[], CheckRunner]) -> RunResult:
     """Replay in a thread of its own: starting the app blocks, and the server must go on answering."""
     with run_lock(project, "contexer mcp (verify)"):
-        return asyncio.run(replay(project, contracts, make_runner()))
+        seen = stop_hook.whole_fingerprint(project, contracts)
+        result = asyncio.run(replay(project, contracts, make_runner()))
+        if result.decision.outcome == "pass":
+            stop_hook.record_pass(project, seen)  # the stop hook need not replay what just passed
+        return result
 
 
 def _status(project: Path, contract: str) -> str:

@@ -290,3 +290,30 @@ def test_init_says_plainly_that_opencode_cannot_be_held(project: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "no hook" in " ".join(result.output.split())
     assert not (project / ".opencode").exists()
+
+
+def test_a_verify_the_agent_just_passed_is_not_replayed_again_at_the_stop(project: Path) -> None:
+    from contexer.integrations.mcp_server import _replay_locked
+
+    approved = [c for c in ContractStore(project).list() if c.status == "approved"]
+    result = _replay_locked(project, approved, fast_runner)  # what contexer_verify does
+    assert result.decision.outcome == "pass"
+    runs = _runs(project)
+
+    answer = answer_stop(project, {"session_id": "s1"}, make_runner=fast_runner)
+
+    assert not answer.block and _runs(project) == runs
+
+
+def test_a_verify_of_one_contract_out_of_several_does_not_excuse_the_stop(project: Path) -> None:
+    from contexer.integrations.mcp_server import _replay_locked
+
+    store = ContractStore(project)
+    first = store.load(CONTRACT_ID)
+    store.save(first.model_copy(update={"id": "second"}).approved_by("tester"))
+    runs_before = _runs(project)
+    _replay_locked(project, [store.load(CONTRACT_ID)], fast_runner)
+
+    answer_stop(project, {"session_id": "s1"}, make_runner=fast_runner)
+
+    assert _runs(project) == runs_before + 2  # the hook replayed: only part of what defines done was proven

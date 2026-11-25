@@ -688,7 +688,7 @@ an agent a person is already using calls Contexer (not built).
   tools allowed on the command line; an interactive session asks once.
   Open: no run in Codex or OpenCode (Codex's file shapes are from its
   documentation); OpenCode's server is not written, only pointed to;
-  after a passing `contexer_verify` the stop hook replays once more.
+  no further items.
 
 ### DX-2 Evidence in the pull request
 - **Type.** New capability. **Priority.** P1. **Effort.** M.
