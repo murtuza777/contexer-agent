@@ -93,6 +93,9 @@ def run(
     no_review: bool = typer.Option(
         False, "--no-review", help="Do not read the diff of a passing run before it ends."
     ),
+    no_plan: bool = typer.Option(
+        False, "--no-plan", help="Do not read the project for a brief before the first coding turn."
+    ),
     correct: str | None = typer.Option(
         None, "--correct", help="With --resume: a correction to what done means, applied first."
     ),
@@ -139,6 +142,7 @@ def run(
         judged_policy=config.gate.judged,
         replay_others=not no_replay,
         review=not no_review,
+        plan=not no_plan,
         agent_steps={name: cap for name in CREW_AGENTS if (cap := config.agents.for_agent(name).max_steps)},
     )
     crew_budget = run_budget(config, max_usd)
@@ -365,6 +369,8 @@ def _estimate(settings: RunSettings, budget: Budget | None, has_model: bool, dra
         has_model=has_model,
         drafts_checks=drafts_checks,
         review=settings.review,
+        plan=settings.plan,
+        planner_steps=settings.agent_steps.get("planner", 12),
         diagnoser_steps=settings.agent_steps.get("diagnoser", 15),
         reviewer_steps=settings.agent_steps.get("reviewer", 12),
         input_usd_per_mtok=budget.input_usd_per_mtok if budget is not None else None,

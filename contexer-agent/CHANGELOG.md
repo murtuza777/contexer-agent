@@ -8,6 +8,16 @@ and [the tickets](docs/production/tickets.md).
 
 ### Added
 
+- **A brief before the first coding turn.** With a model configured, a Planner reads the project
+  (read-only, the Diagnoser's `read_file` and `grep`) and its `TaskBrief` is added after the first
+  instruction: files to change, files to read first, what to reuse, the order of work, the edge cases
+  the checks imply, what must not change. The goal, the checks and the rules are still written by
+  code and are the same bytes with or without it. File names in the brief must exist inside the
+  project; `.env`, `.contexer/`, absolute and `../` paths are dropped. With no model, a spent budget,
+  a Planner that fails, or `contexer run --no-plan`, the instruction is sent as before. The Planner's
+  calls count against the run's budget and are in the estimate; `[agents.planner]` sets its model
+  and `max_steps` (default 12). Not measured yet: whether the brief lowers the number of repair
+  rounds (`BRIEF-2`).
 - **`contexer mcp`: Contexer inside the coding agent you already use.** A Model Context Protocol
   server on stdio with four tools: `contexer_checks` (the approved contract), `contexer_verify`
   (replay it in a browser and say what was seen), `contexer_brief` (the instruction for it) and

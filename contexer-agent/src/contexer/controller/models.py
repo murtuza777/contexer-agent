@@ -37,6 +37,8 @@ class RunSettings(BaseModel):
     wall_clock: float = 3600.0
     judged_policy: JudgedPolicy = "advisory"
     replay_others: bool = True
+    # Read the project before the first coding turn and add a brief to the first instruction (crew/planner.py).
+    plan: bool = True
     # Read the diff of a passing attempt before the run ends (crew/reviewer.py).
     review: bool = True
     # Step caps for Contexer's own agents, by name ("diagnoser", "reviewer"); the agent's default when absent.
