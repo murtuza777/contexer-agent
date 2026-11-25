@@ -45,6 +45,7 @@ def register(app: typer.Typer) -> None:
     from contexer.cli.doctor_cli import doctor
     from contexer.cli.init_cli import init
     from contexer.cli.issue_cli import issue_app
+    from contexer.cli.mcp_cli import mcp
     from contexer.cli.run_cli import run
     from contexer.cli.runs_cli import restore, runs
     from contexer.cli.setup_cli import models, setup
@@ -62,6 +63,7 @@ def register(app: typer.Typer) -> None:
     app.add_typer(contract_app, name="contract", rich_help_panel=build)
     app.command("runs", rich_help_panel=build)(runs)
     app.command("restore", rich_help_panel=build)(restore)
+    app.command("mcp", rich_help_panel=build)(mcp)
     app.command("replay", rich_help_panel=ci)(replay)
     app.add_typer(issue_app, name="issue", rich_help_panel=ci)
     app.command("models", rich_help_panel=more)(models)
