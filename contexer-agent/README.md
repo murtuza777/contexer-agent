@@ -69,6 +69,8 @@ The same groups as `contexer --help`:
 | `contexer contract approve ID` | Lock a contract at its current content (sha256). Any later edit needs re-approval |
 | `contexer runs` | Recent runs with outcome, check counts and report paths |
 | `contexer restore RUN --attempt N` / `--stopped` / `--undo` | Put the files back to a snapshot a run took |
+| `contexer mcp` | Serve the approved checks to the coding agent you already work in, over MCP (see below) |
+| `contexer mcp` | Serve the approved checks to the coding agent you already work in, over MCP (see below) |
 | **CI and GitHub** | |
 | `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
 | `contexer issue draft N` / `build N --by LOGIN` / `event` | Post an issue's checks for approval; build them once approved; in Actions, act on the triggering event |
@@ -91,6 +93,60 @@ Useful options:
 `3` error (app or agent could not run, or Contexer itself failed) · `130` stopped with Ctrl+C (the agent
 is stopped and the project put back; `contexer restore RUN --stopped` brings
 the unfinished work back).
+
+## Inside your coding agent (MCP)
+
+`contexer mcp` is a Model Context Protocol server on stdio. An agent you are
+already working in starts it and can then ask Contexer four things:
+
+| Tool | What the agent gets |
+| --- | --- |
+| `contexer_checks` | The approved contract: every check's steps and what it expects |
+| `contexer_verify` | The checks replayed in a real browser: passed, or what was expected and what the browser saw |
+| `contexer_brief` | The instruction a Contexer run would give for the contract |
+| `contexer_status` | How the last run in the project ended |
+
+For Claude Code, from the project folder:
+
+```bash
+claude mcp add contexer -- contexer mcp
+```
+
+For any other agent, add a stdio server whose command is `contexer` with the
+argument `mcp` (and `--dir PATH` when the agent does not start it in the
+project folder).
+
+No tool approves a contract, edits one or changes a setting. You approve, in
+a terminal, with `contexer contract approve ID`. `contexer_verify` starts the
+app, runs your `[app] reset` if you have one, and writes its evidence under
+`.contexer/runs`; it changes nothing else.
+
+## Inside your coding agent (MCP)
+
+`contexer mcp` is a Model Context Protocol server on stdio. An agent you are
+already working in starts it and can then ask Contexer four things:
+
+| Tool | What the agent gets |
+| --- | --- |
+| `contexer_checks` | The approved contract: every check's steps and what it expects |
+| `contexer_verify` | The checks replayed in a real browser: passed, or what was expected and what the browser saw |
+| `contexer_brief` | The instruction a Contexer run would give for the contract |
+| `contexer_status` | How the last run in the project ended |
+
+For Claude Code, from the project folder:
+
+```bash
+claude mcp add contexer -- contexer mcp
+```
+
+For any other agent, add a stdio server whose command is `contexer` with the
+argument `mcp` (and `--dir PATH` when the agent does not start it in the
+project folder).
+
+No tool approves a contract, edits one or changes a setting. You approve, in
+a terminal, with `contexer contract approve ID`. `contexer_verify` starts the
+app, runs your `[app] reset` if you have one, and writes its evidence under
+`.contexer/runs`; it changes nothing else.
 
 ## Project files
 

@@ -582,6 +582,10 @@ an agent a person is already using calls Contexer (not built).
   server: no tool writes.
 - **Tests.** The server driven by a scripted MCP client; a call that tries
   to approve is refused.
+- **Built 2026-11-25**, in `integrations/mcp_server.py` (not `mcp/`, which
+  would shadow the SDK's package name). Open: `contexer_verify` does not
+  add the Diagnoser's lead yet; `contexer_brief` returns today's template
+  until `BRIEF-1`; the acceptance run inside Claude Code has not been made.
 
 ### INT-2 "Done" is refused while a check fails
 - **Type.** New capability. **Priority.** P1. **Effort.** S. **Depends on.**
