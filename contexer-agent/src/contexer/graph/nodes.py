@@ -227,6 +227,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 run_dir=ctx.run.path,
                 budget=ctx.budget,
                 max_steps=_steps(ctx, "planner", DEFAULT_PLANNER_STEPS),
+                secrets=ctx.secrets(),
             )
             if found.status != "ok":
                 ctx.event("strategy", f"The Planner did not finish ({found.error or found.status}); the instruction is sent without a brief.")
