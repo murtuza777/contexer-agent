@@ -13,7 +13,7 @@ import html
 import json
 from pathlib import Path
 
-from contexer.evidence.rundir import RunDir
+from contexer.evidence.rundir import RunDir, write_whole
 from contexer.gate.models import AgentRunSummary, ContractOutcome, RunResult
 from contexer.verification.models import CriterionResult
 
@@ -25,7 +25,7 @@ _LOG_TAIL_LINES = 80
 
 def write_evidence(result: RunResult, run: RunDir) -> tuple[Path, Path]:
     """Write ``result.json`` and ``report.html`` into the run directory."""
-    run.result_json.write_text(result_json(result), encoding="utf-8")
+    write_whole(run.result_json, result_json(result))
     run.report_html.write_text(render_report(result), encoding="utf-8")
     return run.result_json, run.report_html
 

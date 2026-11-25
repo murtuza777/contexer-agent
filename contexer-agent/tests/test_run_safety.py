@@ -110,3 +110,58 @@ def test_checks_approved_by_yes_are_not_presented_as_read_by_a_person(tmp_path: 
     assert "approved automatically" in body and "nobody read" in body.lower()
     by_a_person = store.approve("todo-basics", by="alice")
     assert "approved automatically" not in pull_request_body(outcome, by_a_person)
+
+
+# -- REL-7: one lock, taken whole ----------------------------------------------------------------
+
+
+def test_two_starts_at_once_take_one_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both starts look before either has written: only one may go on."""
+    import threading
+    import time
+
+    from contexer.checkpoint import lock
+
+    both_looked = threading.Barrier(2, timeout=5)
+    real = lock._holder
+
+    def look_together(path: Path) -> object:
+        found = real(path)
+        try:
+            both_looked.wait()
+        except threading.BrokenBarrierError:
+            pass
+        return found
+
+    release = threading.Event()
+    took: list[str] = []
+    refused: list[str] = []
+
+    def start(name: str) -> None:
+        try:
+            with run_lock(tmp_path, name):
+                took.append(name)
+                release.wait(10)
+        except RunLocked:
+            refused.append(name)
+
+    monkeypatch.setattr(lock, "_holder", look_together)
+    threads = [threading.Thread(target=start, args=(f"run-{i}",)) for i in range(2)]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + 12
+    while len(took) + len(refused) < 2 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    release.set()
+    for thread in threads:
+        thread.join(10)
+    assert len(took) == 1 and len(refused) == 1
+
+
+def test_a_lock_left_by_a_dead_process_is_taken_over(tmp_path: Path) -> None:
+    path = tmp_path / ".contexer" / "run.lock"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"pid": 2**22 + 12345, "run": "gone"}), encoding="utf-8")
+    with run_lock(tmp_path, "run-new"):
+        assert json.loads(path.read_text(encoding="utf-8"))["run"] == "run-new"
+    assert not path.exists()

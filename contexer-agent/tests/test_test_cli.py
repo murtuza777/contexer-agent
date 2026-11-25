@@ -774,3 +774,16 @@ def test_a_failure_the_app_explained_is_listed_for_the_person_and_not_asserted_a
     ]
     assert not (folder / "fix-prompt.md").exists()
     assert "where the app said why" in (folder / "report.html").read_text(encoding="utf-8").lower()
+
+
+def test_the_test_command_waits_its_turn_while_a_run_works_in_the_project(demo: Path, scripted: Any) -> None:
+    from contexer.checkpoint.lock import run_lock
+
+    scripted()
+    with run_lock(demo, "20261119-000000-busy"):
+        result = _run(INTENT, "--dir", str(demo), "--yes")
+
+    out = _plain(result.output)
+    assert result.exit_code == 2, result.output
+    assert "20261119-000000-busy" in out and "already" in out
+    assert "Traceback" not in result.output

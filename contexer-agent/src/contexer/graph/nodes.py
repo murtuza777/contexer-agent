@@ -45,6 +45,7 @@ from contexer.crew.reviewer import DEFAULT_REVIEW_STEPS, ReviewNote, review, rev
 from contexer.crew.transcript import Masker
 from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, TriageDecision, triage
 from contexer.crew.untrusted import quoted_goal
+from contexer.evidence.rundir import write_whole
 from contexer.evidence.test_report import AgentUsage
 from contexer.gate.decision import decide
 from contexer.gate.models import GateDecision, RunResult
@@ -1088,7 +1089,7 @@ def _cut_short(ctx: RunContext, terminal: Any, reason: Callable[[str, str], str]
     put_back = "the best attempt reached" if best is not None else "the project as it was"
     kept = ""
     # Where the unfinished work is, for a resume that needs it back (context.py: STOPPED_FILE).
-    (ctx.run.path / STOPPED_FILE).write_text(unfinished, encoding="utf-8")
+    write_whole(ctx.run.path / STOPPED_FILE, unfinished)
     if ctx.shadow.changed_paths(target, unfinished):
         ctx.shadow.restore(target)
         kept = f" The unfinished work is kept: `contexer restore {ctx.run.run_id} --stopped` brings it back."
