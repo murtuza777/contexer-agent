@@ -678,6 +678,17 @@ an agent a person is already using calls Contexer (not built).
 - **Files.** `cli/init_cli.py`, new `integrations/`.
 - **Accept.** In Claude Code on the demo app, "fix the count" ends with
   the agent having run `contexer verify` and reporting its result.
+- **Built 2026-11-26.** Acceptance run made in Claude Code 2.1.325 on the
+  todo fixture with the count bug, after `contexer init --agent
+  claude-code`: the agent loaded the skill, called `contexer_checks`,
+  edited `app.js`, called `contexer_verify` and reported "PASS: 7
+  verified"; the stop hook then replayed and let it stop (10 turns). The
+  same prompt with no Contexer set up ended with "I haven't run it in a
+  browser or against the checks". The run was headless with the four
+  tools allowed on the command line; an interactive session asks once.
+  Open: no run in Codex or OpenCode (Codex's file shapes are from its
+  documentation); OpenCode's server is not written, only pointed to;
+  after a passing `contexer_verify` the stop hook replays once more.
 
 ### DX-2 Evidence in the pull request
 - **Type.** New capability. **Priority.** P1. **Effort.** M.

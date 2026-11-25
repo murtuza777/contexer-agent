@@ -19,6 +19,11 @@ and [the tickets](docs/production/tickets.md).
   and refuses the stop with what the browser saw. After three refusals in a row it lets the stop
   through and says the work is not proven. Nothing is replayed when no file and no contract changed
   since the last pass. OpenCode has no hook that can refuse a stop, and `init` says so.
+- **`contexer init --agent NAME` sets a coding agent up in one command.** Beside the stop hook it
+  registers the MCP server (`.mcp.json` for Claude Code, `.codex/config.toml` for Codex) and writes
+  the agent's instructions (a skill for Claude Code, a marked section of `AGENTS.md` for Codex and
+  OpenCode): read the checks first, verify before saying done, never edit `.contexer/`. Existing
+  files are kept. It warns when `contexer` is not on the PATH.
 
 ### Fixed
 
