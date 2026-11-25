@@ -15,7 +15,9 @@ ignored are removed, which is what makes a revert a real revert.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -51,6 +53,9 @@ DEFAULT_EXCLUDES = (
 # Paths git ignored at some snapshot of this project. Once here, a path stays out of every later snapshot.
 _FROZEN_FILE = "contexer-frozen"
 _MAX_FROZEN = 5000
+# What a run may be called where its snapshots are listed or dropped: one ref-name component, nothing git reads as a pattern.
+_RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+_PRUNE_PROGRAM = "gc.recentObjectsHook"
 
 _IDENTITY = {
     "GIT_AUTHOR_NAME": "contexer",
@@ -120,6 +125,42 @@ class ShadowRepo:
     def diff(self, a: str, b: str, max_chars: int = 200_000) -> str:
         text = self._git("diff", "--no-ext-diff", "--no-textconv", "--no-color", "--stat", "--patch", a, b)
         return text if len(text) <= max_chars else text[:max_chars] + "\n... (diff truncated)\n"
+
+    def run_refs(self, run: str) -> list[str]:
+        """The snapshots one run owns, as ``<run>/<name>``. A run is named exactly: never a pattern, never a path."""
+        if not _RUN_NAME.fullmatch(run):
+            raise SnapshotError(f"'{run}' is not the name of a run")
+        if not (self.git_dir / "HEAD").is_file():
+            return []
+        prefix = f"refs/contexer/{run}/"
+        listed = self._git("for-each-ref", "--format=%(refname)", prefix).splitlines()
+        return sorted(ref.removeprefix("refs/contexer/") for ref in listed if ref.startswith(prefix))
+
+    def drop_run(self, run: str) -> int:
+        """Forget one run's snapshots; return how many there were. The space comes back at the next :meth:`collect`."""
+        refs = self.run_refs(run)
+        for ref in refs:
+            self._git("update-ref", "-d", f"refs/contexer/{ref}")
+        return len(refs)
+
+    def collect(self) -> None:
+        """Delete what no remaining snapshot needs. ``gc.auto`` is 0, so nothing else ever does this."""
+        if not (self.git_dir / "HEAD").is_file():
+            return
+        # `gc.recentObjectsHook` names a program that git starts while pruning, and no command-line setting
+        # turns it off. Contexer never sets it, so one found in this repository's config was planted: remove it.
+        if self._configured(_PRUNE_PROGRAM):
+            with contextlib.suppress(SnapshotError):
+                self._git("config", "--local", "--unset-all", _PRUNE_PROGRAM)
+            if self._configured(_PRUNE_PROGRAM):
+                raise SnapshotError(f"{_PRUNE_PROGRAM} is set in your git configuration; nothing was collected")
+        self._git("gc", "--prune=now", "--quiet")
+
+    def _configured(self, key: str) -> bool:
+        try:
+            return bool(self._git("config", "--get-all", key).strip())
+        except SnapshotError:  # git config exits 1 for a key that is not set
+            return False
 
     # -- internals ----------------------------------------------------------------
 
