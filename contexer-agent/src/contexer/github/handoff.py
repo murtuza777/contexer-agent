@@ -141,14 +141,19 @@ def hand_off(
     # What is scanned is what is staged, all of it. The diff a run keeps is cut to size, and a lockfile alone can fill it.
     staged = _git(plan.root, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--no-color", "--", *paths, timeout=120)
     automatic = contract.approval is not None and contract.approval.by == AUTOMATIC_APPROVAL
-    held = holds_pull_request(outcome.review) or automatic
+    flaky = flaky_checks(outcome)
+    held = holds_pull_request(outcome.review) or automatic or bool(flaky)
     succeeded = outcome.terminal == "succeeded" and not held
     if held and outcome.terminal == "succeeded":
-        note += (
-            "Opened as a draft: the checks were approved with --yes and nobody read them. "
-            if automatic and not holds_pull_request(outcome.review)
-            else "Opened as a draft: the review has a high-severity note. "
-        )
+        if holds_pull_request(outcome.review):
+            note += "Opened as a draft: the review has a high-severity note. "
+        elif automatic:
+            note += "Opened as a draft: the checks were approved with --yes and nobody read them. "
+        if flaky:
+            note += (
+                f"Opened as a draft: {', '.join(flaky)} failed on the first replay and passed on the second (flaky). "
+                "An intermittent bug looks the same. "
+            )
     try:
         _git_or_fail(plan.root, *quiet, *_identity(plan.root), "commit", "--quiet", "-m", _commit_message(outcome, contract))
     except HandoffError as exc:  # a pre-commit hook, usually
@@ -202,6 +207,17 @@ def hand_off(
     return Handoff(branch, commit, True, str(pull.get("html_url") or compare), True, bool(pull.get("draft", not succeeded)), note)
 
 
+def flaky_checks(outcome: RunOutcome) -> list[str]:
+    """The checks of the final result that failed on the first replay and passed on the second."""
+    final = outcome.final
+    found: list[str] = []
+    for held in final.contracts if final is not None else []:
+        for result in held.verification.criteria_results if held.verification is not None else []:
+            if result.check_result is not None and result.check_result.flaky:
+                found.append(result.criterion_id)
+    return found
+
+
 # -- the pull request ---------------------------------------------------------------------
 
 
@@ -231,6 +247,14 @@ def pull_request_body(
                 "",
                 "⚠️ **Opened as a draft:** reading the diff found a high-severity note (see Review below). "
                 "The checks passed; a person should look at it before this is merged.",
+            ]
+        flaky = flaky_checks(outcome)
+        if flaky:
+            lines += [
+                "",
+                f"⚠️ **Opened as a draft: flaky.** {', '.join(f'`{_inert(name)}`' for name in flaky)} failed on the "
+                "first replay and passed on the second. A slow page and an intermittent bug look the same; a person "
+                "should look before this is merged.",
             ]
     else:
         lines.append(f"⚠️ **Not done yet:** {_inert(outcome.reason)}")

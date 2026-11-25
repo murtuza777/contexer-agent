@@ -57,6 +57,10 @@ class CheckRunner:
 
     With an ``artifacts_dir``, each check leaves a screenshot of the page as it
     was judged, and (per ``trace``) a Playwright trace for the trace viewer.
+
+    A check that fails is replayed once more, after the reset. One that then
+    passes is marked ``flaky``: it counts as passed and is named as flaky
+    wherever the result is shown. ``replay_failed=False`` turns that off.
     """
 
     def __init__(
@@ -67,7 +71,9 @@ class CheckRunner:
         expect_timeout: float = 2.0,
         settle_ms: int = 250,
         trace: TraceMode = "off",
+        replay_failed: bool = True,
     ) -> None:
+        self.replay_failed = replay_failed
         self.headless = headless
         self.navigation_timeout = navigation_timeout
         self.action_timeout = action_timeout
@@ -117,7 +123,11 @@ class CheckRunner:
                                 CheckResult(criterion_id=cid, passed=False, failed_step=f"the [app] reset ({problem})")
                             )
                             continue
-                        results.append(await self._run_one(browser, url, cid, check, artifacts_dir, storage_state))
+                        result = await self._run_one(browser, url, cid, check, artifacts_dir, storage_state)
+                        # A check that could not start for want of a sign-in fails the same way every time.
+                        if not result.passed and self.replay_failed and not (check.login is True and storage_state is None):
+                            result = await self._replay(browser, url, cid, check, artifacts_dir, storage_state, before_each, result)
+                        results.append(result)
                     return results
                 finally:
                     await browser.close()
@@ -127,6 +137,28 @@ class CheckRunner:
                 CheckResult(criterion_id=cid, passed=False, failed_step=f"browser launch ({_short(exc)})")
                 for cid, _ in checks
             ]
+
+    async def _replay(
+        self,
+        browser: Browser,
+        url: str,
+        criterion_id: str,
+        check: Check,
+        artifacts_dir: Path | None,
+        storage_state: dict[str, Any] | None,
+        before_each: Callable[[], Awaitable[str | None]] | None,
+        first: CheckResult,
+    ) -> CheckResult:
+        """Run a failed check once more, from a reset app. Passing now makes it flaky, not failed."""
+        if before_each is not None and await before_each():
+            return first  # the app could not be reset, so a second replay would prove nothing
+        second = await self._run_one(browser, url, criterion_id, check, artifacts_dir, storage_state)
+        second.duration_seconds += first.duration_seconds
+        if second.passed:
+            second.flaky = True
+            second.first_failure = first.summary()
+            second.trace = second.trace or first.trace  # the trace of the replay that failed
+        return second
 
     async def sign_in(
         self,

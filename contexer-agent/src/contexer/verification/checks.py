@@ -433,13 +433,21 @@ class CheckResult(BaseModel):
     # Evidence files, when the runner was given an artifacts directory.
     screenshot: str | None = None
     trace: str | None = None
+    # The first replay failed and the second, after a reset, passed. The check counts as passed, and is
+    # named wherever the result is shown: an intermittent bug looks the same as a slow page.
+    flaky: bool = False
+    # What the first replay saw, when ``flaky``.
+    first_failure: str = ""
 
     def summary(self) -> str:
         """One-line evidence statement."""
         if self.failed_step:
             return f"Could not perform {self.failed_step}"
         if self.passed:
-            return "Executed in browser: " + "; ".join(o.description for o in self.outcomes)
+            proven = "Executed in browser: " + "; ".join(o.description for o in self.outcomes)
+            if self.flaky:
+                return f"{proven} (flaky: the first replay failed, the second passed. First: {self.first_failure})"
+            return proven
         failed = [o for o in self.outcomes if not o.passed]
         return "; ".join(f"expected {o.description}, got {o.actual}" for o in failed)
 
@@ -451,6 +459,7 @@ class CheckResult(BaseModel):
             update={
                 "failed_step": redact(self.failed_step, values) if self.failed_step else self.failed_step,
                 "ui_at_failure": redact(self.ui_at_failure, values),
+                "first_failure": redact(self.first_failure, values),
                 "page_errors": [redact(e, values) for e in self.page_errors],
                 "console_errors": [redact(e, values) for e in self.console_errors],
                 "dialogs": [redact(d, values) for d in self.dialogs],

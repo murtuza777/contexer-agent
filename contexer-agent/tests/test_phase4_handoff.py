@@ -406,3 +406,38 @@ async def test_git_settings_changed_during_the_run_stop_the_hand_off(repo: Path)
     with pytest.raises(HandoffError, match=r"\.git/config"):
         hand_off(plan, outcome, contract, client_factory=PullsOnly().factory)
     assert git(repo, "branch", "--show-current") == "main"  # nothing was started
+
+
+# -- REL-6: a flaky pass ------------------------------------------------------------------------
+
+
+async def test_a_flaky_pass_costs_no_repair_turn_and_holds_the_pull_request_as_a_draft(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
+    from contexer.verification.checks import CheckResult, ExpectationOutcome
+    from contexer.verification.runner import CheckRunner
+
+    real = CheckRunner._run_one
+    failed_once: list[str] = []
+
+    async def first_replay_fails(self: CheckRunner, browser: Any, url: str, criterion_id: str, *args: Any, **kwargs: Any) -> CheckResult:
+        if not failed_once:
+            failed_once.append(criterion_id)
+            seen = ExpectationOutcome(description="the list shows 1 task", passed=False, actual="0 tasks")
+            return CheckResult(criterion_id=criterion_id, passed=False, outcomes=[seen])
+        return await real(self, browser, url, criterion_id, *args, **kwargs)
+
+    monkeypatch.setattr(CheckRunner, "_run_one", first_replay_fails)
+    plan = plan_handoff(repo)
+    outcome, contract = await _graph_run(repo, [{"app.js": GOOD_JS}], rounds=2)
+
+    assert outcome.terminal == "succeeded"
+    assert len(outcome.attempts) == 1  # the flaky check was not sent back to the coding agent
+    github_ = PullsOnly()
+    handoff = hand_off(plan, outcome, contract, client_factory=github_.factory)
+    assert handoff is not None and handoff.draft
+    [flaky] = failed_once
+    assert "flaky" in handoff.note and flaky in handoff.note
+    [pull] = github_.pulls
+    assert pull["draft"] is True
+    assert "flaky" in pull["body"] and flaky in pull["body"]
+    report = (Path(outcome.run_dir) / "report.html").read_text(encoding="utf-8")
+    assert "flaky" in report.lower()
