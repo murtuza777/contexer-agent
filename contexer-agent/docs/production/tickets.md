@@ -696,6 +696,15 @@ an agent a person is already using calls Contexer (not built).
 - **Do.** `contexer runs prune --keep N` removes run folders and collects
   the snapshot repository when no run holds the lock.
 - **Files.** `cli/runs_cli.py`, `checkpoint/shadow.py`.
+- **Built 2026-11-26** as a sub-command of `runs` (see
+  [architecture §10](../architecture.md#10-snapshots)); `--keep` defaults to
+  20 and may be 0; an unfinished run is kept unless `--include-unfinished`.
+  Open: `verify` and `replay` do not take the run lock, so `--keep 0` during
+  one of them removes the folder it is writing; snapshots whose run folder
+  was deleted by hand are not found; snapshots taken without a name are
+  collected only when a prune removes at least one run; there is no
+  `--older-than` and no automatic pruning; tested on Windows only before the
+  pull request (junctions; the symlink path runs in CI on Linux).
 
 ---
 

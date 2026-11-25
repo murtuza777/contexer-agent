@@ -13,6 +13,13 @@ and [the tickets](docs/production/tickets.md).
   (replay it in a browser and say what was seen), `contexer_brief` (the instruction for it) and
   `contexer_status` (the last run). No tool approves a contract, edits one or changes a setting, and
   a contract is named by its id, never by a path. Adds the dependency `mcp>=2.3,<3.0`.
+- **`contexer runs prune --keep N`: remove old runs.** Run folders and snapshots were never removed.
+  Prune keeps the newest N runs (20 by default), lists the rest with their sizes, asks, then removes
+  those folders and their snapshots and collects the snapshot repository, reporting the space freed.
+  `--dry-run` only lists; `--yes` does not ask; with no terminal and no `--yes` nothing is removed.
+  It removes nothing while a run holds the project's lock (exit 2). A stopped run that can still be
+  resumed is kept unless `--include-unfinished` is given. It deletes only run folders directly inside
+  `.contexer/runs` and never follows a symlink or a junction. `contexer runs` itself is unchanged.
 
 ### Fixed
 

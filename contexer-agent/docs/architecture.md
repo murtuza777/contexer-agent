@@ -106,7 +106,7 @@ A `contexer run "GOAL" --pr`, end to end:
 
 | Package | Responsibility |
 | --- | --- |
-| `cli/` | The commands. `term.py` is the shared terminal design; `run_cli`, `gate_cli` (verify, replay, contract), `issue_cli`, `setup_cli` (setup, models), `doctor_cli`, `demo_cli`, `init_cli`, `runs_cli` (runs, restore), `bench_cli` |
+| `cli/` | The commands. `term.py` is the shared terminal design; `run_cli`, `gate_cli` (verify, replay, contract), `issue_cli`, `setup_cli` (setup, models), `doctor_cli`, `demo_cli`, `init_cli`, `runs_cli` (runs, runs prune, restore), `bench_cli` |
 | `contract/` | `Contract` model, canonical hash, approval, file store |
 | `verification/` | The check language (`checks.py`), the Playwright runner (`runner.py`), the verifier (`verifier.py`), result models |
 | `observer/` | Page observation: ARIA snapshot, password masking, Chromium status |
@@ -703,7 +703,52 @@ intent → approve → coder_turn → guard_snapshot → ensure_app → test →
   (a hook, a setting that names a program) is started.
 
 Refs per run: `<run>/0` (baseline), `<run>/<n>` (attempts), `<run>/stopped`,
-`<run>/undo` (before a `contexer restore`).
+`<run>/undo` (before a `contexer restore`), `<run>/before-resume`.
+
+### Pruning (`contexer runs prune`, `cli/runs_cli.py: prune`)
+
+Nothing else removes run folders or snapshots, and `gc.auto` is 0, so both
+grow until a person prunes.
+
+- **What goes.** Direct children of `.contexer/runs` that are plain folders
+  named like a run id (`YYYYMMDD-HHMMSS-xxxx`), sorted by name, newest first
+  as `contexer runs` lists them; the first `--keep N` (default 20, 0 allowed)
+  stay. A symlink or a Windows junction is never entered and is left where it
+  is, also when it is named like a run; a `runs` folder or a `.contexer` that
+  is itself a link is refused. Other folders and files are left and named.
+  Nothing outside `runs/` and `shadow.git` is opened for writing.
+- **Unfinished runs are kept.** A run older than the newest N stays when it
+  has `stopped.ref`, when its `run.json` ends in `cancelled` or
+  `internal_error`, or when it has a checkpoint and no `run.json` (killed):
+  `run --resume` can continue it, and its unfinished work exists only in its
+  `stopped` snapshot. The output names it. `--include-unfinished` removes
+  these too.
+- **Lock.** The run lock is taken before the list is made and held until the
+  last removal. When a run holds it, nothing is removed and the command
+  exits 2 with the holder's name. `--dry-run`, and a call with no terminal
+  and no `--yes`, remove nothing and so take no lock.
+- **Asking.** The list (folder size, number of snapshots, outcome) is
+  printed, then a yes/no question with "no" as the default. `--yes` skips
+  the question. With no terminal and no `--yes` nothing is removed and the
+  exit code is 2.
+- **Removing.** The folder first (`shutil.rmtree`, which removes a link
+  inside a run as a link; read-only files are made writable and retried; on
+  Windows the `\\?\` path form lifts the 260-character limit), then
+  `ShadowRepo.drop_run`, which deletes `refs/contexer/<run>/*` for exactly
+  that run. A folder that could not be removed keeps its snapshots, and the
+  exit code is 1.
+- **Collecting.** `ShadowRepo.collect` runs `git gc --prune=now` with the
+  same no-hook settings as every other call. `gc.recentObjectsHook` names a
+  program that git starts while pruning and that no command-line setting
+  turns off; one found in the snapshot repository's own config is removed
+  first, and if it is still set (in the person's global config) nothing is
+  collected and the command says so. The space freed is the run folders plus
+  the difference in the size of `shadow.git`. Objects the index holds (the
+  files as they were at the last snapshot) are not freed.
+- **Not covered.** `contexer verify` and `contexer replay` do not take the
+  run lock, so `--keep 0` during one of them removes the folder it is
+  writing to. Snapshots whose run folder was deleted by hand are not found
+  and stay.
 
 ## 11. Coding agent adapters
 
@@ -1221,7 +1266,7 @@ the help.
 | Group (`contexer --help`) | Commands |
 | --- | --- |
 | Get started | `setup`, `demo`, `doctor`, `init` |
-| Build and prove | `test`, `run`, `verify`, `contract` (`draft`, `list`, `show`, `approve`), `runs`, `restore`, `mcp` |
+| Build and prove | `test`, `run`, `verify`, `contract` (`draft`, `list`, `show`, `approve`), `runs` (`prune`), `restore`, `mcp` |
 | CI and GitHub | `replay`, `issue` (`draft`, `build`, `event`) |
 | More | `models`, `bench` |
 
