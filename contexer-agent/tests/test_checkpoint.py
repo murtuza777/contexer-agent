@@ -190,3 +190,67 @@ def test_a_hook_or_a_setting_planted_in_the_snapshot_repository_does_not_run(tmp
 
     assert not marker.exists()
     assert (tmp_path / "src/app.js").read_text(encoding="utf-8") == "let a = 1;\n"
+
+
+def test_dropping_a_runs_snapshots_and_collecting_leaves_the_other_runs_whole(tmp_path: Path) -> None:
+    _write(tmp_path, "app.js", "one\n")
+    shadow = ShadowRepo(tmp_path)
+    old = shadow.snapshot("20261101-100000-aaaa/0")
+    _write(tmp_path, "app.js", "two\n")
+    shadow.snapshot("20261101-100000-aaaa/stopped")
+    new = shadow.snapshot("20261101-100000-aaaab/0")  # a run whose name begins with the other's
+    _write(tmp_path, "app.js", "three\n")
+    only_old = shadow._git("rev-parse", f"{old}:app.js").strip()
+
+    assert shadow.run_refs("20261101-100000-aaaa") == ["20261101-100000-aaaa/0", "20261101-100000-aaaa/stopped"]
+    assert shadow.drop_run("20261101-100000-aaaa") == 2
+    shadow.collect()
+
+    assert shadow.resolve("20261101-100000-aaaa/0") is None and shadow.run_refs("20261101-100000-aaaa") == []
+    assert shadow.resolve("20261101-100000-aaaab/0") == new
+    assert subprocess.run(["git", "--git-dir", str(shadow.git_dir), "cat-file", "-e", only_old], capture_output=True).returncode != 0
+    shadow.restore(new)
+    assert (tmp_path / "app.js").read_text(encoding="utf-8") == "two\n"
+
+
+def test_a_run_name_that_is_a_pattern_or_a_path_drops_nothing(tmp_path: Path) -> None:
+    import pytest
+
+    from contexer.checkpoint import SnapshotError
+
+    _write(tmp_path, "app.js", "one\n")
+    shadow = ShadowRepo(tmp_path)
+    shadow.snapshot("20261101-100000-aaaa/0")
+    for name in ("*", "", "2026*", "a/b", "..", "20261101-100000-aaaa/0"):
+        with pytest.raises(SnapshotError):
+            shadow.drop_run(name)
+    assert shadow.resolve("20261101-100000-aaaa/0")
+    assert ShadowRepo(tmp_path / "nothing-here").drop_run("20261101-100000-aaaa") == 0  # no repository: nothing to do
+    ShadowRepo(tmp_path / "nothing-here").collect()
+    assert not (tmp_path / "nothing-here").exists()
+
+
+def test_collecting_starts_no_program_planted_in_the_snapshot_repository(tmp_path: Path) -> None:
+    import sys
+
+    _write(tmp_path, "app.js", "one\n")
+    shadow = ShadowRepo(tmp_path)
+    shadow.snapshot("20261101-100000-aaaa/0")
+    _write(tmp_path, "app.js", "two\n")
+    shadow.snapshot("20261101-100000-bbbb/0")
+    marker = tmp_path.parent / "ran.txt"
+    plant = f'"{Path(sys.executable).as_posix()}" -c "open(r\'{marker.as_posix()}\', \'w\').write(\'x\')"'
+    hooks = shadow.git_dir / "hooks"
+    hooks.mkdir(exist_ok=True)
+    for name in ("pre-auto-gc", "reference-transaction"):
+        hook = hooks / name
+        hook.write_text("#!/bin/sh\n" + plant + "\n", encoding="utf-8", newline="\n")
+        hook.chmod(0o755)
+    with (shadow.git_dir / "config").open("a", encoding="utf-8", newline="\n") as config:
+        config.write("[gc]\n\trecentObjectsHook = " + plant.replace('"', '\\"') + "\n")
+
+    shadow.drop_run("20261101-100000-aaaa")
+    shadow.collect()
+
+    assert not marker.exists()
+    assert shadow.resolve("20261101-100000-bbbb/0")

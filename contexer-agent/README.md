@@ -68,6 +68,7 @@ The same groups as `contexer --help`:
 | `contexer contract draft "GOAL"` / `list` / `show ID` | Create and review contracts |
 | `contexer contract approve ID` | Lock a contract at its current content (sha256). Any later edit needs re-approval |
 | `contexer runs` | Recent runs with outcome, check counts and report paths |
+| `contexer runs prune --keep N` | Remove all but the newest N run folders (20 by default) and their snapshots. Lists them with sizes and asks first; `--dry-run` only lists, `--yes` does not ask. A stopped run that can still be resumed is kept unless `--include-unfinished` is given |
 | `contexer restore RUN --attempt N` / `--stopped` / `--undo` | Put the files back to a snapshot a run took |
 | `contexer mcp` | Serve the approved checks to the coding agent you already work in, over MCP (see below) |
 | `contexer init --agent NAME` | Set up the coding agent you work in: the MCP server, a stop hook and its instructions (see below) |
