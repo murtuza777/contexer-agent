@@ -623,6 +623,18 @@ an agent a person is already using calls Contexer (not built).
 - **Accept.** The brief names only files inside the project; a steered
   Planner cannot point at `.env` or `.contexer/`; the tool audit lists it.
 - **Tests.** As for the Diagnoser, with a scripted model.
+- **Built 2026-11-26**, without `CTX-5`: the Planner reads the goal, the
+  checks and the project, not tickets or `AGENTS.md`. It is its own node
+  (`plan`, between `approve` and the first `coder_turn`), so `graph/routing.py`
+  and `graph/state.py` changed too, and `RunSettings.plan` /
+  `contexer run --no-plan` turn it off (`BRIEF-2` needs both arms). Open:
+  no live run has been made, so the prompt, the step cap of 12 and the
+  token figures in the estimate are untested against a real model; the
+  brief is in the first instruction only, not in a fresh-session repair or
+  a job restated after a correction; a file the change must create cannot
+  be in the file lists (the check is "exists"); `contexer_brief` in
+  `contexer mcp` still returns the instruction without a brief; the
+  seeded-bug benchmark runs with the Planner off.
 
 ### BRIEF-2 Does the brief pay for itself
 - **Type.** Evaluation. **Priority.** P1. **Effort.** M. **Depends on.**
