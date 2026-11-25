@@ -257,6 +257,8 @@ correct app fails "shows 2 entries" because an earlier check added one.
 | `opencode/` | The OpenCode HTTP client the OpenCode adapter uses |
 | `demo/` | The todo app with a seeded bug behind `contexer demo` |
 
+What each command sends to a model, every other network destination and what
+stays on disk are in [docs/data-and-limits.md](docs/data-and-limits.md).
 The full technical reference is [docs/architecture.md](docs/architecture.md).
 The design of the agents, with tickets and results per phase, is in
 [docs/agentic/architecture.md](docs/agentic/architecture.md). All documents

@@ -488,6 +488,12 @@ How 0.5.0 was built, phase by phase with tickets and results:
 
 ## Docs
 
+Before you allow it on a repository, read
+[what Contexer sends, and what it does not do](contexer-agent/docs/data-and-limits.md).
+Contexer calls the model provider you configured with your own key and has no
+telemetry. It tests web apps only and never edits application code; the coding
+agent it starts does, with that agent's own permissions and network access.
+
 The full index is in [contexer-agent/docs](contexer-agent/docs/README.md).
 
 | Document | Covers |
@@ -495,6 +501,7 @@ The full index is in [contexer-agent/docs](contexer-agent/docs/README.md).
 | [Try it yourself](contexer-agent/docs/try-it.md) | Install, set up and use it on your app, step by step |
 | [Developer guide](contexer-agent/README.md) | Setup, commands, `contexer.toml` and tests |
 | [Architecture](contexer-agent/docs/architecture.md) | What exists today: every module, data format, algorithm and security measure |
+| [What Contexer sends, and what it does not do](contexer-agent/docs/data-and-limits.md) | Which command calls which model, what each prompt contains, what stays on disk, and the limits |
 | [Agentic harness](contexer-agent/docs/agentic/architecture.md) | The design of Contexer's agents, with tickets and results per phase |
 | [Changelog](contexer-agent/CHANGELOG.md) | What changed in each release |
 | [Contributing](CONTRIBUTING.md) | How to set up, test, commit and open a pull request |

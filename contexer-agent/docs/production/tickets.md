@@ -756,6 +756,14 @@ an agent a person is already using calls Contexer (not built).
 ## Documents and clean-up
 
 ### DOC-1 What Contexer sends, and what it does not do
+- **Built 2026-11-26.** [data-and-limits.md](../data-and-limits.md), linked
+  from both READMEs, `SECURITY.md` and the docs index. Left open, all found
+  while reading the code and none changed here: the drafting model's prompt
+  carries page and source text unmasked and outside `<untrusted>`; masking
+  covers tool results, not a diff or server log placed in a prompt; the
+  coding agent inherits every model key in the environment, which
+  `SECURITY.md` lists as a thing to report; what Chromium and the libraries
+  send on their own was not examined.
 - **Type.** Documentation. **Priority.** P0. **Effort.** S.
 - **Do.** One page: which text goes to which provider for each command;
   that nothing else leaves the machine; web apps only; never writes code;
