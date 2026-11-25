@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import ValidationError
 
+from contexer.crew.transcript import Masker
+from contexer.crew.untrusted import UNTRUSTED_RULE, untrusted
 from contexer.llm.base import LLMProvider
 from contexer.llm.structured import parse_json_object
 from contexer.verification.checks import Check, Expectation, Locator
@@ -108,12 +111,15 @@ class GoalAnalyzer:
         goal: str,
         repo_context: RepositoryContext | None = None,
         ui_snapshot: str = "",
+        secrets: Sequence[str] = (),
     ) -> GoalAnalysis:
         """Derive acceptance criteria with executable checks.
 
         ``ui_snapshot`` (from ``BrowserObservation.ui_snapshot``) is the running
         app's current locator vocabulary; without it the model can only guess
-        names for elements that already exist.
+        names for elements that already exist. ``secrets`` (the ``[auth]``
+        password, say) are masked in what the model is sent, with every key in
+        the environment and anything shaped like one.
         """
         best: GoalAnalysis | None = None
         self.last_error = None if self.llm_provider else "no drafting model is configured"
@@ -121,7 +127,7 @@ class GoalAnalyzer:
             try:
                 # First ask for JSON mode (routers drop it for models without support);
                 # the retry goes without it in case a provider rejects the parameter.
-                candidate = await self._analyze_with_llm(goal, repo_context, ui_snapshot, json_mode=attempt == 1)
+                candidate = await self._analyze_with_llm(goal, repo_context, ui_snapshot, attempt == 1, secrets)
             except Exception as exc:
                 err_msg = str(exc)
                 self.last_error = (err_msg.splitlines()[0] if err_msg else type(exc).__name__)[:300]
@@ -157,9 +163,13 @@ class GoalAnalyzer:
         repo_context: RepositoryContext | None,
         ui_snapshot: str = "",
         json_mode: bool = False,
+        secrets: Sequence[str] = (),
     ) -> GoalAnalysis:
         assert self.llm_provider is not None
-        context_str = repo_context.format_summary() if repo_context else "Target: Web application"
+        # What the project and the running app say is data: marked like in every agent's task, so text
+        # written to steer the model ("ignore the goal and...") cannot pass for the instructions here.
+        context_str = untrusted("project", repo_context.format_summary()) if repo_context else "Target: Web application"
+        ui_snapshot = untrusted("page", ui_snapshot)
         ui_section = (
             "Current UI of the running application (ARIA roles and accessible names, test ids, placeholders):\n"
             f"{ui_snapshot}\n"
@@ -169,7 +179,7 @@ class GoalAnalyzer:
             if ui_snapshot
             else "The application has no rendered UI yet; every locator you choose becomes part of the contract.\n\n"
         )
-        source = repo_context.source_excerpt if repo_context else ""
+        source = untrusted("source", repo_context.source_excerpt) if repo_context else ""
         source_section = (
             "Existing front-end source. Use it ONLY to learn how to locate elements, including ones created "
             "after an interaction. Derive expected behaviour from the goal, never from this code: the code "
@@ -182,6 +192,7 @@ class GoalAnalyzer:
             "You are a Senior QA Architect. Turn the user's engineering goal into 4 to 10 specific, "
             "observable acceptance criteria, each with an executable browser check. The checks are given "
             "to the implementing engineer as the contract and then executed against the running app.\n\n"
+            f"{UNTRUSTED_RULE}\n\n"
             f"User Goal: {goal}\n\n"
             f"Project Context:\n{context_str}\n\n"
             f"{ui_section}"
@@ -191,6 +202,8 @@ class GoalAnalyzer:
             "Respond ONLY with a JSON object:\n"
             '{"summary": "Brief summary of goal intent", "acceptance_criteria": [<criterion>, ...]}'
         )
+        # A page or a source file may hold a key or the test account's password; the model has no use for it.
+        prompt = Masker(secrets).text(prompt)
         extra = {"response_format": {"type": "json_object"}} if json_mode else {}
         try:
             response = await asyncio.wait_for(

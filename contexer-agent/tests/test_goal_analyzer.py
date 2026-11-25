@@ -230,3 +230,25 @@ async def test_a_model_that_never_answers_times_out_and_falls_back() -> None:
 
     analysis = await GoalAnalyzer(llm_provider=Hanging(), timeout=0.2).analyze("Add a 'Save' button")
     assert analysis.generated_by == "rules"
+
+
+@pytest.mark.anyio
+async def test_a_key_or_a_sign_in_password_in_the_page_or_the_source_is_masked_before_drafting(fake_llm, monkeypatch) -> None:
+    from contexer.verification.checks import MASK
+    from contexer.workflow.inspector import RepositoryContext
+
+    key = "sk-or-v1-" + "t3stK3y0" * 5
+    exported = "made-up-exported-key-0f3a9c"
+    password = "made-up-Passw0rd-417"
+    monkeypatch.setenv("OPENROUTER_API_KEY", exported)
+    context = RepositoryContext(
+        project_name="todo", project_path=".", source_excerpt=f'const KEY = "{key}"; const OTHER = "{exported}";'
+    )
+    llm = fake_llm(json.dumps(LLM_CRITERIA))
+    await GoalAnalyzer(llm_provider=llm).analyze(
+        "add a shopping cart", context, f"heading 'Signed in, password {password}'", secrets=[password]
+    )
+    prompt = llm.prompts[0]
+    assert "const KEY" in prompt and "Signed in, password " + MASK in prompt
+    assert key not in prompt and exported not in prompt and password not in prompt
+    assert "add a shopping cart" in prompt and '"kind": "no_errors"' in prompt  # the goal and the check language are whole
