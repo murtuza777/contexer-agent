@@ -6,6 +6,11 @@ probed, and if the server announces a different port in its log than the one
 it was given, that URL is probed too. If the process exits first, the error
 carries the last log lines, because build errors are the most common reason a
 dev server never becomes ready.
+
+What the app prints is masked as each line is recorded (``_record``), before
+it is kept in memory or written to ``server.log``. Every reader of the log
+(the result, the report, a repair prompt, an agent, the error of a server
+that did not start) is given the masked text, and none has to remember to.
 """
 
 from __future__ import annotations
@@ -16,13 +21,14 @@ import socket
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import IO
 
 import httpx
 
 from contexer.appserver.detect import StartPlan
+from contexer.crew.transcript import Masker
 from contexer.procutil import ProcessTree, child_env, spawn_tree
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
@@ -57,8 +63,12 @@ class DevServer:
         plan: StartPlan,
         log_path: Path | None = None,
         on_status: Callable[[str], None] | None = None,
+        secrets: Sequence[str] = (),
     ) -> None:
         self.plan = plan
+        # ``secrets``: values the caller knows must not be kept (the [auth] password). The masker adds
+        # the keys in the environment and anything shaped like one.
+        self._masker = Masker(secrets)
         self.log_path = log_path
         self.on_status = on_status or (lambda _msg: None)
         self.url: str | None = None
@@ -167,6 +177,7 @@ class DevServer:
             self._record(_ANSI.sub("", raw.decode("utf-8", errors="replace")).rstrip())
 
     def _record(self, line: str) -> None:
+        line = self._masker.text(line)  # an app may print a key or a password when it starts
         with self._lock:
             self._lines.append(line)
             if self._log_file is not None:
