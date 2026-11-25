@@ -1019,6 +1019,7 @@ write access is still what makes the checks count.
 | Challenger | none (only `submit`) | No. It can only set a confirmed bug aside, with a reason |
 | Triage | none (only `submit`) | No. It chooses one of the moves code lists as legal; no move ends a run as succeeded |
 | Diagnoser | `read_file`, `grep` | No. Both are read-only and confined |
+| Planner | `read_file`, `grep` | No. The Diagnoser's two tools. Code adds its brief after the first instruction |
 | Reviewer | `read_file`, `grep`, `list_changed_files` | No. All three are read-only and confined. The project's `test`, `lint` and `typecheck` scripts are run by code before the agent starts, not by the agent; files they write are put back |
 
 Only the external coding agent edits the project. A new tool for an agent

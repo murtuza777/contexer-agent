@@ -126,7 +126,7 @@ async def test_the_models_notes_are_recorded_and_never_start_a_repair(project: P
     assert outcome.terminal == "succeeded" and len(agent.prompts) == 1
     [note] = outcome.review
     assert note.source == "reviewer" and not note.backed and note.explanation == opinion["explanation"]
-    assert [a.agent for a in outcome.agents] == ["reviewer"]
+    assert [a.agent for a in outcome.agents] == ["planner", "reviewer"]  # the brief before the turn, the review after it
     assert (Path(outcome.run_dir) / "agents" / "reviewer.jsonl").is_file()
 
 

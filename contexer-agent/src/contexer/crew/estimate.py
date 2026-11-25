@@ -13,6 +13,7 @@ from pydantic import BaseModel
 # Model calls one use of each agent may make (its step cap), and the tokens one call typically carries.
 _INTENT_CALLS, _INTENT_TOKENS = 8, (4_000, 600)  # the draft, and one round of fixing invalid checks
 _TRIAGE_CALLS, _TRIAGE_TOKENS = 1, (2_500, 100)
+_PLANNER_CALLS, _PLANNER_TOKENS = 12, (6_000, 300)  # once, before the first coding turn; not measured live yet
 _DIAGNOSER_CALLS, _DIAGNOSER_TOKENS = 15, (6_000, 250)
 _REVIEWER_CALLS, _REVIEWER_TOKENS = 12, (5_000, 200)
 
@@ -42,6 +43,8 @@ def estimate_run(
     has_model: bool,
     drafts_checks: bool,
     review: bool,
+    plan: bool = True,
+    planner_steps: int = _PLANNER_CALLS,
     diagnoser_steps: int = _DIAGNOSER_CALLS,
     reviewer_steps: int = _REVIEWER_CALLS,
     input_usd_per_mtok: float | None = None,
@@ -54,6 +57,8 @@ def estimate_run(
     uses: list[tuple[int, tuple[int, int]]] = []
     if drafts_checks:
         uses.append((_INTENT_CALLS, _INTENT_TOKENS))
+    if plan:
+        uses.append((planner_steps, _PLANNER_TOKENS))
     for _ in range(rounds):  # after each attempt that does not pass
         uses.append((_TRIAGE_CALLS, _TRIAGE_TOKENS))
         uses.append((diagnoser_steps, _DIAGNOSER_TOKENS))
