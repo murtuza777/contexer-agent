@@ -49,7 +49,8 @@ from contexer.gate import RunResult
 from contexer.gate.session import VerificationSession
 from contexer.github.api import GitHubClient, GitHubError, github_token
 from contexer.github.handoff import Handoff, HandoffError, HandoffPlan, hand_off, plan_handoff
-from contexer.github.issues import ISSUE_ORIGIN
+from contexer.github.issues import ISSUE_ORIGIN, visible_text
+from contexer.github.issues import issue_goal as shown_issue_goal
 from contexer.graph import GraphController, ResumeError
 from contexer.graph.context import RunEvent
 from contexer.llm import discovery
@@ -91,6 +92,9 @@ def run(
     ),
     no_review: bool = typer.Option(
         False, "--no-review", help="Do not read the diff of a passing run before it ends."
+    ),
+    no_plan: bool = typer.Option(
+        False, "--no-plan", help="Do not read the project for a brief before the first coding turn."
     ),
     correct: str | None = typer.Option(
         None, "--correct", help="With --resume: a correction to what done means, applied first."
@@ -138,6 +142,7 @@ def run(
         judged_policy=config.gate.judged,
         replay_others=not no_replay,
         review=not no_review,
+        plan=not no_plan,
         agent_steps={name: cap for name in CREW_AGENTS if (cap := config.agents.for_agent(name).max_steps)},
     )
     crew_budget = run_budget(config, max_usd)
@@ -364,6 +369,8 @@ def _estimate(settings: RunSettings, budget: Budget | None, has_model: bool, dra
         has_model=has_model,
         drafts_checks=drafts_checks,
         review=settings.review,
+        plan=settings.plan,
+        planner_steps=settings.agent_steps.get("planner", 12),
         diagnoser_steps=settings.agent_steps.get("diagnoser", 15),
         reviewer_steps=settings.agent_steps.get("reviewer", 12),
         input_usd_per_mtok=budget.input_usd_per_mtok if budget is not None else None,
@@ -559,9 +566,10 @@ def issue_goal(console: Console, plan: HandoffPlan | None, number: int, store: C
         raise typer.Exit(code=3) from exc
     if found.get("state") == "closed":
         console.print(f"[yellow]Issue #{number} is closed;[/] working on it anyway.")
-    title = str(found.get("title") or "").strip()
-    body = str(found.get("body") or "").strip()
-    goal = f"{title}\n\n{body[:4000]}".strip()
+    # The same reading as the Actions path: without what GitHub does not show (HTML comments, invisible
+    # characters), so nothing reaches an agent that a person looking at the issue could not see.
+    goal = shown_issue_goal(found)
+    title = visible_text(str(found.get("title") or ""))
     console.print(f"[dim]Issue #{number} · {escape(title)} · {escape(str(found.get('html_url', '')))}[/]")
     return goal, store.unique_id(f"issue {number} {title}")
 

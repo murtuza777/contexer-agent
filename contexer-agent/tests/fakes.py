@@ -92,7 +92,7 @@ class AgentScript(BaseChatModel):
 
     ``AgentScript(tester=[...], intent=[...], diagnoser=[...])``. The agent is told apart by the first
     words of its system prompt. An agent with no replies left gets the plainest valid answer (the Intent
-    agent adds nothing to the goal, the Diagnoser has no opinion, Triage repairs in the same session), so a test scripts only what it is
+    agent adds nothing to the goal, the Diagnoser and the Planner have no opinion, Triage repairs in the same session), so a test scripts only what it is
     about; the Tester has no default, because a Tester call nobody scripted is a bug in the test.
     """
 
@@ -104,6 +104,7 @@ class AgentScript(BaseChatModel):
         "You are the Tester": "tester",
         "You are the Intent agent": "intent",
         "You are the Diagnoser": "diagnoser",
+        "You are the Planner": "planner",
         "You are the Challenger": "challenger",
         "You are Triage": "triage",
         "You are the Reviewer": "reviewer",
@@ -138,7 +139,7 @@ class AgentScript(BaseChatModel):
             reply = queue.pop(0)
         elif agent == "intent":
             reply = submit(behaviours=[])
-        elif agent == "diagnoser":
+        elif agent in ("diagnoser", "planner"):
             reply = submit()
         elif agent == "reviewer":
             reply = submit(notes=[])

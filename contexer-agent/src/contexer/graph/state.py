@@ -50,6 +50,11 @@ class LoopState(_Always, total=False):
     # Set when a correction arrived after work began: the next prompt restates the whole job.
     restate: str
 
+    # -- the plan for the first turn ---------------------------------------------------------
+    # The approved hash the Planner last ran for, and the brief it gave ("" when it gave none).
+    planned: str
+    brief: str
+
     # -- the attempts ---------------------------------------------------------------------
     attempts: list[dict[str, Any]]
     best: int | None

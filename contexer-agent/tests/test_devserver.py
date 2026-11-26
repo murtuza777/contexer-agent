@@ -14,6 +14,7 @@ from contexer.appserver import AppStartError, open_app
 from contexer.appserver.detect import StartPlan, detect_framework, package_manager, plan_start
 from contexer.appserver.devserver import DevServer, DevServerError
 from contexer.config.project import AppSettings
+from contexer.verification.checks import MASK
 
 NODE = shutil.which("node")
 needs_node = pytest.mark.skipif(NODE is None or shutil.which("npm") is None, reason="node and npm are required")
@@ -235,3 +236,63 @@ def test_the_app_is_not_told_it_runs_inside_an_agent_session(tmp_path: Path, mon
     assert not [name for name in env if name == "AI_AGENT" or name.startswith("CLAUDE")]
     assert env["MY_APP_SETTING"] == "kept" and env["PORT"] == "3000" and env["CI"]  # CI may already be set
     assert "PATH" in env or "Path" in env
+
+
+# -- what the app prints ----------------------------------------------------------
+
+API_KEY = "sk-or-v1-" + "t3stK3y0" * 5
+PASSWORD = "made-up-Passw0rd-417"
+PASSWORD_VARIABLE = "CONTEXER_TEST_PASSWORD"
+
+# An app that prints a key and its seeded account's password when it starts, as real ones do.
+NOISY_SERVER = f"""
+import http.server, os, sys
+print("booting with provider key {API_KEY}", flush=True)
+print("seeded the admin account, password " + os.environ["{PASSWORD_VARIABLE}"], flush=True)
+if "--crash" in sys.argv:
+    sys.exit(3)
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), http.server.SimpleHTTPRequestHandler).serve_forever()
+"""
+
+
+def _noisy_app(root: Path, monkeypatch: pytest.MonkeyPatch, crash: bool = False) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "index.html").write_text("<!doctype html><title>Noisy</title><h1>Noisy</h1>", encoding="utf-8")
+    (root / "server.py").write_text(NOISY_SERVER, encoding="utf-8")
+    start = f'"{sys.executable}" server.py {{port}}' + (" --crash" if crash else "")
+    (root / "contexer.toml").write_text(
+        f"[app]\nstart = '{start}'\nready_timeout = 30\n\n"
+        '[auth]\nurl = "/"\n'
+        "steps = [\n"
+        '  { action = "fill", target = { label = "Email" }, value = "ada@example.com" },\n'
+        f'  {{ action = "fill", target = {{ label = "Password" }}, value = "${{{PASSWORD_VARIABLE}}}" }},\n'
+        "]\n"
+        'expect = [{ kind = "visible", target = { role = "heading", name = "Noisy" } }]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(PASSWORD_VARIABLE, PASSWORD)
+    return root
+
+
+def test_what_the_app_prints_is_masked_in_the_log_tail_and_in_the_log_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = _noisy_app(tmp_path / "app", monkeypatch)
+    log = tmp_path / "server.log"
+    with open_app(project, log_path=log) as app:
+        deadline = time.monotonic() + 10
+        while "seeded the admin account" not in app.log_tail() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        tail = app.log_tail()  # what result.json, the report, the Diagnoser and the repair prompt are given
+    assert "booting with provider key" in tail and "seeded the admin account" in tail
+    assert API_KEY not in tail and PASSWORD not in tail
+    assert "password " + MASK in tail
+    on_disk = log.read_text(encoding="utf-8")
+    assert "seeded the admin account" in on_disk
+    assert API_KEY not in on_disk and PASSWORD not in on_disk
+
+
+def test_the_log_of_an_app_that_did_not_start_is_masked_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = _noisy_app(tmp_path / "app", monkeypatch, crash=True)
+    with pytest.raises(AppStartError) as info, open_app(project):
+        pass
+    assert "seeded the admin account" in info.value.log_tail
+    assert API_KEY not in info.value.log_tail and PASSWORD not in info.value.log_tail

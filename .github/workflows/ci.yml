@@ -25,8 +25,8 @@ jobs:
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    # The whole suite took 29 and 34 minutes on Ubuntu in two runs on 2026-11-25.
-    timeout-minutes: 45
+    # The whole suite took 29 and 34 minutes on Ubuntu in two runs on 2026-11-25, and passed 35 on the 26th.
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
