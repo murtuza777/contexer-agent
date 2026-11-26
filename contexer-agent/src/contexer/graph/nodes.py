@@ -39,7 +39,7 @@ from contexer.controller.shared import (
     write_run_evidence,
 )
 from contexer.crew.diagnoser import DEFAULT_MAX_STEPS as DEFAULT_DIAGNOSER_STEPS
-from contexer.crew.diagnoser import Failure, brief_section, diagnose
+from contexer.crew.diagnoser import Failure, Tried, brief_section, diagnose
 from contexer.crew.intent import run_intent
 from contexer.crew.planner import DEFAULT_MAX_STEPS as DEFAULT_PLANNER_STEPS
 from contexer.crew.planner import plan_task, task_brief_section
@@ -637,6 +637,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 intent=quoted_goal(contract.goal, contract.origin),
                 diff=ctx.shadow.diff(state["snapshots"]["0"], state["current"], max_chars=_DIFF_CHARS),
                 server_log=shown.server_log_tail,
+                tried=_tried(state),
                 run_dir=ctx.run.path,
                 budget=ctx.budget,
                 max_steps=_steps(ctx, "diagnoser", DEFAULT_DIAGNOSER_STEPS),
@@ -644,8 +645,11 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             )
             updates["agents"] = _used(state, "diagnoser", found.steps, found.tokens_in, found.tokens_out, _cost(ctx, found))
             section = brief_section(found.brief)
-            if section:
+            if section and found.brief is not None:
                 prompt += "\n\n" + section
+                # Kept for the next diagnosis: what the coding agent was told after this attempt.
+                lead = {"cause": found.brief.cause, "instruction": found.brief.instruction}
+                updates["leads"] = {**state.get("leads", {}), str(n): lead}
         answer = (state.get("answer") or "").strip()
         if answer:
             prompt += "\n\nThe person you are working for was asked about these failures and answered:\n" + answer
@@ -1016,6 +1020,33 @@ def _failures(result: RunResult) -> list[Failure]:
                 continue
             failures.append(Failure(title=criterion.description, check=criterion.check, result=r.check_result))
     return failures
+
+
+def _tried(state: LoopState) -> list[Tried]:
+    """Each lead the Diagnoser already gave in this run, with what the attempt that worked from it did."""
+    attempts = {a.n: a for a in _attempts(state)}
+    tried: list[Tried] = []
+    for key, lead in sorted(state.get("leads", {}).items(), key=lambda item: int(item[0])):
+        before, after = attempts.get(int(key)), attempts.get(int(key) + 1)
+        if before is None or after is None:
+            continue
+        # The attempt began from the files of the one before it, or of the one those were put back to.
+        base = attempts.get(before.reverted_to, before) if before.reverted_to is not None else before
+        was, now = {sig_label(s) for s in base.signatures}, {sig_label(s) for s in after.signatures}
+        tried.append(
+            Tried(
+                attempt=after.n,
+                cause=lead.get("cause", ""),
+                instruction=lead.get("instruction", ""),
+                changed_files=after.changed_files,
+                fixed=sorted(was - now),
+                broke=sorted(now - was),
+                still_failing=sorted(was & now),
+                no_check_ran=after.outcome == "error",
+                undone_to=after.reverted_to,
+            )
+        )
+    return tried
 
 
 def _gate(ctx: RunContext, n: int | None) -> GateDecision | None:

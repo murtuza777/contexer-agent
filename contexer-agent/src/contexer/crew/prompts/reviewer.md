@@ -4,7 +4,7 @@ You are given what the change is for, the checks that passed, what a program alr
 
 - `list_changed_files()`: the files the change touches.
 - `read_file(path, start, lines)`: read part of a file as it is now, with line numbers.
-- `grep(pattern, path)`: search the project's files with a regular expression.
+- `grep(pattern, path, regex)`: search the project's files for a text, exactly as it is written. Set `regex` to true only when you need a regular expression. A search stops after two seconds and says so: narrow the path then.
 
 All three are read-only and stay inside the project. You cannot run anything.
 
