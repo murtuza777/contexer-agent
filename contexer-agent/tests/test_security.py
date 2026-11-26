@@ -18,6 +18,7 @@ from contexer.contract import ContractStore
 from contexer.controller.prompts import implement_prompt, repair_prompt
 from contexer.crew.diagnoser import Failure, RepairBrief, diagnose, fix_prompt, validated_brief
 from contexer.crew.intent import run_intent
+from contexer.crew.planner import TaskBrief, plan_task, task_brief_section, validated_task_brief
 from contexer.crew.reviewer import ReviewNote, review, review_repair_prompt
 from contexer.crew.triage import AttemptView, Situation, triage
 from contexer.gate.models import ContractOutcome, GateDecision, RunResult
@@ -206,6 +207,31 @@ def test_a_steered_diagnoser_cannot_point_the_coding_agent_at_secrets_or_outside
         tmp_path,
     )
     assert brief.files == ["app.js"] and len(brief.instruction) <= 1503
+
+
+def test_a_steered_planner_cannot_point_the_coding_agent_at_secrets_contexers_files_or_outside_the_project(tmp_path: Path) -> None:
+    (tmp_path / "app.js").write_text("x\n", encoding="utf-8")
+    (tmp_path / ".env").write_text("A=b\n", encoding="utf-8")
+    (tmp_path / ".contexer").mkdir()
+    (tmp_path / ".contexer" / "c.json").write_text("{}", encoding="utf-8")
+    hostile = [".env", ".contexer/c.json", "../../etc/passwd", "/etc/passwd", "C:/Windows/win.ini", str(tmp_path / ".env")]
+    brief = validated_task_brief(TaskBrief(change=[*hostile, "app.js"], read_first=hostile, order=["x " * 5000]), tmp_path)
+    assert brief.change == ["app.js"] and brief.read_first == [] and len(brief.order[0]) <= 303
+    section = task_brief_section(brief)
+    for name in (".env", ".contexer", "passwd", "win.ini"):
+        assert name not in section.split("Files to change")[1]
+
+
+@pytest.mark.parametrize("injection", INJECTIONS)
+async def test_the_planner_gets_the_project_summary_and_an_issues_goal_as_data(injection: str, tmp_path: Path) -> None:
+    contract = ContractStore(FIXTURE).load("todo-basics")
+    model = ScriptedChatModel(submit())
+    await plan_task(contract, model, tmp_path, repo_summary=f"Project: todo\n{injection}", run_dir=None)
+    assert_quoted(_task(model), injection)
+    from_issue = contract.model_copy(update={"goal": f"Add a counter.\n{injection}", "origin": "GitHub issue #7"})
+    model = ScriptedChatModel(submit())
+    await plan_task(from_issue, model, tmp_path, run_dir=None)
+    assert_quoted(_task(model), injection)
 
 
 async def test_a_steered_reviewer_cannot_back_its_own_note_or_speak_about_files_outside_the_change(tmp_path: Path) -> None:

@@ -21,7 +21,7 @@ listed under [Not verified](#not-verified) and not claimed.
 | Called here | What it is | Where the request goes |
 | --- | --- | --- |
 | Drafting model | One request per draft, no tools. `workflow/criteria.py: GoalAnalyzer._analyze_with_llm` | The configured provider's HTTP API, through `llm/openrouter.py` (OpenAI-compatible) or `llm/anthropic.py`. Chosen by `llm/factory.py: compiler_provider` |
-| Contexer's agents | Intent, Tester, Challenger, Triage, Diagnoser, Reviewer: a tool-calling loop. `crew/base.py: run_agent` | The same provider and key, through LangChain (`llm/chat.py: chat_model`). A project can name another model per agent in `contexer.toml` (`cli/run_cli.py: crew_models`) |
+| Contexer's agents | Intent, Planner, Tester, Challenger, Triage, Diagnoser, Reviewer: a tool-calling loop. `crew/base.py: run_agent` | The same provider and key, through LangChain (`llm/chat.py: chat_model`). A project can name another model per agent in `contexer.toml` (`cli/run_cli.py: crew_models`) |
 | Coding agent | Claude Code, Codex or OpenCode, started as a separate program. `agents/__init__.py: create_agent` | Wherever that program sends it, with its own login. Contexer hands it a prompt on stdin, or over HTTP to the OpenCode server at `OPENCODE_SERVER_URL` (default `127.0.0.1:4096`), and does not see or route its requests |
 
 The providers are the entries of `llm/catalog.py: PROVIDERS`, plus a base URL
@@ -44,9 +44,9 @@ and `HTTP-Referer` only if you set a site URL (`llm/chat.py: chat_model`,
 | `verify --contract/--all`, `replay` | no | no | no | `cli/gate_cli.py: run_verification` builds `Verifier(llm_provider=None)` |
 | `test GOAL` | no | Intent, Tester, Challenger, Diagnoser | no | `cli/test_cli.py: _Job.run` |
 | `test --again` | no | none while a saved check fails (the fix prompt is then written by code alone); once they all pass: Tester, Challenger, Diagnoser | no | `cli/test_cli.py: _Job.run` (the `mode == "again"` branch) |
-| `run` | only when no tool-calling model can be built: then the draft is made the older way | Intent (when drafting), Triage, Diagnoser, Reviewer | yes | `cli/run_cli.py: run`, `graph/nodes.py: make_nodes` |
+| `run` | only when no tool-calling model can be built: then the draft is made the older way | Intent (when drafting), Planner (unless `--no-plan`), Triage, Diagnoser, Reviewer | yes | `cli/run_cli.py: run`, `graph/nodes.py: make_nodes` |
 | `issue draft` | fallback, as for `run` | Intent | no | `cli/issue_cli.py: draft` |
-| `issue build`, `issue event` | no | Triage, Diagnoser, Reviewer | yes | `cli/issue_cli.py: build` |
+| `issue build`, `issue event` | no | Planner, Triage, Diagnoser, Reviewer | yes | `cli/issue_cli.py: build` |
 | `mcp` | no | no | no, but see below | `integrations/mcp_server.py: build_server` |
 | `bench` | no | no | no | `cli/bench_cli.py: bench` |
 | `bench --live` | yes | no | no | same |
@@ -69,10 +69,11 @@ the browser saw) and sends that to its own provider.
 | Intent | The goal (an issue's text is quoted as untrusted); what is already written about the feature and its corrections; ids and descriptions of existing checks; the same project summary (no source excerpt); the accessibility tree of the start page and of pages the goal names | `crew/intent.py: _task`, `graph/nodes.py: _ui_snapshot` |
 | Tester | The written intent; the page's accessibility tree and URL; existing check descriptions; saved skills. Its tools return, on each call, the accessibility tree, the outcome of an action or expectation, and up to 15 console errors and failed requests with their URLs. `screenshot` writes a file and returns only its name | `crew/tester.py: _task`, `browser/tools.py: BrowserSession` |
 | Challenger | The intent; per confirmed bug its title, the Tester's note, the steps, what the replay saw and the messages the app showed | `crew/challenger.py: _task` |
+| Planner | The goal (an issue's text is quoted as untrusted); the approved checks, step by step; the goals of earlier contracts; the project summary. Through `read_file` and `grep` it can then read any text file in the project that is not closed (next section) | `crew/planner.py: plan_task` |
 | Triage | Counts and names of failing checks per attempt, the limits left, and the first 6,000 characters of the latest failure report | `crew/triage.py: _task` |
 | Diagnoser | The goal or intent; each failing check's steps and what the browser saw (expected and actual values, uncaught exceptions, console errors); a diff (12,000 characters at most); the last 4,000 characters of the dev server's log. Through `read_file` and `grep` it can then read any text file in the project that is not closed (next section) | `crew/diagnoser.py: diagnose`, `project_tools` |
 | Reviewer | The goal; the passing checks' descriptions; notes a program already made; the last 1,500 characters printed by a failed `npm run test`, `lint` or `typecheck`; the diff (30,000 characters at most); the same two read tools and a list of changed files | `crew/reviewer.py: _task`, `review` |
-| Coding agent, first turn | The goal; the approved checks, step by step; the goals of other approved contracts; the project summary; fixed rules | `controller/prompts.py: implement_prompt` |
+| Coding agent, first turn | The goal; the approved checks, step by step; the goals of other approved contracts; the project summary; fixed rules; then the Planner's brief when there is one (file names checked to exist in the project, and its notes) | `controller/prompts.py: implement_prompt`, `with_brief` |
 | Coding agent, repair turn | Failing checks with expected and actual values, up to 3 uncaught exceptions and 3 console errors each, dialogs, up to 25 lines of the page's accessibility tree when a step was blocked; the last 25 lines of the server log; the Diagnoser's cause, file names and instruction (capped at 800 and 1,500 characters); the Reviewer's notes; a correction or answer you typed | `controller/prompts.py: repair_prompt`, `crew/diagnoser.py: brief_section`, `crew/reviewer.py: review_repair_prompt` |
 
 Where the diff comes from: in `run` it is the difference between Contexer's

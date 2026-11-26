@@ -55,6 +55,16 @@ def implement_prompt(contract: Contract, repo: RepositoryContext | None, others:
     return "\n\n".join(parts)
 
 
+def with_brief(instruction: str, brief: str) -> str:
+    """The first instruction with the Planner's brief (``crew/planner.py``) after it.
+
+    The brief is a model's text. It follows the instruction and never replaces a word of it, so the
+    goal, the checks and the rules reach the coding agent as code wrote them. With no brief the
+    instruction is returned as it is.
+    """
+    return f"{instruction}\n\n{brief.strip()}" if brief.strip() else instruction
+
+
 def _goal(contract: Contract) -> str:
     """The goal as the coding agent reads it: the person's own words as they are, anyone else's quoted as data."""
     if contract.origin.strip():

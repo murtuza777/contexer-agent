@@ -73,7 +73,7 @@ class LimitSettings(BaseModel):
     cost_usd: float | None = Field(default=None, gt=0)
 
 
-CREW_AGENTS = ("intent", "tester", "challenger", "triage", "diagnoser", "reviewer")
+CREW_AGENTS = ("intent", "planner", "tester", "challenger", "triage", "diagnoser", "reviewer")
 
 
 class CrewAgentSettings(BaseModel):
@@ -95,7 +95,7 @@ class AgentsSettings(BaseModel):
     input_usd_per_mtok = 2.50   # prices, for a provider that reports none (Azure, most others)
     output_usd_per_mtok = 15.00
 
-    [agents.triage]             # intent, tester, challenger, triage, diagnoser, reviewer
+    [agents.triage]             # intent, planner, tester, challenger, triage, diagnoser, reviewer
     model = "gpt-5.4-mini"      # a cheaper model for a small decision
 
     [agents.reviewer]
@@ -109,6 +109,7 @@ class AgentsSettings(BaseModel):
     input_usd_per_mtok: float | None = Field(default=None, ge=0)
     output_usd_per_mtok: float | None = Field(default=None, ge=0)
     intent: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
+    planner: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
     tester: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
     challenger: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
     triage: CrewAgentSettings = Field(default_factory=CrewAgentSettings)
