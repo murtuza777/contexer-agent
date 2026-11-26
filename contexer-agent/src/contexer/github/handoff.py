@@ -45,7 +45,14 @@ _BOT = ("Contexer", "contexer@users.noreply.github.com")
 
 
 class HandoffError(Exception):
-    """The work cannot be handed over as a pull request."""
+    """The work cannot be handed over as a pull request.
+
+    Its text can hold file names an agent chose and what git printed, and it is posted in an issue
+    comment, so it is made plain (see ``_plain``).
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(_plain(message))
 
 
 @dataclass
@@ -68,6 +75,9 @@ class Handoff:
     is_pull_request: bool
     draft: bool
     note: str = ""
+
+    def __post_init__(self) -> None:
+        self.note = _plain(self.note)  # it names files an agent chose, and is posted in an issue comment
 
 
 def plan_handoff(project: str | Path) -> HandoffPlan:
@@ -252,12 +262,12 @@ def pull_request_body(
         if flaky:
             lines += [
                 "",
-                f"⚠️ **Opened as a draft: flaky.** {', '.join(f'`{_inert(name)}`' for name in flaky)} failed on the "
+                f"⚠️ **Opened as a draft: flaky.** {', '.join(f'`{_code(name)}`' for name in flaky)} failed on the "
                 "first replay and passed on the second. A slow page and an intermittent bug look the same; a person "
                 "should look before this is merged.",
             ]
     else:
-        lines.append(f"⚠️ **Not done yet:** {_inert(outcome.reason)}")
+        lines.append(f"⚠️ **Not done yet:** {_md(outcome.reason)}")
     if contract.approval is not None and contract.approval.by == AUTOMATIC_APPROVAL:
         lines += [
             "",
@@ -282,7 +292,7 @@ def pull_request_body(
             for r in rows:
                 mark = {"verified": "✅", "refuted": "❌", "unverified": "❔"}[r.verdict]
                 how = "" if r.proven else (" *(LLM-judged)*" if r.method == "judgment" else " *(heuristic)*")
-                lines.append(f"| {mark} | {_md(r.description)}{how} | {_md(r.evidence)[:200]} |")
+                lines.append(f"| {mark} | {_md(r.description)}{how} | {_md(r.evidence, 200)} |")
             lines.append("")
     others = [r for r in (final.contracts if final is not None else []) if r.contract.id != contract.id]
     if others:
@@ -304,13 +314,13 @@ def pull_request_body(
     lines += [
         "### How it got here",
         "",
-        f"- **Agent:** {outcome.agent} · {attempts} attempt(s), {repairs} repair round(s){cost} · "
+        f"- **Agent:** {_md(outcome.agent)} ·{attempts} attempt(s), {repairs} repair round(s){cost} · "
         f"{_duration(outcome.duration_seconds)}",
     ]
     if contract.approval is not None:
         lines.append(
             f"- **Contract:** `{CONTEXER_DIR}/{CONTRACTS_DIR}/{contract.id}.json`, approved by "
-            f"{contract.approval.by} (sha256 `{contract.approval.sha256[:12]}`)"
+            f"{_md(contract.approval.by)} (sha256 `{_code(contract.approval.sha256[:12])}`)"
         )
     lines.append(f"- **Evidence:** {_evidence_link(outcome)}")
     lines.append("")
@@ -335,9 +345,9 @@ def _attempt_lines(outcome: RunOutcome) -> list[str]:
         decision = decided.get(attempt.n)
         if decision is not None:
             who = "a model" if decision.source == "model" else "the rules"
-            after = f"{MOVE_LABELS.get(decision.move, decision.move).capitalize()} ({who}): {_md(decision.reason)[:300]}"
+            after = f"{MOVE_LABELS.get(decision.move, decision.move).capitalize()} ({who}): {_md(decision.reason, 300)}"
         else:
-            after = _md(attempt.note)[:300] if attempt.note else ""
+            after = _md(attempt.note, 300) if attempt.note else ""
         lines.append(f"| {attempt.n} | {_md(result)} | {after} |")
     return [*lines, ""]
 
@@ -355,15 +365,17 @@ def _review_lines(outcome: RunOutcome) -> list[str]:
         "|---|---|---|---|---|",
     ]
     for note in outcome.review:
-        where = f"`{note.file}:{note.line}`" if note.file and note.line else (f"`{note.file}`" if note.file else "")
+        file = _code(note.file).replace("|", "\\|")  # in a table a bar ends the cell, inside a code span too
+        where = f"`{file}:{note.line}`" if file and note.line else (f"`{file}`" if file else "")
         by = "a program" if note.backed else "a model"
-        lines.append(f"| {note.severity} | {note.category} | {where} | {by} | {_md(note.explanation)[:400]} |")
+        lines.append(f"| {note.severity} | {note.category} | {where} | {by} | {_md(note.explanation, 400)} |")
     return [*lines, ""]
 
 
-def _title(outcome: RunOutcome, contract: Contract) -> str:
+def _title(outcome: RunOutcome, contract: Contract, limit: int = 100) -> str:
+    """The goal's first line, shortened and then made plain: a goal that says "closes #12" closes nothing."""
     title = contract.goal.strip().splitlines()[0].strip() if contract.goal.strip() else contract.id
-    return _shorten(title, 100)
+    return _plain(_shorten(title, limit))
 
 
 def _shorten(text: str, limit: int) -> str:
@@ -375,12 +387,13 @@ def _shorten(text: str, limit: int) -> str:
 
 
 def _commit_message(outcome: RunOutcome, contract: Contract) -> str:
-    subject = _shorten(_title(outcome, contract), 72)
+    subject = _title(outcome, contract, 72)
     decision = outcome.final.decision if outcome.final is not None else None
     if outcome.terminal == "succeeded" and decision is not None:
         proof = f"Contexer proved all {decision.verified} checks in Chromium"
     else:
-        proof = f"Contexer: not done yet — {outcome.reason}"
+        # One line: a reason of several could add a trailer to the commit, or a line that closes an issue.
+        proof = f"Contexer: not done yet — {_plain(' '.join(outcome.reason.split()))}"
     return f"{subject}\n\n{proof} (contract {contract.id}, run {outcome.run_id}).\n"
 
 
@@ -393,26 +406,51 @@ def _evidence_link(outcome: RunOutcome) -> str:
     return f"`report.html` in `{CONTEXER_DIR}/runs/{outcome.run_id}/` on the machine that ran it"
 
 
+_HEADING = re.compile(r"^(\s*)#")
+
+
 def _quote(text: str) -> str:
-    return "\n".join(f"> {_inert(line)}" if line.strip() else ">" for line in text.strip()[:3000].splitlines())
+    """Several lines as one quote. No line of it is a heading."""
+    lines = (_HEADING.sub(r"\1\\#", _inert(line)) for line in text.strip()[:3000].splitlines())
+    return "\n".join(f"> {line}" if line.strip() else ">" for line in lines)
 
 
-def _md(text: str) -> str:
-    return _inert(" ".join(str(text).split())).replace("|", "\\|")
+def _md(text: str, limit: int | None = None) -> str:
+    """One line for a table cell or a list item. Shortened first: a cut after escaping can halve an escape."""
+    return _inert(" ".join(str(text).split())[:limit]).replace("|", "\\|")
 
 
-_MENTION = re.compile(r"@(?=[A-Za-z0-9])")
-_ISSUE_REF = re.compile(r"#(?=\d)")
+def _code(text: str) -> str:
+    """Text for a code span: nothing in it ends the span, and a file name is copied as it is."""
+    return " ".join(str(text).replace("`", "").split())
+
+
+# What GitHub acts on in text, each matched just before the character that completes it: a mention or an
+# e-mail address, #12 and GH-12, a bare URL, a tag or a comment, a link, an image, a link definition, a
+# character reference (&#64; is an @) and a code fence.
+_LIVE = re.compile(
+    r"@(?=[A-Za-z0-9])|#(?=\d)|(?i:GH-)(?=\d)|:(?=//)|(?i:www)(?=\.)|<(?=[A-Za-z/!?])"
+    r"|\](?=[(\[:])|!(?=\[)|&(?=[#A-Za-z])|`(?=`)|~(?=~)"
+)
+
+
+def _plain(text: str) -> str:
+    """Text from the app, an issue, a model or git, so that GitHub shows it and does nothing with it.
+
+    A zero-width space goes where a mention, an issue reference, a URL, a link, an image, a tag or a code
+    fence would otherwise form: nobody is notified and no issue is linked or closed. Nothing is removed, and
+    doing it twice changes nothing. Used alone where the text is not markdown or is shown as it is: a
+    title, a commit message, a note, an error.
+    """
+    return _LIVE.sub(lambda found: found.group(0) + "\u200b", text)
 
 
 def _inert(text: str) -> str:
-    """Text from the app, an issue or a model, so that GitHub shows it and does nothing with it.
+    """``_plain``, then ``&``, ``<`` and ``[`` as character references. For the pull request's body.
 
-    No mention notifies anyone, no ``#12`` links or closes an issue, and no link or image is live. The only
-    issue reference a pull request body acts on is the ``Closes #N`` Contexer writes itself.
+    The only issue reference the body acts on is the ``Closes #N`` Contexer writes itself.
     """
-    text = _MENTION.sub("@\u200b", _ISSUE_REF.sub("#\u200b", text))
-    return text.replace("](", "]\u200b(").replace("![", "!\u200b[").replace("<", "&lt;")
+    return _plain(text).replace("&", "&amp;").replace("<", "&lt;").replace("[", "&#91;")
 
 
 def _duration(seconds: float) -> str:
