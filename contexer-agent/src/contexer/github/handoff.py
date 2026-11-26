@@ -11,6 +11,10 @@ For a run on the graph engine the description also carries what was
 understood (the intent), each attempt with what was decided after it, and the
 review's notes.
 
+Text that comes from an issue, the app, a model or git is written so that
+GitHub shows it and does nothing with it (``_plain``, ``_inert``, ``_code``).
+Screenshots are pushed and shown only when asked for (``_push_screenshots``).
+
 Everything that can be checked before the agent starts is checked by
 :func:`plan_handoff`, so a run never spends its budget and then finds it
 cannot hand anything over. The commit holds only the files the run changed
@@ -33,6 +37,7 @@ from contexer.contract import Contract
 from contexer.contract.store import AUTOMATIC_APPROVAL, CONTEXER_DIR, CONTRACTS_DIR
 from contexer.crew.reviewer import holds_pull_request, prescan
 from contexer.crew.triage import MOVE_LABELS
+from contexer.evidence.screenshots import CheckScreenshot, check_screenshots
 from contexer.github.api import GitHubClient, GitHubError, github_token, repo_of
 from contexer.procutil import REPOSITORY_TOKENS
 
@@ -112,8 +117,13 @@ def hand_off(
     *,
     issue: int | None = None,
     client_factory: Callable[[str, str], GitHubClient] | None = None,
+    screenshots: bool = False,
 ) -> Handoff | None:
-    """Commit the run's changes to a new branch, push it and open a pull request. None if nothing changed."""
+    """Commit the run's changes to a new branch, push it and open a pull request. None if nothing changed.
+
+    With ``screenshots``, one screenshot per check is pushed to a branch of its own and shown in the pull
+    request. It is asked for, never the default: they show the app's data to whoever can read the repository.
+    """
     if not outcome.changed_files:
         return None
     if outcome.approved_hash and contract.content_hash() != outcome.approved_hash:
@@ -200,6 +210,17 @@ def hand_off(
     token = github_token()
     if token is None:
         return Handoff(branch, commit, True, compare, False, not succeeded, note + "No GitHub token (GITHUB_TOKEN or `gh auth login`); open the pull request from the link.")
+    # Only here: the change passed the secret scan and is on the remote, and a pull request can show them.
+    shown: Screenshots | None = None
+    if screenshots:
+        shots = check_screenshots(outcome.final, contract.id, outcome.run_dir)
+        pushed_to = f"contexer-evidence/{contract.id}-{commit[:8]}"
+        if not shots:
+            note += "No screenshots were pushed: the run kept none in its folder. "
+        elif _push_screenshots(plan, shots, pushed_to, contract.id):
+            shown = Screenshots(plan.repo, pushed_to, shots)
+        else:
+            note += f"The screenshots could not be pushed to {plan.remote}, so the pull request has none. "
     factory = client_factory or (lambda repo, tok: GitHubClient(repo, tok))
     client = factory(plan.repo, token)
     try:
@@ -207,14 +228,50 @@ def hand_off(
             title=_title(outcome, contract),
             head=branch,
             base=plan.base,
-            body=pull_request_body(outcome, contract, issue=issue, intent=_intent(plan.project, outcome)),
+            body=pull_request_body(outcome, contract, issue=issue, intent=_intent(plan.project, outcome), screenshots=shown),
             draft=not succeeded,
         )
     except GitHubError as exc:
-        return Handoff(branch, commit, True, compare, False, not succeeded, note + f"Opening the pull request failed: {exc}")
+        left = f" The screenshots are on the branch {shown.branch} of {plan.remote}; delete it if they should not stay there." if shown else ""
+        return Handoff(branch, commit, True, compare, False, not succeeded, note + f"Opening the pull request failed: {exc}{left}")
     finally:
         client.close()
     return Handoff(branch, commit, True, str(pull.get("html_url") or compare), True, bool(pull.get("draft", not succeeded)), note)
+
+
+@dataclass
+class Screenshots:
+    """The screenshots that were pushed, and where: what the pull request's body shows."""
+
+    repo: str
+    branch: str
+    shots: list[CheckScreenshot]
+
+
+def _push_screenshots(plan: HandoffPlan, shots: list[CheckScreenshot], branch: str, contract_id: str) -> bool:
+    """Push the screenshots to ``branch`` as one commit with no parent. False if a step failed.
+
+    No local branch, no index and no checkout: the files go into git's store, a tree and a commit are made
+    from them, and the commit is pushed by its id. So nothing lands on the default branch or in the work's
+    history, and the pull request links the images by the branch's name: once the branch is deleted the
+    links no longer resolve. No hook of the repository runs for this push: it is not the person's work.
+    """
+    entries = []
+    for shot in shots:
+        blob = _git_in(plan.root, shot.data, "hash-object", "-w", "--no-filters", "--stdin")
+        if not blob:
+            return False
+        entries.append(f"100644 blob {blob}\t{shot.name}\0")
+    tree = _git_in(plan.root, "".join(entries).encode(), "mktree", "-z")
+    if not tree:
+        return False
+    message = f"Contexer: screenshots of the checks of {contract_id}"
+    who = ("-c", f"user.name={_BOT[0]}", "-c", f"user.email={_BOT[1]}")
+    made = _git(plan.root, *who, "commit-tree", "--no-gpg-sign", "-m", message, tree)
+    if not made:
+        return False
+    ref = f"{made}:refs/heads/{branch}"
+    return _git(plan.root, *_NO_HOOKS, *_push_auth(plan), "push", "--quiet", plan.remote or "", ref, timeout=180, tokens=True) is not None
 
 
 def flaky_checks(outcome: RunOutcome) -> list[str]:
@@ -245,7 +302,12 @@ def _intent(project: Path, outcome: RunOutcome) -> IntentSpec | None:
 
 
 def pull_request_body(
-    outcome: RunOutcome, contract: Contract, *, issue: int | None = None, intent: IntentSpec | None = None
+    outcome: RunOutcome,
+    contract: Contract,
+    *,
+    issue: int | None = None,
+    intent: IntentSpec | None = None,
+    screenshots: Screenshots | None = None,
 ) -> str:
     final = outcome.final
     decision = final.decision if final is not None else None
@@ -294,6 +356,8 @@ def pull_request_body(
                 how = "" if r.proven else (" *(LLM-judged)*" if r.method == "judgment" else " *(heuristic)*")
                 lines.append(f"| {mark} | {_md(r.description)}{how} | {_md(r.evidence, 200)} |")
             lines.append("")
+    if screenshots is not None:
+        lines += _screenshot_lines(screenshots)
     others = [r for r in (final.contracts if final is not None else []) if r.contract.id != contract.id]
     if others:
         held = sum(1 for r in others for c in (r.verification.criteria_results if r.verification else []) if c.verdict == "verified")
@@ -332,6 +396,34 @@ def pull_request_body(
         "in Chromium against the app as changed here, and the contract's checks replay on later pull requests.",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _screenshot_lines(screens: Screenshots) -> list[str]:
+    """The checks that did not pass first and open, the others folded away. Says where the files are."""
+    server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+
+    def shown(shot: CheckScreenshot) -> list[str]:
+        mark, last = ("✅", "") if shot.passed else ("❌", " (did not pass: the last screen it reached)")
+        image = f"{server}/{screens.repo}/blob/{screens.branch}/{shot.name}?raw=true"
+        return [f"{mark} `{_code(shot.check_id)}` {_md(shot.description, 200)}{last}", "", f"![Screenshot]({image})", ""]
+
+    passed = [shot for shot in screens.shots if shot.passed]
+    lines = [
+        "### Screenshots",
+        "",
+        f"The page as each check last saw it. These are files Contexer pushed to the branch `{screens.branch}` of "
+        "this repository because it was asked to (`--screenshots`). They show the app's data as the checks saw "
+        "it, to everyone who can read the repository. Deleting that branch removes them from this description.",
+        "",
+    ]
+    for shot in screens.shots:
+        lines += shown(shot) if not shot.passed else []
+    if passed:
+        lines += ["<details>", f"<summary>{len(passed)} that passed</summary>", ""]
+        for shot in passed:
+            lines += shown(shot)
+        lines += ["</details>", ""]
+    return lines
 
 
 def _attempt_lines(outcome: RunOutcome) -> list[str]:
@@ -402,7 +494,11 @@ def _evidence_link(outcome: RunOutcome) -> str:
     repo = os.environ.get("GITHUB_REPOSITORY")
     if run_id and repo:
         server = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
-        return f"screenshots and expected-vs-actual in the `contexer-report` artifact of [this workflow run]({server}/{repo}/actions/runs/{run_id})"
+        # The gate's Action names it contexer-report, the issue Action contexer-report-issue-<n>-<attempt>.
+        return (
+            "screenshots and expected-vs-actual in the artifact whose name starts with `contexer-report`, on "
+            f"[this workflow run]({server}/{repo}/actions/runs/{run_id})"
+        )
     return f"`report.html` in `{CONTEXER_DIR}/runs/{outcome.run_id}/` on the machine that ran it"
 
 
@@ -505,6 +601,17 @@ def _git(cwd: Path, *args: str, timeout: float = 30, tokens: bool = False) -> st
     return out.stdout.strip() if out.returncode == 0 else None
 
 
+def _git_in(cwd: Path, data: bytes, *args: str) -> str | None:
+    """Run git with ``data`` on its standard input. What it printed, or None if it failed."""
+    try:
+        out = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", *args], cwd=str(cwd), env=_git_env(False), input=data, capture_output=True, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.decode("utf-8", errors="replace").strip() if out.returncode == 0 else None
+
+
 def _git_or_fail(cwd: Path, *args: str) -> str:
     try:
         out = _run_git(cwd, args, 120)
@@ -557,9 +664,13 @@ def _run_git(cwd: Path, args: tuple[str, ...], timeout: float, *, tokens: bool =
     runs on a commit is the project's code. The file-system monitor setting names a program too, and is
     never used.
     """
-    env = {k: v for k, v in os.environ.items() if tokens or k not in REPOSITORY_TOKENS}
-    env["GIT_TERMINAL_PROMPT"] = "0"  # never wait on a password prompt nobody sees
     return subprocess.run(
         ["git", "-c", "core.fsmonitor=false", *args],
-        cwd=str(cwd), env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+        cwd=str(cwd), env=_git_env(tokens), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
     )  # fmt: skip
+
+
+def _git_env(tokens: bool) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if tokens or k not in REPOSITORY_TOKENS}
+    env["GIT_TERMINAL_PROMPT"] = "0"  # never wait on a password prompt nobody sees
+    return env

@@ -1302,6 +1302,29 @@ attempts, repair rounds, cost and duration, the contract and its approval
 hash, where the evidence is (the workflow run's artifact in Actions), and
 `Closes #N` for issue runs. You are left on the new branch.
 
+Text that comes from an issue, the app, a model or git is made inert before
+it is written. `_plain` puts a zero-width space where a mention, `#12`,
+`GH-12`, a URL, a link, an image, a tag or a code fence would form; it is
+used for the title, the commit message, `Handoff.note` and `HandoffError`.
+`_inert` (the body) also writes `&`, `<` and `[` as character references.
+`_code` is for code spans, and `_md` shortens a table cell before escaping
+it. The only issue reference a pull request acts on is the `Closes #N` line
+Contexer writes itself.
+
+With `--screenshots` (off by default, `run` only), step 5 is preceded by a
+second push: one JPEG per check of the contract
+(`evidence/screenshots.py: check_screenshots`), written as blobs, a tree and
+a commit with no parent, pushed by its id to
+`contexer-evidence/<contract-id>-<commit8>` with no hook run. No local
+branch is made and the index and the checkout are not touched. A file counts
+only if it resolves inside the run's folder, is a `.jpg` that starts with
+the JPEG signature and is under 4 MB; a trace is never used. The body then
+has a **Screenshots** section after the checklist (checks that did not pass
+shown open, the others folded), with image links to that branch. Nothing is
+pushed if the secret scan stopped the first push, without a token, or for a
+remote that is not GitHub. If the second push fails the pull request is
+still opened and the note says so.
+
 It also carries: **What was understood** (the
 intent's behaviours, corrections and assumptions, when the run wrote an
 intent), **Attempts** (each attempt's result and what was decided after
