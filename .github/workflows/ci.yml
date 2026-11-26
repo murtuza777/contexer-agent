@@ -82,10 +82,13 @@ jobs:
       - name: Tests
         # --no-browser (tests/conftest.py) skips a test at the moment it starts a browser; -rs lists
         # what was skipped and why, so the log of a system without a browser says what it did not run.
-        run: >-
-          python -m pytest -q -p no:cacheprovider --durations=15
-          --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
-          ${{ !matrix.browser && '--no-browser -rs' || '' }}
+        # -n auto (pytest-xdist): one worker process per core, each with its own browser, dev
+        # servers and temporary folders. The first line of the step says how many cores there were.
+        run: |
+          python -c "import os; print('cores:', os.cpu_count())"
+          python -m pytest -q -p no:cacheprovider --durations=15 -n auto \
+            --deselect tests/test_opencode_integration.py::test_live_opencode_e2e \
+            ${{ !matrix.browser && '--no-browser -rs' || '' }}
 
   install:
     # docs/try-it.md, steps 1 and 2, as a new user would: nothing from the checkout on the path
