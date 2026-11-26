@@ -155,7 +155,8 @@ The last command is your first result: the bugs a replay confirmed, and a
 fix prompt. A new install has no browser yet; the demo offers to download
 Chromium, and `contexer setup --browser` does it on its own.
 
-Until the first PyPI release is out, install from GitHub:
+The package is [on PyPI](https://pypi.org/project/contexer-agent/). For the newest
+code before a release, install from GitHub:
 `uv tool install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"`.
 `uv tool install` and `pipx` put `contexer` on your PATH in its own
 environment; if `contexer` is "not recognized" after a `pip` install, see
@@ -448,7 +449,6 @@ diffs.
 
 Honest gaps:
 
-- **Not on PyPI yet.** Until the first release, install from GitHub.
 - **Not run on macOS**, and not with Codex against a real account. The
   issue workflow has not been run against a real GitHub issue.
 - **The checks of the live runs were approved with `--yes`**, not read by a
@@ -472,7 +472,6 @@ In order, and why, in
 
 | Next | What it is for |
 | --- | --- |
-| The release | The tag and PyPI, so the install is one line |
 | A plugin for Claude Code and Codex | The agent calls Contexer itself and is told what failed |
 | Evidence in the pull request | Screenshots and a trace a reviewer can see without your machine |
 | More agents, each measured before it ships | A regression guard, an access prober, a dependency checker, a scope guard |
