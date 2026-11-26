@@ -80,6 +80,12 @@ def run(
     issue: int | None = typer.Option(
         None, "--issue", min=1, help="Take the goal from this GitHub issue; the pull request closes it."
     ),
+    screenshots: bool = typer.Option(
+        False,
+        "--screenshots",
+        help="With --pr or --issue: also push one screenshot per check to a branch of its own and show them in the "
+        "pull request. They show your app's data to everyone who can read the repository.",
+    ),
     engine: str | None = typer.Option(None, "--engine", hidden=True, help="Removed in 0.5.0: there is one run loop."),
     resume: str | None = typer.Option(
         None, "--resume", metavar="RUN", help="Continue a run that was stopped."
@@ -106,6 +112,8 @@ def run(
     one_engine(engine)
     if correct and not resume:
         raise typer.BadParameter("--correct goes with --resume RUN: it corrects a run that was stopped")
+    if screenshots and not (pr or issue is not None):
+        raise typer.BadParameter("--screenshots goes with --pr or --issue N: the pull request is where they are shown")
     if json_output and not (yes or resume):
         raise typer.BadParameter("--json cannot stop to ask for an approval: add --yes, or approve the contract first")
     console = Console(quiet=True) if json_output else Console()
@@ -205,7 +213,7 @@ def run(
         verbose=verbose,
     )
     final = store.load(outcome.contract_id) if outcome.contract_id and store.exists(outcome.contract_id) else None
-    _finish(console, outcome, final, handoff_plan, pr, issue, open_report, json_output)
+    _finish(console, outcome, final, handoff_plan, pr, issue, open_report, json_output, screenshots=screenshots)
 
 
 def _finish(
@@ -217,6 +225,7 @@ def _finish(
     issue: int | None,
     open_report: bool,
     json_output: bool = False,
+    screenshots: bool = False,
 ) -> None:
     """Hand the result off if asked, print it, and exit with the outcome's code."""
     handoff: Handoff | None = None
@@ -224,7 +233,7 @@ def _finish(
     if handoff_plan is not None and contract is not None and outcome.terminal not in _NO_HANDOFF:
         with console.status("[dim]Committing the work to a branch and opening a pull request...[/dim]"):
             try:
-                handoff = hand_off(handoff_plan, outcome, contract, issue=issue)
+                handoff = hand_off(handoff_plan, outcome, contract, issue=issue, screenshots=screenshots)
             except HandoffError as exc:
                 handoff_error = str(exc)
     _render(console, outcome, handoff, handoff_error, pr)
