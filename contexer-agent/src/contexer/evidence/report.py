@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 
 from contexer.evidence.rundir import RunDir, write_whole
+from contexer.evidence.screenshots import image_in_run
 from contexer.gate.models import AgentRunSummary, ContractOutcome, RunResult
 from contexer.verification.models import CriterionResult
 
@@ -51,7 +52,7 @@ def render_report(result: RunResult) -> str:
         _header(result, project),
         _reasons(result),
         _agent_run_section(result),
-        *(_contract_section(o) for o in _ordered(result.contracts)),
+        *(_contract_section(o, result.run_dir) for o in _ordered(result.contracts)),
         _load_section(result),
         _log_section(result),
         _footer(result),
@@ -122,7 +123,7 @@ def _reasons(result: RunResult) -> str:
     return f'<section class="card reasons"><h2>Why</h2><ul>{items}{more}</ul></section>'
 
 
-def _contract_section(outcome: ContractOutcome) -> str:
+def _contract_section(outcome: ContractOutcome, run_dir: str = "") -> str:
     contract = outcome.contract
     status = outcome.status
     if status == "approved" and contract.approval:
@@ -144,7 +145,7 @@ def _contract_section(outcome: ContractOutcome) -> str:
     for criterion in contract.criteria:
         result = results.get(criterion.id)
         steps = criterion.check.describe_lines() if criterion.check else []
-        rows.append(_criterion_row(criterion.id, criterion.description, steps, result))
+        rows.append(_criterion_row(criterion.id, criterion.description, steps, result, run_dir))
     if verification and not verification.criteria_results and verification.reason:
         rows.append(f'<p class="bad">{_e(verification.reason)}</p>')
 
@@ -157,7 +158,7 @@ def _contract_section(outcome: ContractOutcome) -> str:
 </section>"""
 
 
-def _criterion_row(cid: str, description: str, steps: list[str], result: CriterionResult | None) -> str:
+def _criterion_row(cid: str, description: str, steps: list[str], result: CriterionResult | None, run_dir: str = "") -> str:
     if result is None:
         return (
             f'<li class="crit crit-unverified"><div class="crit-line"><span class="icon">?</span>'
@@ -189,7 +190,7 @@ def _criterion_row(cid: str, description: str, steps: list[str], result: Criteri
                 "<details><summary>What the page offered instead</summary>"
                 f"<pre>{_e(check.ui_at_failure)}</pre></details>"
             )
-        image = _data_uri(check.screenshot)
+        image = _data_uri(check.screenshot, run_dir)
         if image:
             details.append(f'<figure><img src="{image}" alt="Page when {_e(cid)} was judged" loading="lazy"></figure>')
         if check.trace:
@@ -347,7 +348,7 @@ def _load_section(result: RunResult) -> str:
     if load.page_errors:
         errs = "".join(f"<li>{_e(e)}</li>" for e in load.page_errors[:5])
         parts.append(f"<p class='bad'>Uncaught exceptions on load:</p><ul class='errors'>{errs}</ul>")
-    image = _data_uri(load.screenshot_path)
+    image = _data_uri(load.screenshot_path, result.run_dir)
     if image:
         parts.append(f'<figure><img src="{image}" alt="Page on load" loading="lazy"></figure>')
     return (
@@ -398,13 +399,17 @@ def _ordered(outcomes: list[ContractOutcome]) -> list[ContractOutcome]:
     return sorted(outcomes, key=rank)
 
 
-def _data_uri(path: str | None) -> str:
+def _data_uri(path: str | None, run_dir: str = "") -> str:
+    """An image of the run, inlined. Only an image, and with ``run_dir`` only one from that folder.
+
+    A result can name any path as a screenshot, and in Actions the report is uploaded as an artifact:
+    a file that is not an image, or that lies outside the run's folder, is left out.
+    """
     if not path:
         return ""
     file = Path(path)
-    try:
-        data = file.read_bytes()
-    except OSError:
+    data = image_in_run(file, run_dir or file.parent, (".png", ".jpg", ".jpeg"), limit=None)
+    if data is None:
         return ""
     mime = "image/png" if file.suffix.lower() == ".png" else "image/jpeg"
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"

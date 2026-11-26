@@ -37,6 +37,7 @@ from contexer.crew.untrusted import untrusted
 
 _PROMPT = Path(__file__).resolve().parent / "prompts" / "challenger.md"
 _MAX_REASON_CHARS = 400
+DEFAULT_MAX_STEPS = 3
 
 
 class Verdict(BaseModel):
@@ -76,6 +77,7 @@ async def challenge(
     run_dir: Path | None = None,
     budget: Budget | None = None,
     secrets: Sequence[str] = (),
+    max_steps: int = DEFAULT_MAX_STEPS,
 ) -> ChallengeResult:
     """Review ``confirmed`` bugs. Returns the ones that stand and the ones set aside, in their original order.
 
@@ -86,7 +88,7 @@ async def challenge(
     if not items or (budget is not None and budget.exhausted()):
         return result
     spec = AgentSpec(
-        name="challenger", system_prompt=challenger_prompt(), output_schema=Verdicts, max_steps=3, timeout=180.0
+        name="challenger", system_prompt=challenger_prompt(), output_schema=Verdicts, max_steps=max_steps, timeout=180.0
     )
     ran = await run_agent(spec, model, [], _task(items, intent), run_dir=run_dir, secrets=list(secrets), budget=budget)
     result.status, result.error, result.steps = ran.status, ran.error, ran.steps

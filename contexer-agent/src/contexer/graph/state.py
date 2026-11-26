@@ -76,6 +76,8 @@ class LoopState(_Always, total=False):
     decisions: list[dict[str, Any]]
     asked: int
     answer: str
+    # The Diagnoser's leads so far: the attempt each was written after -> its cause and instruction.
+    leads: dict[str, dict[str, str]]
 
     # -- the review of a passing attempt ---------------------------------------------------
     # The notes of the latest review, and the attempt it read.

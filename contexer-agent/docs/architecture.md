@@ -353,6 +353,12 @@ always stopped on exit.
 - Installs when `node_modules` is missing (or on request; 900 s limit), then
   spawns the start command as a process tree (§procutil) with `FORCE_COLOR=0`
   and `CI=1`.
+- The install, the server and the reset command get `procutil.child_env`:
+  the person's environment without a hosting agent session's variables,
+  without repository tokens, without `LANGFUSE_*`, and without the keys and
+  choices `contexer setup` saved (those are Contexer's). A variable that is
+  exported, or set in the project's `.env`, still reaches them, model keys
+  and `[auth]` credentials included. `[app] env` is applied last.
 - Output goes to `server.log` and a 400-line ring buffer (ANSI stripped).
 - Ready when the port answers 200–399 or 400–403 (Playwright `webServer`
   semantics), polled every 0.5 s up to `ready_timeout` (120 s), on both
@@ -547,8 +553,15 @@ prompts; `tests/test_controller.py` pins what those produce.
   to $6.26 against a $5 limit.
 - **A model per agent.** `[agents.<name>] model`, `provider` and
   `max_steps` for intent, planner, tester, challenger, triage, diagnoser
-  and reviewer. An agent that is not named uses the default model. A model
-  that cannot be built is reported and the default is used.
+  and reviewer. An agent that is not named uses the default model.
+  `contexer run` reads it for the five agents it runs and `contexer test`
+  for its four (intent, tester, challenger, diagnoser); a model named on
+  `contexer test --model` is for every agent of that run. A model that
+  cannot be built, an unknown provider, and a provider with no model stop
+  the command before it starts. Not wired yet: `max_steps` for Intent and
+  Triage inside `contexer run` (both take the argument; `graph/nodes.py`
+  does not pass it), and the issue flow, which runs every agent on the
+  default model.
 - **The estimate** (`crew/estimate.py`) is printed before a run: the most
   coding-agent turns and model calls it can make, from the caps in code.
   It is a ceiling, not a prediction.
@@ -880,14 +893,29 @@ models built from the same catalog:
   `.../openai/v1`. OpenRouter keeps its
   attribution headers and, for the default model, its free fallback list.
   Building a model makes no network call, and LangChain is imported only then.
-- `supports_tools(provider, model)`: True, False or None (the provider does
-  not say), read from the provider's model list; never a model request.
-  `contexer doctor` shows it as "Tool calling".
+- `llm/capabilities.py: ModelCapabilities` is the record per model: context
+  window, native tool calling, parallel calls, strict schemas, vision, and
+  the input, output and cached-input price. Each fact carries its source:
+  `catalogue` (the provider's model list; OpenRouter publishes all of it),
+  `measured` (the model is in `catalog.MEASURED_MODELS`, today `gpt-5.4`
+  for tool calling only, or `contexer setup` made one real tool call with
+  `check_tool_calling` and saved the answer in `~/.contexer/models.json`),
+  or `assumed` (nobody says: the agents' expectation, or "not known" for
+  the window and the prices). `model_capabilities(provider, model)` builds
+  it with one read of the model list and no model request. `contexer
+  doctor` prints every row with its source, `contexer setup` prints it
+  after saving, and `build_model` keeps it so `capabilities_of(model)`
+  returns it for the chat model an agent runs on. Nothing in `crew/base.py`
+  reads it yet.
+- `supports_tools(provider, model)`: True, False or None (nobody says),
+  taken from that record.
 - A model that cannot call tools gives a `ToolCallingError` that names it:
-  from `require_tools` when the provider's list says so, from
+  from `require_tools` when the record says so (catalogue or measured), from
   `tool_calling_error` when the API refuses the request, and from
-  `check_tool_calling` (one real tool call and its result, used by the live
-  test) when the model answers without calling the tool.
+  `check_tool_calling` (one real tool call and its result, used by
+  `contexer setup` and the live test) when the model answers without
+  calling the tool. `contexer test` stops on it; `contexer run` says it
+  and goes on with fixed rules and no agents.
 
 ### The agent loop (`crew/base.py`)
 
@@ -904,6 +932,10 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 - Tool calls in one reply run in order. A tool that raises, an unknown tool
   and bad arguments all become an error result the model can read; none ends
   the run. Results longer than 20,000 characters are cut.
+- The arguments of a call are checked against the tool's schema before the
+  tool runs. A call that does not fit gets the problem and the tool's
+  required fields as its result. The next call of that tool that runs
+  without an error is counted in `AgentResult.repaired_calls`.
 - `AgentResult.status`: `ok`, `step_limit`, `timeout`, `invalid_output`,
   `model_error`. It also carries the steps (model calls), tool calls, tokens
   in and out, the duration, and the cost when the provider reports one
@@ -915,8 +947,21 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 `runs/<run-id>/agents/<name>.jsonl`. A `start` line (model, input, tools,
 limits), then one `model` line per model call (step, seconds, tokens in and
 out, cost, text, tool calls, or the error) and one `tool` line per tool call
-(name, arguments, status, result, seconds), then an `end` line (status,
-totals, the output).
+(name, arguments, status, whether it was a repaired call, result, seconds),
+then an `end` line (status, totals, the output).
+
+**Trace** (`crew/transcript.py: Trace`): `runs/<run-id>/trace.jsonl` is one
+file for the whole run. Its first line names the version of OpenTelemetry's
+semantic conventions it follows. The engine writes every run event as the
+line `--json` prints (`graph/engine.py: _context`). Every agent writes one
+`model` line per model call (agent, provider, requested and answering model,
+tokens in, out and read from cache, finish reason, seconds, cost and whether
+it is an estimate) and one `tool` line per tool call (name, `ok`, `repaired`
+or `failed`, seconds), under `gen_ai.*` names, with `contexer.*` for what the
+conventions do not name. It holds no prompt, reply, tool argument or tool
+result; those are in the agent's transcript under the same agent and step.
+Every line is masked. `run.json` gets each agent's count of repaired calls
+from this file when the run ends.
 
 **Masking** (`crew/transcript.py: Masker`): one masker is used in four
 places.
@@ -1056,10 +1101,16 @@ flowchart LR
   and closed to `.contexer/`, `.git/`, dependencies, `.aws/`, `.ssh/` and files that hold
   credentials by name (`.env`, `*.env`, `.npmrc`, `.netrc`, `*.pem`, `*.key`, `id_rsa`...).
   `grep` resolves every file first, so a link or a junction cannot lead out of the project
-  or into a closed folder. Its
+  or into a closed folder. It searches for the literal text; a regular expression,
+  when the model asks for one, runs in a separate process. One search has two seconds
+  for the walk and the matching, then is stopped and says so. Its
   `RepairBrief` adds the likely cause (labelled a hypothesis), the files,
   the instruction and what must keep working. With no brief the prompt is
-  still complete.
+  still complete. In a run, each lead is kept in the state (`leads`), and the next
+  diagnosis is shown every earlier lead with the files the attempt after it changed
+  and the checks that then passed, broke or kept failing (`graph/nodes.py: _tried`);
+  the prompt tells the Diagnoser to say when its lead repeats one of them. Nothing in
+  code compares the leads.
 - **Planner** (`crew/planner.py`). Runs once before the first coding turn,
   in the `plan` node, with the Diagnoser's two tools and nothing else. It
   is given the goal, the approved checks as `format_contract` prints them,
@@ -1091,7 +1142,11 @@ flowchart LR
   to 3 skills about operating the app. `SkillStore.save` refuses one that
   contains a configured secret or anything shaped like an API key. Before a
   run, the skills whose name or description shares a meaningful word with
-  the intent (at most 5) are added to the Tester's task as advice.
+  the intent (at most 5) are added to the Tester's task as advice. On load
+  at most 30 files are read, 8,000 bytes of each, with the description and
+  the body capped as on save; a file that is not UTF-8 is read with the
+  bytes that do not decode replaced. During `contexer run` the tamper guard
+  puts back a skill file that was changed, added or deleted.
 - **One run of `contexer test`.** Intent agent (questions asked once when a
   person is at the terminal and `--yes` is not given), Tester, replay,
   then for confirmed bugs the Diagnoser and `fix-prompt.md`. The intent and
@@ -1155,9 +1210,18 @@ write access is still what makes the checks count.
 
 An issue is read in one place, `github/issues.py: issue_goal`, by the
 Actions path (`contexer issue`) and by `contexer run --issue N` alike. It
-removes what GitHub does not show (HTML comments, zero-width and
-direction characters) before the text becomes a goal, so nothing reaches an
-agent that a person reading the issue could not see.
+removes what GitHub does not show before the text becomes a goal: HTML
+comments, every character of Unicode category Cf, Co and Cn (zero-width and
+direction characters, bidi isolates, the soft hyphen, tag characters,
+private use, unassigned) and the variation selectors. The category of a
+character comes from Python's `unicodedata`, so a character newer than the
+Unicode version of the Python in use counts as unassigned and is removed.
+The drafting prompt used when no tool-calling model is configured
+(`workflow/criteria.py`) quotes a goal from an issue as data, like the
+agents' prompts. A draft asked for in a comment (`/contexer draft`,
+`/contexer answer`) needs write access, checked through the API
+(`cli/issue_cli.py: _writers_only`); a label needs triage rights on GitHub
+and is not checked again.
 
 ### Tool audit
 
@@ -1204,7 +1268,8 @@ provider's own variable (`OPENROUTER_MODEL`, `OPENAI_MODEL`,
 
 - `~/.contexer/` (or `CONTEXER_HOME`): `config.toml` (`[model]` provider,
   model, base URL; `[agent]` name, model) and `credentials.toml` (`[keys]`,
-  mode 0600 on POSIX).
+  created with mode 0600 on POSIX, its folder with 0700 when Contexer creates
+  it; on Windows the mode bits do nothing and the folder's access rules apply).
 - Precedence: exported variables, then the project's `.env`, then what
   `contexer setup` saved, then `contexer.toml` for the settings it covers.
   `apply_user_settings` fills only unset variables and records what it set,
@@ -1230,6 +1295,7 @@ checks/<contract>/     per-check screenshots (and traces when kept)
 attempt-<n>/           contexer run: the same, per attempt (plus run-result.json)
 checkpoint.sqlite      contexer run: the state after every node; what --resume reads
 agents/<name>.jsonl    one transcript per Contexer agent (crew/), secrets masked
+trace.jsonl            every run event, model call and tool call in order; no prompts or page content
 replay/                contexer test: a screenshot per replayed finding
 screens/               contexer test: screenshots the Tester took
 draft-contract.json    contexer test: the confirmed checks, not approved
@@ -1302,6 +1368,29 @@ attempts, repair rounds, cost and duration, the contract and its approval
 hash, where the evidence is (the workflow run's artifact in Actions), and
 `Closes #N` for issue runs. You are left on the new branch.
 
+Text that comes from an issue, the app, a model or git is made inert before
+it is written. `_plain` puts a zero-width space where a mention, `#12`,
+`GH-12`, a URL, a link, an image, a tag or a code fence would form; it is
+used for the title, the commit message, `Handoff.note` and `HandoffError`.
+`_inert` (the body) also writes `&`, `<` and `[` as character references.
+`_code` is for code spans, and `_md` shortens a table cell before escaping
+it. The only issue reference a pull request acts on is the `Closes #N` line
+Contexer writes itself.
+
+With `--screenshots` (off by default, `run` only), step 5 is preceded by a
+second push: one JPEG per check of the contract
+(`evidence/screenshots.py: check_screenshots`), written as blobs, a tree and
+a commit with no parent, pushed by its id to
+`contexer-evidence/<contract-id>-<commit8>` with no hook run. No local
+branch is made and the index and the checkout are not touched. A file counts
+only if it resolves inside the run's folder, is a `.jpg` that starts with
+the JPEG signature and is under 4 MB; a trace is never used. The body then
+has a **Screenshots** section after the checklist (checks that did not pass
+shown open, the others folded), with image links to that branch. Nothing is
+pushed if the secret scan stopped the first push, without a token, or for a
+remote that is not GitHub. If the second push fails the pull request is
+still opened and the note says so.
+
 It also carries: **What was understood** (the
 intent's behaviours, corrections and assumptions, when the run wrote an
 intent), **Attempts** (each attempt's result and what was decided after
@@ -1340,7 +1429,8 @@ sequenceDiagram
 - **Draft comment**: `<!-- contexer:draft id=<id> sha256=<hash> -->`, the
   checks with how each fares on the app today, and the contract as JSON inside
   `<details>`. A maintainer may edit the JSON; the build notices
-  (`edited since drafting`).
+  (`edited since drafting`). A comment is a draft only when it begins with
+  the marker, so a comment that quotes one (a status comment) is not.
 - **Drafting with the Intent agent** (when a model is configured): the comment also shows what the agent
   understood (behaviours, assumptions) and its questions, each with the
   reading the checks take and the other one. `/contexer answer <text>`
@@ -1446,7 +1536,7 @@ and prints the fix under each problem.
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
 | `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins |
 | `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens, used when the provider reports no cost |
-| `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer` |
+| `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer`. Read by `run` and `test`. `provider` needs `model`; a model that cannot be built stops the command |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
 | `[limits] cost_usd` | none | Cost limit for the same, where the provider reports prices |
 

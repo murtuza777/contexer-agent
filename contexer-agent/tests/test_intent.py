@@ -305,3 +305,12 @@ async def test_the_stored_intent_is_part_of_what_the_agent_reads(tmp_path: Path)
     task = model.seen[0][1].content
     assert "Empty tasks are refused" in task and "The count never goes below zero" in task
     assert [c.on for c in result.spec.corrections] == ["2026-11-01"]  # kept, not rewritten
+
+
+async def test_the_intent_agent_takes_the_step_cap_it_is_given(tmp_path: Path) -> None:
+    import json
+
+    model = ScriptedChatModel(submit(behaviours=["A task can be added"]))
+    await run_intent(GOAL, model, run_dir=tmp_path, max_steps=2)
+    start = json.loads((tmp_path / "agents" / "intent.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert start["max_steps"] == 2

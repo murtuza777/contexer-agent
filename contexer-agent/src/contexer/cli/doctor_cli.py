@@ -21,7 +21,7 @@ from contexer import __version__
 from contexer.cli import term
 from contexer.github.api import github_token
 from contexer.llm import discovery
-from contexer.llm.chat import supports_tools
+from contexer.llm.capabilities import ModelCapabilities, model_capabilities
 
 if TYPE_CHECKING:
     from contexer.config.project import AuthSettings
@@ -122,7 +122,7 @@ def environment_findings() -> list[Finding]:
                 "Set ANTHROPIC_API_KEY or OPENAI_API_KEY, or pin OPENROUTER_MODEL to a strong model",
             )
         )
-        findings.append(_tool_calling_finding(llm.name, llm.model))
+        findings += _model_findings(llm.name, llm.model)
     else:
         findings.append(
             Finding(
@@ -256,20 +256,35 @@ def _sign_in_finding(project: Path, auth: AuthSettings) -> Finding:
     return Finding("Sign-in", "ok", f"[auth] signs in at {auth.url}{using}")
 
 
-def _tool_calling_finding(provider: str, model: str) -> Finding:
-    """Whether the model can drive Contexer's agents, from the provider's own model list (no model request)."""
+def _model_findings(provider: str, model: str) -> list[Finding]:
+    """Each capability of the configured model and where it is known from (no model request is made)."""
+    from contexer.llm.base import LLMError
+    from contexer.llm.chat import resolve_model
+
     try:
-        able = supports_tools(provider, model)
-    except ValueError:  # a provider outside the catalog
-        able = None
-    if able is None:
+        choice = resolve_model(provider, model)  # the key and the endpoint a run would use
+        record = model_capabilities(choice.spec.id, choice.model, api_key=choice.api_key, base_url=choice.base_url)
+    except (ValueError, LLMError):  # a provider outside the catalog, or one with no key or endpoint yet
+        record = ModelCapabilities(provider=provider, model=model)
+    rows = record.rows()[1:]  # tool calling has its own line: it is the one that can stop the agents
+    return [_tool_calling_finding(record), *[Finding(name, "ok", f"{value} ({origin})") for name, value, origin in rows]]
+
+
+def _tool_calling_finding(record: ModelCapabilities) -> Finding:
+    """Whether the model can drive Contexer's agents."""
+    tools, model = record.native_tools, record.model
+    if tools.source == "assumed":
         return Finding(
-            "Tool calling", "ok", f"{provider} does not say whether {model} can call tools; the first agent run will"
+            "Tool calling",
+            "ok",
+            f"{model} is assumed to call tools: {record.provider or 'the provider'} does not say, and it was not "
+            "measured. `contexer setup` measures it with one tool call",
         )
     return Finding(
         "Tool calling",
-        "ok" if able else "warn",
-        f"{model} can call tools" if able else f"{model} cannot call tools, which Contexer's agents need",
+        "ok" if tools.value else "warn",
+        (f"{model} can call tools" if tools.value else f"{model} cannot call tools, which Contexer's agents need")
+        + f" ({tools.origin()})",
         "Choose a model that supports tool calling: `contexer models` marks them",
     )
 

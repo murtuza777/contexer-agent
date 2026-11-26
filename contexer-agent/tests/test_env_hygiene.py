@@ -56,6 +56,70 @@ def test_the_reset_command_gets_that_environment(tmp_path: Path, monkeypatch: py
     assert run_reset(command, tmp_path) is None  # exit 0: no token was there to see
 
 
+# -- keys saved by `contexer setup` (SEC-7) ----------------------------------------------------------
+
+SAVED_KEY = "made-up-saved-key-51c2"
+
+
+def _setup_saved_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.config import user
+
+    monkeypatch.setattr(user, "_APPLIED", {})
+    for name in ("OPENROUTER_API_KEY", "CONTEXER_LLM_PROVIDER", "CONTEXER_LLM_MODEL", "CONTEXER_AGENT"):
+        monkeypatch.delenv(name, raising=False)
+    user.save_credential("OPENROUTER_API_KEY", SAVED_KEY)
+    user.save_user_settings(user.UserSettings(provider="openrouter", model="some/model"))
+    user.apply_user_settings()
+    assert os.environ["OPENROUTER_API_KEY"] == SAVED_KEY  # Contexer itself has the key
+    monkeypatch.setattr(project_config, "_env_loaded", set())
+
+
+def test_dev_server_env_has_no_setup_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key that exists only in ``~/.contexer/credentials.toml`` is Contexer's, not the app's."""
+    _setup_saved_a_key(monkeypatch)
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "made-up-langfuse-secret")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://langfuse.example")
+    server = DevServer.__new__(DevServer)
+    server.plan = SimpleNamespace(env={"PORT": "5173"})  # type: ignore[assignment]
+    env = server._env()
+    assert "OPENROUTER_API_KEY" not in env and SAVED_KEY not in env.values()
+    assert "CONTEXER_LLM_PROVIDER" not in env  # the choices setup saved go the same way
+    assert not [name for name in env if name.startswith("LANGFUSE_")]  # Contexer's tracing is not the app's
+    assert env["PORT"] == "5173"
+    assert os.environ["OPENROUTER_API_KEY"] == SAVED_KEY  # nothing was taken from Contexer's own environment
+
+
+def test_the_reset_command_gets_no_setup_credentials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _setup_saved_a_key(monkeypatch)
+    (tmp_path / "probe.py").write_text(
+        "import os, sys\nsys.exit(1 if os.environ.get('OPENROUTER_API_KEY') else 0)\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("CONTEXER_TEST_PYTHON", sys.executable)
+    command = '"%CONTEXER_TEST_PYTHON%" probe.py' if sys.platform == "win32" else '"$CONTEXER_TEST_PYTHON" probe.py'
+    assert run_reset(command, tmp_path) is None  # exit 0: the saved key was not there to see
+
+
+def test_a_key_the_person_exported_or_the_project_set_still_reaches_the_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only what `contexer setup` added is held back: an export, the project's .env and [app] env pass."""
+    _setup_saved_a_key(monkeypatch)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "made-up-exported-key")  # exported by the person
+    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=made-up-project-key\n", encoding="utf-8")
+    load_project_env(tmp_path)  # the project's own key replaces the saved one
+    env = child_env()
+    assert env["ANTHROPIC_API_KEY"] == "made-up-exported-key"
+    assert env["OPENROUTER_API_KEY"] == "made-up-project-key"
+    assert child_env({"LANGFUSE_HOST": "https://app.example"})["LANGFUSE_HOST"] == "https://app.example"  # [app] env
+
+
+def test_a_project_env_that_holds_the_same_key_as_setup_makes_it_the_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--dir` elsewhere: the project's .env names the key setup saved, with the same value. The project gave it."""
+    _setup_saved_a_key(monkeypatch)
+    assert "OPENROUTER_API_KEY" not in child_env()
+    (tmp_path / ".env").write_text(f"OPENROUTER_API_KEY={SAVED_KEY}\n", encoding="utf-8")
+    load_project_env(tmp_path)
+    assert child_env()["OPENROUTER_API_KEY"] == SAVED_KEY
+
+
 # -- .env ------------------------------------------------------------------------------------------
 
 

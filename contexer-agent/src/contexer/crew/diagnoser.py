@@ -15,11 +15,15 @@ Two parts, kept apart on purpose:
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import subprocess
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -55,7 +59,39 @@ _MAX_SEARCHED_LINE = 2_000
 _MAX_WALKED_FILES = 20_000
 # A group that ends in a quantifier and is itself repeated: the shape of a pattern that backtracks without end.
 _NESTED_QUANTIFIER = re.compile(r"\([^()]*[+*][^()]*\)\s*(?:[+*]|\{\d*,\d*\})")
+# One search, from the first folder walked to the answer. A regular expression holds the interpreter
+# lock while it runs, so no timeout in this process can stop one: it runs in a process that can be killed.
+_SEARCH_SECONDS = 2.0
+# What starting the walk may use of that before a regular expression gets the rest, and what stopping its process may take.
+_LISTING_SECONDS = 1.0
+_STOP_MARGIN = 0.5
+# The search process: standard library only, so it starts fast and needs nothing of Contexer's on its path.
+_REGEX_CHILD = """
+import json, re, sys
+job = json.loads(sys.stdin.buffer.read())
+try:
+    regex = re.compile(job["pattern"])
+except Exception as exc:
+    print(json.dumps({"error": str(exc)}))
+    sys.exit(0)
+found = 0
+for path, name in job["files"]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        continue
+    for number, line in enumerate(lines, 1):
+        if regex.search(line[: job["searched"]]):
+            print(json.dumps([name, number, line.strip()[: job["shown"]]]), flush=True)
+            found += 1
+            if found >= job["most"]:
+                sys.exit(0)
+"""
 _MAX_LOG_CHARS = 4_000
+# Earlier leads shown to the Diagnoser (the latest ones), and the changed files named for each.
+_MAX_TRIED = 5
+_MAX_TRIED_FILES = 12
 # What a brief may carry into the fix prompt. The brief is written by a model that read the project's
 # files, and the prompt is read by a coding agent: a long free text is a way to steer it.
 MAX_CAUSE_CHARS = 800
@@ -96,6 +132,51 @@ class RepairBrief(BaseModel):
     keep_working: list[str] = Field(default_factory=list, description="Nearby behaviour the fix must not break.")
 
 
+class Tried(BaseModel):
+    """One lead that was already given, and what the attempt that worked from it did.
+
+    Without it the Diagnoser reads the same failure and the same code after every attempt, and
+    hands in the same lead again.
+    """
+
+    attempt: int  # the attempt that worked from the lead; the lead was written after the one before it
+    cause: str = ""
+    instruction: str = ""
+    changed_files: list[str] = Field(default_factory=list)
+    # Checks as `contract/check`: which failed before the attempt and passed after it, and so on.
+    fixed: list[str] = Field(default_factory=list)
+    broke: list[str] = Field(default_factory=list)
+    still_failing: list[str] = Field(default_factory=list)
+    no_check_ran: bool = False  # the app did not start after the attempt
+    undone_to: int | None = None  # the attempt the files were put back to afterwards, if they were
+
+
+def tried_section(tried: Sequence[Tried]) -> list[str]:
+    """The earlier leads as lines of the Diagnoser's task. A model wrote each lead, so it is quoted as data."""
+    if not tried:
+        return []
+    lines = [
+        "## What was already tried",
+        "Each lead below was handed to the coding agent after an earlier attempt. None of them made every check pass.",
+        "",
+    ]
+    for item in tried[-_MAX_TRIED:]:
+        lead = [f"Likely cause: {item.cause.strip()}"] if item.cause.strip() else []
+        if item.instruction.strip():
+            lead.append(f"Suggested change: {item.instruction.strip()}")
+        lines += [f"### The lead after attempt {item.attempt - 1}", untrusted("earlier-lead", "\n".join(lead))]
+        lines.append(f"Attempt {item.attempt} changed: {', '.join(item.changed_files[:_MAX_TRIED_FILES]) or 'no file'}")
+        if item.no_check_ran:
+            lines.append("After it the app did not start, so no check could run.")
+        for label, checks in (("Now passing", item.fixed), ("Broken by it", item.broke), ("Still failing", item.still_failing)):
+            if checks and not item.no_check_ran:
+                lines.append(f"{label}: {', '.join(checks)}")
+        if item.undone_to is not None:
+            lines.append(f"Its change was undone: the files went back to attempt {item.undone_to}.")
+        lines.append("")
+    return lines
+
+
 @dataclass
 class DiagnosisResult:
     brief: RepairBrief | None
@@ -119,6 +200,7 @@ async def diagnose(
     intent: str = "",
     diff: str = "",
     server_log: str = "",
+    tried: Sequence[Tried] = (),
     run_dir: Path | None = None,
     max_steps: int = DEFAULT_MAX_STEPS,
     secrets: Sequence[str] = (),
@@ -139,6 +221,7 @@ async def diagnose(
         parts += ["## The latest diff", untrusted("diff", diff.strip()[:_MAX_DIFF_CHARS]), ""]
     if server_log.strip():
         parts += ["## The end of the server log", untrusted("server-log", server_log.strip()[-_MAX_LOG_CHARS:]), ""]
+    parts += tried_section(tried)
     parts.append("Find the likely cause and hand in the brief.")
     ran = await run_agent(
         spec, model, project_tools(project_dir), "\n".join(parts), run_dir=run_dir, secrets=list(secrets), budget=budget
@@ -317,8 +400,9 @@ class _ReadFile(BaseModel):
 
 
 class _Grep(BaseModel):
-    pattern: str = Field(description="A regular expression.")
+    pattern: str = Field(description="The text to look for, exactly as it is written in the file.")
     path: str = Field(".", description="A file or folder inside the project to search; the whole project by default.")
+    regex: bool = Field(False, description="True when the pattern is a regular expression and not literal text.")
 
 
 def project_tools(project_dir: Path) -> list[BaseTool]:
@@ -358,39 +442,65 @@ def project_tools(project_dir: Path) -> list[BaseTool]:
         more = f"\n... {len(content) - last} more line(s)" if last < len(content) else ""
         return "\n".join(body) + more
 
-    def grep(pattern: str, path: str = ".") -> str:
+    def searchable(file: Path) -> str:
+        """The file's path from the project's root when a search may open it, else ''."""
+        relative = file.relative_to(root)
+        try:
+            real = file.resolve()
+            # A link or a junction can point out of the project or into a closed folder; the name alone does not say.
+            if root not in real.parents or _closed(relative) or _closed(real.relative_to(root)) or real.stat().st_size > _MAX_FILE_BYTES:
+                return ""
+        except OSError:
+            return ""
+        return relative.as_posix()
+
+    def grep(pattern: str, path: str = ".", regex: bool = False) -> str:
         target = resolve(path)
         if isinstance(target, str):
             return target
         if len(pattern) > _MAX_PATTERN_CHARS:
             return f"Error: the pattern is longer than {_MAX_PATTERN_CHARS} characters. Search for a shorter, more exact one."
-        if _NESTED_QUANTIFIER.search(pattern):
-            # (a+)+ and its relatives can take longer than the run on one long line, and a thread cannot be stopped.
+        if regex and _NESTED_QUANTIFIER.search(pattern):
+            # Refused at once: the time limit below would stop it too, two seconds later.
             return "Error: the pattern repeats a group that already repeats (a nested quantifier such as (a+)+). Write it without the nesting."
-        try:
-            regex = re.compile(pattern)
-        except re.error as exc:
-            return f"Error: '{pattern}' is not a valid regular expression: {exc}"
-        files = [target] if target.is_file() else _open_files(target)
+        started = monotonic()
+        deadline = started + _SEARCH_SECONDS
+        files = [target] if target.is_file() else _open_files(target, deadline)
+        out_of_time = f"Stopped at the limit of {_SEARCH_SECONDS:g} seconds before every file was searched. Narrow the path."
         matches: list[str] = []
-        for file in files:
-            relative = file.relative_to(root)
-            try:
-                real = file.resolve()
-                # A link or a junction can point out of the project or into a closed folder; the name alone does not say.
-                if root not in real.parents or _closed(relative) or _closed(real.relative_to(root)) or real.stat().st_size > _MAX_FILE_BYTES:
+        stopped = ""  # why the search ended before its last file
+        if regex:
+            listed: list[tuple[str, str]] = []
+            for file in files:
+                if monotonic() > started + _LISTING_SECONDS:
+                    stopped = out_of_time
+                    break
+                name = searchable(file)
+                if name:
+                    listed.append((str(file), name))
+            matches, problem = _regex_matches(pattern, listed, deadline - monotonic() - _STOP_MARGIN)
+            stopped = problem or stopped
+        else:
+            for file in files:
+                if monotonic() > deadline:
+                    stopped = out_of_time
+                    break
+                name = searchable(file)
+                try:
+                    lines = file.read_text(encoding="utf-8").splitlines() if name else []
+                except (OSError, UnicodeDecodeError):
                     continue
-            except OSError:
-                continue
-            try:
-                text = file.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            for number, line in enumerate(text.splitlines(), 1):
-                if regex.search(line[:_MAX_SEARCHED_LINE]):
-                    matches.append(f"{relative.as_posix()}:{number}: {line.strip()[:_MAX_LINE_CHARS]}")
-                    if len(matches) >= _MAX_MATCHES:
-                        return "\n".join(matches) + f"\n... stopped at {_MAX_MATCHES} matches; narrow the pattern or the path"
+                matches += [
+                    f"{name}:{number}: {line.strip()[:_MAX_LINE_CHARS]}"
+                    for number, line in enumerate(lines, 1)
+                    if pattern in line[:_MAX_SEARCHED_LINE]
+                ][: _MAX_MATCHES - len(matches)]
+                if len(matches) >= _MAX_MATCHES:
+                    break
+        if len(matches) >= _MAX_MATCHES:
+            return "\n".join(matches[:_MAX_MATCHES]) + f"\n... stopped at {_MAX_MATCHES} matches; narrow the pattern or the path"
+        if stopped:
+            return "\n".join([*matches, stopped])
         return "\n".join(matches) if matches else f"No match for '{pattern}'."
 
     return [
@@ -403,21 +513,64 @@ def project_tools(project_dir: Path) -> list[BaseTool]:
         StructuredTool.from_function(
             grep,
             name="grep",
-            description="Search the project's files with a regular expression. Returns file:line: text.",
+            description="Search the project's files for a text, exactly as written. Returns file:line: text. "
+            "With regex true the pattern is a regular expression. A search stops after two seconds.",
             args_schema=_Grep,
         ),
     ]
 
 
-def _open_files(folder: Path) -> list[Path]:
-    """The files under ``folder``, without ever stepping into a closed folder (``node_modules`` can hold 100,000 files)."""
+def _open_files(folder: Path, deadline: float) -> list[Path]:
+    """The files under ``folder``, without ever stepping into a closed folder (``node_modules`` can hold 100,000 files).
+
+    The walk stops at ``deadline`` (a ``monotonic`` time) with what it has: the search that follows says it ran out of time.
+    """
     found: list[Path] = []
     for here, folders, names in os.walk(folder):
         folders[:] = sorted(name for name in folders if name not in _CLOSED_DIRS)
         found.extend(Path(here) / name for name in sorted(names))
-        if len(found) > _MAX_WALKED_FILES:
+        if len(found) > _MAX_WALKED_FILES or monotonic() > deadline:
             break
     return found
+
+
+def _regex_matches(pattern: str, files: list[tuple[str, str]], seconds: float) -> tuple[list[str], str]:
+    """Search ``files`` (path, name to show) with a regular expression, in a process that is killed after ``seconds``.
+
+    Returns the matches found and, when the search did not finish, an error the model can read.
+    """
+    job = {"pattern": pattern, "files": files, "searched": _MAX_SEARCHED_LINE, "shown": _MAX_LINE_CHARS, "most": _MAX_MATCHES}
+    problem = ""
+    try:
+        ran = subprocess.run(
+            [sys.executable, "-I", "-S", "-c", _REGEX_CHILD],
+            input=json.dumps(job).encode(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=max(seconds, 0.1),
+        )
+        output = ran.stdout
+        if ran.returncode != 0:
+            problem = "Error: the regular expression search failed. Search for the literal text instead."
+    except subprocess.TimeoutExpired as exc:
+        output = exc.stdout or b""
+        problem = (
+            f"Error: the regular expression ran into the limit of {_SEARCH_SECONDS:g} seconds and was stopped. "
+            "Write a simpler one, search a narrower path, or search for the literal text."
+        )
+    except OSError as exc:
+        return [], f"Error: the regular expression search could not start ({exc}). Search for the literal text instead."
+    matches: list[str] = []
+    for raw in output.split(b"\n")[:-1]:  # a line cut off by the stop has no newline, and is dropped
+        try:
+            item = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(item, dict):
+            return [], f"Error: '{pattern}' is not a valid regular expression: {item.get('error', '')}"
+        name, number, line = item
+        matches.append(f"{name}:{number}: {line}")
+    return matches, problem
 
 
 def _closed(relative: Path) -> str:

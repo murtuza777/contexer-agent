@@ -35,6 +35,9 @@ MAX_LOADED = 5
 MAX_DESCRIPTION_CHARS = 160
 MAX_BODY_CHARS = 800
 MAX_SKILLS = 30
+# The same holds for a file somebody else put in the folder: this much of it is read, and no more files than
+# the store may hold. Enough for the longest skill Contexer writes, in any script.
+MAX_SKILL_BYTES = 8_000
 
 _WORD = re.compile(r"[a-z0-9]+")
 # Words that say nothing about what a skill or an intent is about.
@@ -67,7 +70,11 @@ class Skill(BaseModel):
                 description, seen_description = line.lstrip("> ").strip(), True
                 continue
             body.append(line)
-        return cls(name=name, description=description, body="\n".join(body).strip())
+        return cls(
+            name=name,
+            description=_capped_on_load(description, MAX_DESCRIPTION_CHARS),
+            body=_capped_on_load("\n".join(body).strip(), MAX_BODY_CHARS),
+        )
 
 
 class SkillStore:
@@ -83,13 +90,22 @@ class SkillStore:
     def list(self) -> list[Skill]:
         if not self.root.is_dir():
             return []
-        return [Skill.from_markdown(path.stem, path.read_text(encoding="utf-8")) for path in sorted(self.root.glob("*.md"))]
+        skills: list[Skill] = []
+        for path in sorted(self.root.glob("*.md"))[:MAX_SKILLS]:
+            try:
+                skills.append(Skill.from_markdown(path.stem, _read(path)))
+            except OSError:
+                continue  # a file that cannot be read is no skill; the others still are
+        return skills
 
     def load(self, name: str) -> Skill:
         path = self.path_for(name)
         if not path.is_file():
             raise SkillError(f"No skill '{name}' in {self.root}")
-        return Skill.from_markdown(name, path.read_text(encoding="utf-8"))
+        try:
+            return Skill.from_markdown(name, _read(path))
+        except OSError as exc:
+            raise SkillError(f"Cannot read the skill '{name}': {exc}") from exc
 
     def save(self, skill: Skill, secrets: Sequence[str] = ()) -> Path:
         """Write the skill. Raises :class:`SkillError` for a skill with no name, no description or a secret in it."""
@@ -128,6 +144,17 @@ class SkillStore:
 
 def _capped(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "..."
+
+
+def _capped_on_load(text: str, limit: int) -> str:
+    """Capped like a saved skill. What ``save`` wrote (the limit plus its dots) is read back as it is."""
+    return text if len(text) <= limit + len("...") else _capped(text, limit)
+
+
+def _read(path: Path) -> str:
+    """The start of a skill file as text. A file that is not UTF-8 is still read: what does not decode is replaced."""
+    with path.open("rb") as fh:
+        return fh.read(MAX_SKILL_BYTES).decode("utf-8", errors="replace")
 
 
 def skills_text(skills: Sequence[Skill]) -> str:

@@ -16,6 +16,10 @@ are not JSON, talk where a call was expected) is answered with a correction.
 ``MAX_CORRECTIONS`` of them in a row are allowed; a reply without a mistake
 starts the count again.
 
+A tool call is checked against the tool's schema before the tool runs. One
+that does not fit gets the problem and the required fields as its result, and
+the call that then runs is counted as repaired.
+
 Every model call and tool call is written to the agent's transcript in the
 run folder. The task an agent is given and what a tool returns are masked
 before the model sees them (see ``crew/transcript.py``).
@@ -34,6 +38,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -42,8 +47,9 @@ from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ValidationError
 
 from contexer.crew.budget import Budget
-from contexer.crew.transcript import Masker, Transcript, tracing_callbacks
+from contexer.crew.transcript import Masker, Trace, Transcript, tracing_callbacks
 from contexer.crew.untrusted import UNTRUSTED_RULE
+from contexer.llm.catalog import PROVIDERS, is_azure
 from contexer.llm.chat import clean_error, describe_model, tool_calling_error
 from contexer.llm.structured import parse_json_object
 
@@ -93,6 +99,9 @@ class AgentResult:
     error: str = ""
     # Replies that were sent back for correction, over the whole run.
     corrections: int = 0
+    # Tool calls that ran without an error right after a call of the same tool was refused for its
+    # arguments (not JSON, or not fitting the tool's schema).
+    repaired_calls: int = 0
     # agents/<name>.jsonl in the run folder; None when there is no run folder.
     transcript: Path | None = None
     messages: list[BaseMessage] = field(default_factory=list, repr=False)
@@ -127,7 +136,8 @@ async def run_agent(
     password, say). They, and every key in the environment, are masked in the
     transcript, and in ``user_input`` and tool results before the model reads them.
     """
-    run = _Run(spec, model, tools, Transcript(run_dir, spec.name, Masker(secrets)), budget)
+    masker = Masker(secrets)
+    run = _Run(spec, model, tools, Transcript(run_dir, spec.name, masker), budget, Trace(run_dir, masker))
     started = time.monotonic()
     try:
         async with asyncio.timeout(spec.timeout):
@@ -140,6 +150,7 @@ async def run_agent(
     result.messages = run.messages
     result.transcript = run.transcript.path
     run.transcript.remask()
+    run.trace.remask()
     run.transcript.write(
         "end",
         status=result.status,
@@ -150,6 +161,7 @@ async def run_agent(
         cost_usd=result.cost_usd,
         seconds=round(result.duration_seconds, 3),
         corrections=result.corrections,
+        repaired_calls=result.repaired_calls,
         error=result.error,
         output=result.output.model_dump(mode="json") if result.output is not None else None,
     )
@@ -164,8 +176,10 @@ class _Run:
         tools: Sequence[Tool],
         transcript: Transcript,
         budget: Budget | None = None,
+        trace: Trace | None = None,
     ) -> None:
         self.budget = budget
+        self.trace = trace or Trace(None)
         # The last tool call and how many times in a row it was made.
         self._last_call: str | None = None
         self._repeats = 0
@@ -194,6 +208,8 @@ class _Run:
         self.corrections = 0
         # Whether the reply being handled ended at the output limit.
         self._cut_off = False
+        # Tools whose last call was refused for its arguments. The next call that runs is a repaired one.
+        self._refused: set[str] = set()
 
     async def loop(self, user_input: str) -> None:
         spec, result = self.spec, self.result
@@ -229,6 +245,7 @@ class _Run:
                 self.transcript.write(
                     "model", step=result.steps, seconds=_elapsed(called), error=result.error
                 )
+                self._trace_model(called, None, type(exc).__name__)
                 return
             if not isinstance(reply, AIMessage):
                 reply = AIMessage(content=str(getattr(reply, "content", reply)))
@@ -252,6 +269,7 @@ class _Run:
                 ],
                 finish_reason=finish,
             )
+            self._trace_model(called, reply)
             if await self._handle(reply):
                 return
         result.error = f"{spec.name} used all {spec.max_steps} steps without handing in an answer"
@@ -288,12 +306,26 @@ class _Run:
             refusal = self._refuse(call, ran)
             if refusal:
                 self.transcript.write("tool", step=self.result.steps, name=call["name"], args=call["args"], status="error", result=refusal, seconds=0.0)
+                self._trace_tool(call["name"], "failed", 0.0)
                 self.messages.append(ToolMessage(refusal, tool_call_id=call_id, name=call["name"], status="error"))
                 continue
             ran += 1
             self.result.tool_calls += 1
             called = time.monotonic()
-            content, status = await self._call_tool(call["name"], call["args"])
+            name = call["name"]
+            tool = self.tools.get(name)
+            problem = _bad_arguments(tool, call["args"]) if tool is not None else ""
+            repaired = False
+            if problem:
+                # Checked before the tool runs, so an error from inside a tool is never taken for this.
+                self._refused.add(name)
+                content, status = f"Error: bad arguments for `{name}`, so it was not run: {problem}", "error"
+            else:
+                mending = name in self._refused
+                self._refused.discard(name)
+                content, status = await self._call_tool(name, call["args"])
+                repaired = mending and status == "success"
+                self.result.repaired_calls += repaired
             # A page may show a password or a key; the model has no use for it.
             content = self.transcript.masker.text(content)
             self.transcript.write(
@@ -302,9 +334,12 @@ class _Run:
                 name=call["name"],
                 args=call["args"],
                 status=status,
+                repaired=repaired,
                 result=content,
                 seconds=_elapsed(called),
             )
+            outcome = "repaired" if repaired else "ok" if status == "success" else "failed"
+            self._trace_tool(name, outcome, _elapsed(called))
             self.messages.append(ToolMessage(content, tool_call_id=call_id, name=call["name"], status=status))
         # A call whose arguments could not be read still needs a result under its id: the next request is
         # refused by the provider when a call in it has none.
@@ -316,7 +351,10 @@ class _Run:
                 continue
             problem = self.transcript.masker.text(self._unreadable(name, str(call.get("error") or "")))
             self.transcript.write("tool", step=self.result.steps, name=name, args=call.get("args"), status="error", result=problem, seconds=0.0)
+            self._trace_tool(name, "failed", 0.0)
             self.messages.append(ToolMessage(f"Error: {problem}", tool_call_id=call_id, name=name, status="error"))
+            if name in self.tools:
+                self._refused.add(name)
             if self._mistake(problem):
                 return True
         return done
@@ -430,11 +468,54 @@ class _Run:
             return f"Error: there is no tool named '{name}'. The tools are: {known}.", "error"
         try:
             value = await tool.ainvoke(args)
-        except ValidationError as exc:  # the arguments did not fit the tool
-            return f"Error: bad arguments for '{name}': {_validation_problem(exc)}", "error"
         except Exception as exc:  # the model gets the error; the run goes on
             return f"Error: {type(exc).__name__}: {clean_error(exc)}", "error"
         return _as_text(value), "success"
+
+    def _trace_model(self, called: float, reply: AIMessage | None, error: str = "") -> None:
+        """One model call in the run's trace: who was asked, what it used and what it cost. No text."""
+        usage: dict[str, Any] = dict((reply.usage_metadata if reply is not None else None) or {})
+        tokens_in, tokens_out = int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
+        reported = reported_cost(reply) if reply is not None else None
+        cost = reported
+        if self.budget is not None and reply is not None:
+            cost = self.budget.cost_of(tokens_in, tokens_out, reported)
+        metadata = (reply.response_metadata if reply is not None else None) or {}
+        answered = metadata.get("model_name") or metadata.get("model")
+        finish = _finish_reason(reply) if reply is not None else ""
+        line: dict[str, Any] = {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.agent.name": self.spec.name,
+            "gen_ai.provider.name": _provider(self.model),
+            "gen_ai.request.model": _model_name(self.model),
+            "gen_ai.response.model": answered if isinstance(answered, str) and answered else None,
+            "gen_ai.usage.input_tokens": tokens_in,
+            "gen_ai.usage.output_tokens": tokens_out,
+            # None: the provider did not say. That is not the same as nothing cached.
+            "gen_ai.usage.cache_read.input_tokens": (usage.get("input_token_details") or {}).get("cache_read"),
+            "gen_ai.response.finish_reasons": [finish] if finish else [],
+            "contexer.step": self.result.steps,
+            "contexer.seconds": _elapsed(called),
+            "contexer.cost_usd": cost,
+            "contexer.cost_estimated": cost is not None and reported is None,
+        }
+        if error:
+            line["error.type"] = error
+        self.trace.call("model", **line)
+
+    def _trace_tool(self, name: str, status: str, seconds: float) -> None:
+        """One tool call in the run's trace: ``ok``, ``repaired`` or ``failed``. No arguments, no result."""
+        self.trace.call(
+            "tool",
+            **{
+                "gen_ai.operation.name": "execute_tool",
+                "gen_ai.agent.name": self.spec.name,
+                "gen_ai.tool.name": name,
+                "contexer.tool.status": status,
+                "contexer.step": self.result.steps,
+                "contexer.seconds": seconds,
+            },
+        )
 
     def _count(self, reply: AIMessage) -> None:
         usage = reply.usage_metadata or {}
@@ -454,6 +535,31 @@ def reported_cost(reply: AIMessage) -> float | None:
         if isinstance(usage, dict) and isinstance(usage.get("cost"), (int, float)) and not isinstance(usage["cost"], bool):
             return float(usage["cost"])
     return None
+
+
+def _model_name(model: Any) -> str | None:
+    inner = getattr(model, "bound", model)
+    name = getattr(inner, "model_name", None) or getattr(inner, "model", None)
+    return name if isinstance(name, str) and name else None
+
+
+def _provider(model: Any) -> str:
+    """The catalog id of the provider a chat model talks to; the endpoint's host when the catalog has none."""
+    inner = getattr(model, "bound", model)
+    kind = str(getattr(inner, "_llm_type", "") or "")
+    if kind.startswith("anthropic"):
+        return "anthropic"
+    base = str(getattr(inner, "openai_api_base", "") or "")
+    if not base:
+        return kind or type(inner).__name__
+    if is_azure(base):
+        return "azure"
+    there = urlsplit(base)
+    for spec in PROVIDERS:
+        known = urlsplit(spec.base_url) if spec.base_url else None
+        if known is not None and (known.hostname, known.port) == (there.hostname, there.port):
+            return spec.id
+    return there.hostname or kind
 
 
 def _elapsed(since: float) -> float:
@@ -525,6 +631,20 @@ def _validation_problem(exc: Exception) -> str:
             parts.append(f"{where}: {error['msg']}")
         return "; ".join(parts)
     return str(exc)
+
+
+def _bad_arguments(tool: BaseTool, args: Any) -> str:
+    """Why ``args`` do not fit the tool's schema, with the fields it requires named; '' when they fit."""
+    schema = tool.args_schema
+    if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+        return ""  # a tool described by a plain JSON schema: nothing here can check it
+    try:
+        schema.model_validate(args)
+    except ValidationError as exc:
+        required = [info.alias or name for name, info in schema.model_fields.items() if info.is_required()]
+        needs = f"requires: {', '.join(required)}" if required else "has no required argument"
+        return f"{_validation_problem(exc)}. `{tool.name}` {needs}. Send the call again with arguments that fit."
+    return ""
 
 
 def _as_text(value: Any) -> str:

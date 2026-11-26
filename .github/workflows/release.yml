@@ -1,4 +1,4 @@
-# Builds the contexer-agent package on every push to main. When a version tag (v0.4.0) is pushed, it
+# Builds the contexer-agent package on every push to main. When a version tag (v0.6.0) is pushed, it
 # checks the release gates on the tagged commit, and only if they hold publishes to PyPI and makes a
 # GitHub release with the benchmark results attached.
 #
@@ -18,7 +18,7 @@
 # (Account settings > Publishing > Add a new pending publisher), register:
 #   PyPI project name: contexer-agent   Owner: murtuza777   Repository: contexer-agent
 #   Workflow name: release.yml          Environment: pypi
-# Then: git tag v0.4.0 && git push origin v0.4.0
+# Then: git tag v0.6.0 && git push origin v0.6.0   (the tag must equal the version in pyproject.toml)
 name: Release
 
 on:

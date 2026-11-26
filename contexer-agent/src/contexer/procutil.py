@@ -43,6 +43,10 @@ AGENT_SESSION_PREFIXES = ("CLAUDE_CODE_", "CLAUDE_AGENT_SDK_")
 AGENT_SESSION_VARS = frozenset({"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PREVIEW_CLASSIFIER_FLOOR", "AI_AGENT"})
 
 
+# Contexer's own tracing (crew/transcript.py). The app under test has no use for where Contexer sends its traces.
+TRACING_PREFIX = "LANGFUSE_"
+
+
 # Contexer pushes and opens the pull request itself. Nothing it starts needs a way into the repository: not
 # the coding agent, and not the code that agent wrote (install scripts, the dev server, the reset command).
 # Text from an issue reaches the agent's prompt, and in Actions these tokens can push and comment.
@@ -61,9 +65,19 @@ REPOSITORY_TOKENS = frozenset(
 def child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """The environment for the app's own processes: the person's, without agent-session markers or repository tokens.
 
-    ``extra`` is what the project sets on purpose (``[app] env``) and is applied last.
+    The app runs code a coding agent just wrote (install scripts, the dev server, the reset command). It does not
+    get what only Contexer was given: the keys and choices ``contexer setup`` saved, and the ``LANGFUSE_*`` tracing
+    settings. A variable the person exported, or one the project's ``.env`` sets, still reaches it, model keys
+    and ``[auth]`` credentials included. ``extra`` is what the project sets on purpose (``[app] env``) and is
+    applied last.
     """
-    env = {name: value for name, value in without_agent_session(dict(os.environ)).items() if name not in REPOSITORY_TOKENS}
+    from contexer.config.user import from_user_settings
+
+    env = {
+        name: value
+        for name, value in without_agent_session(dict(os.environ)).items()
+        if name not in REPOSITORY_TOKENS and not name.startswith(TRACING_PREFIX) and not from_user_settings(name)
+    }
     env.update(extra or {})
     return env
 

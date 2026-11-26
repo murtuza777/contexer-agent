@@ -306,6 +306,30 @@ async def test_the_diagnosers_brief_is_added_to_the_repair_prompt(project: Path)
     assert (Path(outcome.run_dir) / "agents" / "diagnoser.jsonl").is_file()
 
 
+async def test_the_diagnoser_is_shown_the_leads_that_were_already_tried(project: Path) -> None:
+    leads = [
+        "remaining() counts every task, including the completed ones.",
+        "render() never calls remaining() after a task is completed.",
+        "The checkbox handler does not set the done flag.",
+    ]
+    model = AgentScript(diagnoser=[submit(cause=cause, files=["app.js"], instruction=f"Fix number {n}.") for n, cause in enumerate(leads, 1)])
+    turns = [{"app.js": COUNT_BUG_JS + f"\n// try {n}\n"} for n in range(3)]
+    agent = RecordingAgent([*turns, {"app.js": GOOD_JS}])
+    outcome = await _graph(project, agent, rounds=3, model=model).run(contract(project))
+
+    assert outcome.terminal == "succeeded", outcome.reason
+    first, second, third = (str(seen[1].content) for seen in model.seen["diagnoser"])
+    assert "already tried" not in first and leads[0] not in first  # nothing was tried before the first lead
+    assert leads[0] in second and leads[1] not in second
+    # The third task: both earlier leads, what the attempt that followed each changed, and what that did to the checks.
+    assert leads[0] in third and leads[1] in third and leads[2] not in third
+    assert third.index(leads[0]) < third.index(leads[1])
+    tried = third[third.index("## What was already tried") :]
+    assert "Fix number 1." in tried and "Attempt 2 changed: app.js" in tried and "Attempt 3 changed: app.js" in tried
+    assert f"Still failing: {CONTRACT_ID}/complete-decrements" in tried
+    assert '<untrusted source="earlier-lead">' in tried  # a model wrote the leads: they come back as data
+
+
 async def test_a_diagnoser_that_fails_does_not_stop_the_repair(project: Path) -> None:
     model = AgentScript(diagnoser=[RuntimeError("provider down")])
     agent = RecordingAgent([{"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS}])

@@ -62,7 +62,7 @@ The same groups as `contexer --help`:
 | `contexer test --correct "..."` | Records what you meant ("deleting should ask first") in the intent and tests again |
 | `contexer run "GOAL"` / `--contract ID` | Approve the checklist, drive the coding agent, prove, repair, and keep the best attempt |
 | `contexer run --resume RUN` | Continue a run that was stopped; `--correct "..."` changes what done means first. `--max-usd N` is one budget for the whole run, `--no-review` skips the review of the diff, `--no-plan` skips the brief before the first turn, `--json` prints the run as one event per line for CI, `--verbose` keeps the agent's tool calls in the output |
-| `contexer run ... --pr` / `--issue N` | End in a pull request with the evidence; with `--issue` the goal comes from the issue and the PR closes it |
+| `contexer run ... --pr` / `--issue N` | End in a pull request with the evidence; with `--issue` the goal comes from the issue and the PR closes it. Add `--screenshots` to also push one screenshot per check to a branch `contexer-evidence/...` and show them in the pull request (off by default: they show your app's data to everyone who can read the repository) |
 | `contexer verify "GOAL"` | Compile a goal into a draft contract grounded in the running UI, then prove it |
 | `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |
 | `contexer contract draft "GOAL"` / `list` / `show ID` | Create and review contracts |

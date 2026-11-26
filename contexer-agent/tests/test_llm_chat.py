@@ -342,12 +342,15 @@ def test_require_tools_stops_a_model_the_provider_says_cannot_call_tools() -> No
 
 
 def test_doctor_reports_tool_calling_for_the_model_in_use(monkeypatch: pytest.MonkeyPatch) -> None:
-    answers = {"good": True, "bad": False, "quiet": None}
-    monkeypatch.setattr("contexer.cli.doctor_cli.supports_tools", lambda _provider, model: answers[model])
-    assert _tool_calling_finding("openrouter", "good").status == "ok"
-    bad = _tool_calling_finding("openrouter", "bad")
+    from contexer.llm.capabilities import Fact, ModelCapabilities
+
+    def record(model: str, tools: Fact[bool]) -> ModelCapabilities:
+        return ModelCapabilities(provider="openrouter", model=model, native_tools=tools)
+
+    assert _tool_calling_finding(record("good", Fact(True, "catalogue"))).status == "ok"
+    bad = _tool_calling_finding(record("bad", Fact(False, "catalogue")))
     assert (bad.status, "bad cannot call tools" in bad.detail, "contexer models" in bad.fix) == ("warn", True, True)
-    assert _tool_calling_finding("openrouter", "quiet").status == "ok"
+    assert _tool_calling_finding(record("quiet", Fact(True))).status == "ok"  # nobody says: assumed, and said so
 
 
 # -- live: one real tool call per provider, only when asked for ----------------

@@ -207,6 +207,11 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   let the workflow publish. Install from PyPI on a clean machine.
 - **Accept.** `uv tool install contexer-agent` then `contexer demo` works
   on a machine that never had the repository.
+- **Done 2026-11-26, as 0.6.0.** The work merged since 0.5.0 was more than a patch, so the
+  first release is 0.6.0. The publisher was registered by the owner; the tag `v0.6.0`
+  published through `release.yml`. Checked: `pip install contexer-agent==0.6.0` from PyPI in
+  a new environment on Windows, then `contexer --version` and `contexer demo`. Open: the
+  licence decision, and the same check on a machine that never had Contexer's browser.
 
 ### REL-2 A malformed or cut-off tool call is answered, not ignored
 - **Type.** Bug. **Priority.** P1. **Effort.** S.

@@ -131,6 +131,23 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
 _BY_ID = {p.id: p for p in PROVIDERS}
 
 
+@dataclass(frozen=True)
+class MeasuredModel:
+    """What was seen when Contexer's agents ran on a model. A field nobody looked at stays None."""
+
+    native_tools: bool | None = None
+    parallel_tool_calls: bool | None = None
+    # The run it was seen in.
+    where: str = ""
+
+
+# By model id, lower case, whichever provider serves it (an Azure deployment is usually named after its
+# model). Only what a recorded run showed goes here; `llm/capabilities.py` reads it.
+MEASURED_MODELS: dict[str, MeasuredModel] = {
+    "gpt-5.4": MeasuredModel(native_tools=True, where="the tester suite on Azure AI Foundry, 2026-11-17 (bench/RESULTS.md)"),
+}
+
+
 def provider_spec(provider_id: str) -> ProviderSpec:
     try:
         return _BY_ID[provider_id.lower()]

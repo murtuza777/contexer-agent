@@ -7,7 +7,7 @@ that exists, with a key that works, before any run depends on them.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -28,6 +28,8 @@ class ModelInfo:
     free: bool | None = None
     tools: bool | None = None
     created: int | None = None
+    # The provider's whole row. `llm/capabilities.py` reads the prices and the other parameters from it.
+    raw: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
 
 def _headers(spec: ProviderSpec, api_key: str | None) -> dict[str, str]:
@@ -149,4 +151,5 @@ def _model_info(row: dict) -> ModelInfo:
         free=free,
         tools=("tools" in params) if isinstance(params, list) else None,
         created=created if isinstance(created, int) else None,
+        raw=row,
     )

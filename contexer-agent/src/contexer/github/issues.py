@@ -1,7 +1,7 @@
 """Work picked up from GitHub issues: a checklist posted for approval, then a proven pull request.
 
-1. **Draft.** Labelling an issue ``contexer`` (or commenting ``/contexer draft``)
-   drafts the contract from the issue and posts it as a comment: the checks in
+1. **Draft.** Labelling an issue ``contexer`` (or ``/contexer draft`` in a comment
+   by someone with write access) drafts the contract from the issue and posts it as a comment: the checks in
    plain words, how each one fares on the app today, and the exact contract
    as JSON. Someone with write access may edit that JSON in the comment.
 2. **Approve.** ``/contexer approve`` from someone with write access approves
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -41,7 +42,9 @@ if TYPE_CHECKING:
 Command = Literal["draft", "build", "ignore"]
 
 DEFAULT_LABEL = "contexer"
-_DRAFT = re.compile(r"<!-- contexer:draft id=(?P<id>[\w.-]+) sha256=(?P<sha>[0-9a-f]+) -->")
+# Matched at the start of a comment only: a comment that quotes a draft further down (a status comment, say)
+# is not one.
+_DRAFT = re.compile(r"\s*<!-- contexer:draft id=(?P<id>[\w.-]+) sha256=(?P<sha>[0-9a-f]+) -->")
 _JSON_BLOCK = re.compile(r"```json\s*\n(?P<json>.*?)\n```", re.DOTALL)
 STATUS_MARKER = "<!-- contexer:status -->"
 WRITE_ROLES = {"admin", "maintain", "write"}
@@ -87,13 +90,17 @@ def command_for(event_name: str, event: dict[str, Any], label: str = DEFAULT_LAB
 
 
 _HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
-# Zero-width and direction characters: invisible on the page, read by a model.
-_INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+# Characters that draw nothing on the page and are still read by a model: format characters (zero-width,
+# direction marks and isolates, the soft hyphen, Unicode tags), private use, and code points assigned to nothing.
+_UNSEEN_CATEGORIES = frozenset({"Cf", "Co", "Cn"})
+# Variation selectors only pick how the character before them is drawn; a run of them can carry hidden bytes.
+_VARIATION_SELECTORS = re.compile("[\ufe00-\ufe0f\U000e0100-\U000e01ef]")
 
 
 def visible_text(text: str) -> str:
     """``text`` without what GitHub does not show: HTML comments and invisible characters."""
-    cleaned = _INVISIBLE.sub("", _HTML_COMMENT.sub("", text))
+    shown = _VARIATION_SELECTORS.sub("", _HTML_COMMENT.sub("", text))
+    cleaned = "".join(ch for ch in shown if unicodedata.category(ch) not in _UNSEEN_CATEGORIES)
     lines = [line.rstrip() for line in cleaned.splitlines()]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
@@ -204,11 +211,11 @@ def find_draft(comments: list[dict[str, Any]], own: str = "") -> tuple[dict[str,
 
     ``own`` is the login Contexer's token posts as. Only that account's comment is a draft: with a
     personal token that is a person, in Actions it is ``github-actions[bot]``. When the login is not
-    known, a comment by any bot is taken, as before.
+    known, a comment by any bot is taken, as before. The comment has to begin with the draft marker.
     """
     for comment in reversed(comments):
         body = str(comment.get("body") or "")
-        marker = _DRAFT.search(body)
+        marker = _DRAFT.match(body)
         author = comment.get("user") or {}
         ours = (str(author.get("login") or "").lower() == own.lower()) if own else author.get("type") == "Bot"
         if marker is None or not ours:
