@@ -175,7 +175,8 @@ def run(
         # No model for the Intent agent: the checks are drafted the 0.4 way, and approved before the run.
         drafting = compiler_llm(project)
         check_free_quota(console, drafting, agent, yes)
-        contract, graph_preview, graph_analyzer = _draft(console, project, store, goal, url, drafting, draft_id)
+        from_issue = ISSUE_ORIGIN.format(number=issue) if issue is not None else ""
+        contract, graph_preview, graph_analyzer = _draft(console, project, store, goal, url, drafting, draft_id, from_issue)
         contract = _from_issue(store, contract, issue)
     if model_for_crew is not None:
         # The estimate's count of model calls, against what is left of a free daily allowance.
@@ -605,6 +606,7 @@ def _draft(
     url: str | None,
     drafting: Any = None,
     contract_id: str | None = None,
+    origin: str = "",
 ) -> tuple[Contract, RunResult | None, GoalAnalyzer]:
     analyzer = GoalAnalyzer(llm_provider=drafting)
 
@@ -615,11 +617,11 @@ def _draft(
         try:
             with open_app(project, url) as app:
                 await session.observe(app)
-                drafted = await session.compile(goal, analyzer, cid, app.repo_context)
+                drafted = await session.compile(goal, analyzer, cid, app.repo_context, origin)
                 return drafted, await preview_draft(session, app, drafted)
         except AppStartError:
             # nothing runs yet: the checks define the contract
-            return await session.compile(goal, analyzer, cid), None
+            return await session.compile(goal, analyzer, cid, origin=origin), None
 
     with console.status("[dim]Compiling the goal into checks, then trying them on the app as it is...[/dim]"):
         contract, preview = asyncio.run(compile_contract())

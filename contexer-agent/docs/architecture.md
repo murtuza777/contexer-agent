@@ -353,6 +353,12 @@ always stopped on exit.
 - Installs when `node_modules` is missing (or on request; 900 s limit), then
   spawns the start command as a process tree (§procutil) with `FORCE_COLOR=0`
   and `CI=1`.
+- The install, the server and the reset command get `procutil.child_env`:
+  the person's environment without a hosting agent session's variables,
+  without repository tokens, without `LANGFUSE_*`, and without the keys and
+  choices `contexer setup` saved (those are Contexer's). A variable that is
+  exported, or set in the project's `.env`, still reaches them, model keys
+  and `[auth]` credentials included. `[app] env` is applied last.
 - Output goes to `server.log` and a 400-line ring buffer (ANSI stripped).
 - Ready when the port answers 200–399 or 400–403 (Playwright `webServer`
   semantics), polled every 0.5 s up to `ready_timeout` (120 s), on both
@@ -1130,7 +1136,11 @@ flowchart LR
   to 3 skills about operating the app. `SkillStore.save` refuses one that
   contains a configured secret or anything shaped like an API key. Before a
   run, the skills whose name or description shares a meaningful word with
-  the intent (at most 5) are added to the Tester's task as advice.
+  the intent (at most 5) are added to the Tester's task as advice. On load
+  at most 30 files are read, 8,000 bytes of each, with the description and
+  the body capped as on save; a file that is not UTF-8 is read with the
+  bytes that do not decode replaced. During `contexer run` the tamper guard
+  puts back a skill file that was changed, added or deleted.
 - **One run of `contexer test`.** Intent agent (questions asked once when a
   person is at the terminal and `--yes` is not given), Tester, replay,
   then for confirmed bugs the Diagnoser and `fix-prompt.md`. The intent and
@@ -1194,9 +1204,18 @@ write access is still what makes the checks count.
 
 An issue is read in one place, `github/issues.py: issue_goal`, by the
 Actions path (`contexer issue`) and by `contexer run --issue N` alike. It
-removes what GitHub does not show (HTML comments, zero-width and
-direction characters) before the text becomes a goal, so nothing reaches an
-agent that a person reading the issue could not see.
+removes what GitHub does not show before the text becomes a goal: HTML
+comments, every character of Unicode category Cf, Co and Cn (zero-width and
+direction characters, bidi isolates, the soft hyphen, tag characters,
+private use, unassigned) and the variation selectors. The category of a
+character comes from Python's `unicodedata`, so a character newer than the
+Unicode version of the Python in use counts as unassigned and is removed.
+The drafting prompt used when no tool-calling model is configured
+(`workflow/criteria.py`) quotes a goal from an issue as data, like the
+agents' prompts. A draft asked for in a comment (`/contexer draft`,
+`/contexer answer`) needs write access, checked through the API
+(`cli/issue_cli.py: _writers_only`); a label needs triage rights on GitHub
+and is not checked again.
 
 ### Tool audit
 
@@ -1243,7 +1262,8 @@ provider's own variable (`OPENROUTER_MODEL`, `OPENAI_MODEL`,
 
 - `~/.contexer/` (or `CONTEXER_HOME`): `config.toml` (`[model]` provider,
   model, base URL; `[agent]` name, model) and `credentials.toml` (`[keys]`,
-  mode 0600 on POSIX).
+  created with mode 0600 on POSIX, its folder with 0700 when Contexer creates
+  it; on Windows the mode bits do nothing and the folder's access rules apply).
 - Precedence: exported variables, then the project's `.env`, then what
   `contexer setup` saved, then `contexer.toml` for the settings it covers.
   `apply_user_settings` fills only unset variables and records what it set,
@@ -1380,7 +1400,8 @@ sequenceDiagram
 - **Draft comment**: `<!-- contexer:draft id=<id> sha256=<hash> -->`, the
   checks with how each fares on the app today, and the contract as JSON inside
   `<details>`. A maintainer may edit the JSON; the build notices
-  (`edited since drafting`).
+  (`edited since drafting`). A comment is a draft only when it begins with
+  the marker, so a comment that quotes one (a status comment) is not.
 - **Drafting with the Intent agent** (when a model is configured): the comment also shows what the agent
   understood (behaviours, assumptions) and its questions, each with the
   reading the checks take and the other one. `/contexer answer <text>`

@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from contexer.crew.transcript import Masker
-from contexer.crew.untrusted import UNTRUSTED_RULE, untrusted
+from contexer.crew.untrusted import UNTRUSTED_RULE, quoted_goal, untrusted
 from contexer.llm.base import LLMProvider
 from contexer.llm.structured import parse_json_object
 from contexer.verification.checks import Check, Expectation, Locator
@@ -112,6 +112,7 @@ class GoalAnalyzer:
         repo_context: RepositoryContext | None = None,
         ui_snapshot: str = "",
         secrets: Sequence[str] = (),
+        origin: str = "",
     ) -> GoalAnalysis:
         """Derive acceptance criteria with executable checks.
 
@@ -119,7 +120,8 @@ class GoalAnalyzer:
         app's current locator vocabulary; without it the model can only guess
         names for elements that already exist. ``secrets`` (the ``[auth]``
         password, say) are masked in what the model is sent, with every key in
-        the environment and anything shaped like one.
+        the environment and anything shaped like one. ``origin`` says where a
+        goal nobody typed came from (a GitHub issue); such a goal is quoted as data.
         """
         best: GoalAnalysis | None = None
         self.last_error = None if self.llm_provider else "no drafting model is configured"
@@ -127,7 +129,7 @@ class GoalAnalyzer:
             try:
                 # First ask for JSON mode (routers drop it for models without support);
                 # the retry goes without it in case a provider rejects the parameter.
-                candidate = await self._analyze_with_llm(goal, repo_context, ui_snapshot, attempt == 1, secrets)
+                candidate = await self._analyze_with_llm(goal, repo_context, ui_snapshot, attempt == 1, secrets, origin)
             except Exception as exc:
                 err_msg = str(exc)
                 self.last_error = (err_msg.splitlines()[0] if err_msg else type(exc).__name__)[:300]
@@ -164,6 +166,7 @@ class GoalAnalyzer:
         ui_snapshot: str = "",
         json_mode: bool = False,
         secrets: Sequence[str] = (),
+        origin: str = "",
     ) -> GoalAnalysis:
         assert self.llm_provider is not None
         # What the project and the running app say is data: marked like in every agent's task, so text
@@ -193,7 +196,7 @@ class GoalAnalyzer:
             "observable acceptance criteria, each with an executable browser check. The checks are given "
             "to the implementing engineer as the contract and then executed against the running app.\n\n"
             f"{UNTRUSTED_RULE}\n\n"
-            f"User Goal: {goal}\n\n"
+            f"User Goal: {quoted_goal(goal, origin)}\n\n"
             f"Project Context:\n{context_str}\n\n"
             f"{ui_section}"
             f"{source_section}"
