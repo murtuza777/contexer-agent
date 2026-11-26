@@ -161,9 +161,25 @@ def validated_brief(brief: RepairBrief, project_dir: Path) -> RepairBrief:
     free text is capped. Nothing here judges whether the cause is right: it bounds what a steered
     Diagnoser can put in front of the coding agent.
     """
+    keep = [_capped(" ".join(item.split()), _MAX_KEEP_CHARS) for item in brief.keep_working if item.strip()]
+    return RepairBrief(
+        cause=_capped(brief.cause.strip(), MAX_CAUSE_CHARS),
+        files=existing_files(brief.files, project_dir)[:_MAX_BRIEF_FILES],
+        instruction=_capped(brief.instruction.strip(), MAX_INSTRUCTION_CHARS),
+        keep_working=keep[:_MAX_KEEP_ITEMS],
+    )
+
+
+def existing_files(names: Sequence[str], project_dir: Path) -> list[str]:
+    """The names that are files inside the project and outside the closed folders, as paths from its root.
+
+    Everything else is dropped: an absolute path, a path that leaves the project, a folder, a file that
+    is not there, Contexer's own files, a file that holds credentials. This is the one check every
+    model-written file list passes before a coding agent reads it.
+    """
     root = Path(project_dir).resolve()
     files: list[str] = []
-    for name in brief.files:
+    for name in names:
         raw = name.strip().replace("\\", "/")
         if not raw or raw.startswith("/") or ":" in raw.split("/")[0]:
             continue  # absolute, or a drive or scheme
@@ -176,13 +192,7 @@ def validated_brief(brief: RepairBrief, project_dir: Path) -> RepairBrief:
         relative = target.relative_to(root).as_posix()
         if relative not in files:
             files.append(relative)
-    keep = [_capped(" ".join(item.split()), _MAX_KEEP_CHARS) for item in brief.keep_working if item.strip()]
-    return RepairBrief(
-        cause=_capped(brief.cause.strip(), MAX_CAUSE_CHARS),
-        files=files[:_MAX_BRIEF_FILES],
-        instruction=_capped(brief.instruction.strip(), MAX_INSTRUCTION_CHARS),
-        keep_working=keep[:_MAX_KEEP_ITEMS],
-    )
+    return files
 
 
 def _capped(text: str, limit: int) -> str:

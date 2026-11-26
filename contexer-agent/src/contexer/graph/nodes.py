@@ -7,9 +7,9 @@ is reset to the last snapshot before a resumed node runs.
 
 Who decides what:
 
-* ``intent``, ``triage`` and ``diagnose`` ask a model, when one is
-  configured. Without one they do nothing, apply fixed rules, or write the
-  plain repair prompt.
+* ``intent``, ``plan``, ``triage`` and ``diagnose`` ask a model, when one
+  is configured. Without one they do nothing, apply fixed rules, or leave
+  the prompt as code wrote it.
 * ``guard_snapshot``, ``score`` and ``finalize`` ask nobody. Tampering, the
   score, the revert to the best attempt and the final outcome are code.
 """
@@ -28,7 +28,7 @@ from contexer.agents.base import AgentTurn
 from contexer.appserver import AppStartError, open_app
 from contexer.contract import Contract
 from contexer.controller.models import Attempt, RunOutcome
-from contexer.controller.prompts import failure_report, implement_prompt, repair_prompt, restated_prompt
+from contexer.controller.prompts import failure_report, implement_prompt, repair_prompt, restated_prompt, with_brief
 from contexer.controller.shared import (
     DEPENDENCY_FILES,
     check_count,
@@ -41,6 +41,8 @@ from contexer.controller.shared import (
 from contexer.crew.diagnoser import DEFAULT_MAX_STEPS as DEFAULT_DIAGNOSER_STEPS
 from contexer.crew.diagnoser import Failure, brief_section, diagnose
 from contexer.crew.intent import run_intent
+from contexer.crew.planner import DEFAULT_MAX_STEPS as DEFAULT_PLANNER_STEPS
+from contexer.crew.planner import plan_task, task_brief_section
 from contexer.crew.reviewer import DEFAULT_REVIEW_STEPS, ReviewNote, review, review_repair_prompt
 from contexer.crew.transcript import Masker
 from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, TriageDecision, triage
@@ -198,6 +200,45 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             accepted=None,
             review_repairs=0,
         )
+        return updates
+
+    # -- plan: a brief for the first turn, from reading the project -------------------------
+
+    async def plan(state: LoopState) -> dict[str, Any]:
+        planner_model = ctx.model_for("planner")
+        if not ctx.settings.plan or planner_model is None or (ctx.budget is not None and ctx.budget.exhausted()):
+            return {}  # the instruction goes out as code wrote it
+        approved = state.get("approved_hash") or ""
+        updates: dict[str, Any] = {}
+        if state.get("planned") == approved:
+            # A correction that changed no check came back here: the brief for these checks is already paid for.
+            brief = state.get("brief", "")
+        else:
+            cannot_sign_in = await _sign_in_problem(ctx)  # before a model is paid for a run that cannot check anything
+            if cannot_sign_in:
+                return {"terminal": "needs_human", "reason": cannot_sign_in}
+            ctx.event("phase-quiet", "Reading the project to plan the work")
+            found = await plan_task(
+                _contract(ctx),
+                planner_model,
+                ctx.project,
+                others=ctx.others,
+                repo_summary=ctx.repo.format_summary() if ctx.repo is not None else "",
+                run_dir=ctx.run.path,
+                budget=ctx.budget,
+                max_steps=_steps(ctx, "planner", DEFAULT_PLANNER_STEPS),
+                secrets=ctx.secrets(),
+            )
+            if found.status != "ok":
+                ctx.event("strategy", f"The Planner did not finish ({found.error or found.status}); the instruction is sent without a brief.")
+            brief = task_brief_section(found.brief)
+            updates.update(
+                planned=approved,
+                brief=brief,
+                agents=_used(state, "planner", found.steps, found.tokens_in, found.tokens_out, _cost(ctx, found)),
+            )
+        if brief and not state["prompt"].endswith(brief):
+            updates["prompt"] = with_brief(state["prompt"], brief)
         return updates
 
     # -- coder_turn: the coding agent edits files --------------------------------------------
@@ -672,6 +713,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
     nodes: dict[str, Node] = {
         "intent": intent,
         "approve": approve,
+        "plan": plan,
         "coder_turn": coder_turn,
         "guard_snapshot": guard_snapshot,
         "ensure_app": ensure_app,

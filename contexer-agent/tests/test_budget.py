@@ -92,8 +92,12 @@ model = "gpt-5.4-mini"
 provider = "azure"
 model = "gpt-5.4-mini"
 max_steps = 6
+
+[agents.planner]
+max_steps = 5
 """,
     )
+    assert config.agents.for_agent("planner").max_steps == 5
     assert config.agents.max_usd == 4.0 and config.agents.input_usd_per_mtok == 2.5
     assert config.agents.for_agent("triage").model == "gpt-5.4-mini"
     assert config.agents.for_agent("reviewer").max_steps == 6 and config.agents.for_agent("reviewer").provider == "azure"
@@ -152,7 +156,7 @@ async def test_each_agent_runs_on_the_model_it_was_given(project: Path) -> None:
 
     assert outcome.terminal == "succeeded"
     assert set(cheap.seen) == {"triage", "reviewer"}
-    assert set(default.seen) == {"diagnoser"}
+    assert set(default.seen) == {"planner", "diagnoser"}
 
 
 async def test_the_bill_per_agent_adds_up_to_the_transcripts(project: Path) -> None:
@@ -163,7 +167,7 @@ async def test_the_bill_per_agent_adds_up_to_the_transcripts(project: Path) -> N
         project, agent, RunSettings(max_repair_rounds=2), runner=fast_runner(), model=model, budget=budget
     ).run(contract(project))
 
-    assert {a.agent for a in outcome.agents} == {"triage", "diagnoser", "reviewer"}
+    assert {a.agent for a in outcome.agents} == {"planner", "triage", "diagnoser", "reviewer"}
     for usage in outcome.agents:
         rows = [json.loads(line) for line in (Path(outcome.run_dir) / "agents" / f"{usage.agent}.jsonl").read_text(encoding="utf-8").splitlines()]
         ends = [r for r in rows if r.get("event") == "end"]
@@ -190,3 +194,9 @@ def test_the_estimate_says_what_a_run_can_use_at_most_and_grows_with_the_rounds(
     assert priced.cost_usd is not None and priced.cost_usd > 0 and large.cost_usd is None
     line = priced.describe()
     assert "at most" in line and "model call" in line and "$" in line
+
+    # The Planner's calls are in the ceiling, at its step cap, and are not when it is turned off.
+    unplanned = estimate_run(rounds=0, has_model=True, drafts_checks=False, review=True, plan=False)
+    assert small.model_calls - unplanned.model_calls == 12 and small.tokens > unplanned.tokens
+    capped = estimate_run(rounds=0, has_model=True, drafts_checks=False, review=True, planner_steps=4)
+    assert capped.model_calls - unplanned.model_calls == 4

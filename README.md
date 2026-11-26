@@ -395,7 +395,7 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 
 ## Status
 
-Version 0.5.0. What works today, with tests (987 passing) and CI on Linux:
+Version 0.6.0. What works today, with 1,162 tests and CI:
 
 - **`contexer test`**: an agent uses the running app against what you said
   it should do; every finding is replayed by code; a fix prompt names the

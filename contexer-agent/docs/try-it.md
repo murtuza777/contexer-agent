@@ -20,7 +20,7 @@ uv tool install contexer-agent
 contexer --version
 ```
 
-You should see `contexer 0.5.0` or newer.
+You should see `contexer 0.6.0` or newer.
 
 - `uv tool install` (or `pipx install contexer-agent`) puts Contexer in its
   own environment and the `contexer` command on your PATH. No uv? On Windows:
@@ -225,6 +225,10 @@ no network or model):
 ```bash
 python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
 ```
+
+Add `--no-browser` to skip each test at the moment it starts a browser; the
+rest run whole, in about 12 minutes. CI does that on Windows and macOS, and runs
+everything on Linux.
 
 Measure accuracy on the seeded-bug benchmark (about 10 minutes; do not run
 other heavy jobs at the same time):

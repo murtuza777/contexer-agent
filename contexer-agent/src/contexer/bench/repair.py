@@ -100,7 +100,8 @@ async def run_repair_bench(
 
     started = time.monotonic()
     report = RepairReport(repair_only=repair_only, rounds=rounds)
-    settings = RunSettings(max_repair_rounds=rounds + (1 if repair_only else 0), replay_others=False)
+    # No Planner: this suite measures the repair loop, and its published numbers were made without a brief.
+    settings = RunSettings(max_repair_rounds=rounds + (1 if repair_only else 0), replay_others=False, plan=False)
     workspaces: dict[str, Workspace] = {}
     try:
         for app, bug in chosen:

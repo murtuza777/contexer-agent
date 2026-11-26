@@ -633,6 +633,18 @@ an agent a person is already using calls Contexer (not built).
 - **Accept.** The brief names only files inside the project; a steered
   Planner cannot point at `.env` or `.contexer/`; the tool audit lists it.
 - **Tests.** As for the Diagnoser, with a scripted model.
+- **Built 2026-11-26**, without `CTX-5`: the Planner reads the goal, the
+  checks and the project, not tickets or `AGENTS.md`. It is its own node
+  (`plan`, between `approve` and the first `coder_turn`), so `graph/routing.py`
+  and `graph/state.py` changed too, and `RunSettings.plan` /
+  `contexer run --no-plan` turn it off (`BRIEF-2` needs both arms). Open:
+  no live run has been made, so the prompt, the step cap of 12 and the
+  token figures in the estimate are untested against a real model; the
+  brief is in the first instruction only, not in a fresh-session repair or
+  a job restated after a correction; a file the change must create cannot
+  be in the file lists (the check is "exists"); `contexer_brief` in
+  `contexer mcp` still returns the instruction without a brief; the
+  seeded-bug benchmark runs with the Planner off.
 
 ### BRIEF-2 Does the brief pay for itself
 - **Type.** Evaluation. **Priority.** P1. **Effort.** M. **Depends on.**
@@ -704,6 +716,18 @@ an agent a person is already using calls Contexer (not built).
   from a clean install on macOS and Linux and fix what it shows.
 - **Files.** `.github/workflows/ci.yml`, `docs/try-it.md`.
 - **Accept.** Green on three systems; the guide's commands run as written.
+- **Built 2026-11-26**, in `ci.yml` and `tests/conftest.py`
+  (`pytest --no-browser`). Green on all three: lint, types, the tests
+  that start no browser (824 of 1,099 on Windows, 823 on macOS; 1,094 on
+  Ubuntu, where 5 skip for other reasons), and a clean pipx install that runs steps 1 and 2 of the
+  guide. The benchmark is 46 of 46 on Ubuntu and Windows. Open: **on macOS
+  the benchmark missed `shop/load-crash`** in the one run it has had (all 8
+  checks passed on the buggy app, a false pass), so the weekly macOS
+  benchmark is expected to be red until that is understood; the likely
+  place is the fixed 250 ms wait before `no_errors` is counted in
+  `verification/runner.py`, not confirmed. Steps 3 to 5 of the guide need
+  a model key and were not followed on macOS or Linux. The tests that use
+  a browser run on Ubuntu only. The weekly schedule has not fired yet.
 
 ### DX-4 The run view
 - **Type.** Terminal UX. **Priority.** P2. **Effort.** M. **Depends on.** OBS-1.
