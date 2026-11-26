@@ -201,8 +201,8 @@ async def test_repeats_are_for_correct_and_benign_code_and_each_bug_still_runs_o
 
 
 def _words(output: str) -> str:
-    """The output without colour codes or the line breaks a narrow terminal adds."""
-    return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", output).split())
+    """The output without colour codes, the box an error is drawn in, or the line breaks a narrow terminal adds."""
+    return " ".join(re.sub(r"\x1b\[[0-9;]*m|[\u2500-\u257f]", "", output).split())
 
 
 def test_the_command_gives_each_rate_its_interval_and_a_second_run_cannot_be_told_apart(tmp_path: Path) -> None:
