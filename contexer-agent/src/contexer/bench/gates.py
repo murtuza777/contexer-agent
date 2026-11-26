@@ -76,7 +76,7 @@ def summary_markdown(gates: list[tuple[str, list[str]]], report: BenchReport | N
     lines = ["## Release gates", "", "| Gate | Result | Why |", "| --- | --- | --- |"]
     lines += [f"| {name} | {'does not hold' if reasons else 'holds'} | {'; '.join(reasons)} |" for name, reasons in gates]
     if report is not None:
-        lines += ["", f"Gate benchmark, {report.started_at[:10]}, on the workflow's Ubuntu runner: {sentence(report.rates())}."]
+        lines += ["", f"Gate benchmark, {report.started_at[:10]}: {sentence(report.rates())}."]
     lines += ["", NOT_CHECKED]
     return "\n".join(lines) + "\n"
 
