@@ -92,6 +92,19 @@ def test_a_correction_given_in_one_run_is_in_the_intent_the_next_run_loads(tmp_p
     assert "- 2026-11-18: Deleting should ask first" in second.path_for(spec.id).read_text(encoding="utf-8")
 
 
+def test_the_latest_is_the_one_saved_last_whatever_the_file_times_say(tmp_path: Path) -> None:
+    import os
+
+    store = IntentStore(tmp_path)
+    first = store.save(IntentSpec(id="todo-basics", goal=GOAL))
+    ahead = first.stat().st_mtime_ns + 10_000_000_000  # a clock that jumped, or two saves in one tick
+    os.utime(first, ns=(ahead, ahead))
+
+    store.save(IntentSpec(id="sign-in", goal="Members can sign in and out"))
+
+    assert store.latest().id == "sign-in"  # type: ignore[union-attr]
+
+
 def test_the_index_lists_every_feature_and_the_latest_is_the_one_last_saved(tmp_path: Path) -> None:
     store = IntentStore(tmp_path)
     assert store.list() == [] and store.latest() is None and store.find(GOAL) is None
