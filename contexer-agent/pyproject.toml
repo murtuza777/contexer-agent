@@ -58,6 +58,7 @@ Issues = "https://github.com/murtuza777/contexer-agent/issues"
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "pytest-xdist>=3.6",  # CI runs the suite on several workers (`-n`); built against 3.8.0, 2026-11-26
     "pyyaml>=6.0",
     "ruff>=0.17,<1.0",
     "pyright>=1.1.400",
