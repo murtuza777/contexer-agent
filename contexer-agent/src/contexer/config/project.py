@@ -245,7 +245,7 @@ def load_env_file(env_file: str | Path, on_refused: Callable[[str], None] | None
         return
     from dotenv import dotenv_values
 
-    from contexer.config.user import from_user_settings
+    from contexer.config.user import from_user_settings, given_by_project
 
     values = dict(dotenv_values(path))
 
@@ -261,6 +261,7 @@ def load_env_file(env_file: str | Path, on_refused: Callable[[str], None] | None
             continue
         if value is not None and takes[name]:
             os.environ[name] = value
+            given_by_project(name)
 
 
 def load_nearest_env() -> None:

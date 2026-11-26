@@ -114,6 +114,15 @@ def from_user_settings(name: str) -> bool:
     return name in _APPLIED and os.environ.get(name) == _APPLIED[name]
 
 
+def given_by_project(name: str) -> None:
+    """A project's ``.env`` set ``name`` itself, so it is no longer only what ``contexer setup`` saved.
+
+    Matters when the file holds the same value setup saved: the app's processes get what the project gave
+    (``procutil.child_env``), and comparing values alone could not tell the two apart.
+    """
+    _APPLIED.pop(name, None)
+
+
 def mask(secret: str) -> str:
     return f"{secret[:6]}…{secret[-4:]}" if len(secret) > 12 else "••••"
 
