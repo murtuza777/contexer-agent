@@ -30,7 +30,7 @@ You should see `contexer 0.6.0` or newer.
   `contexer` is then "not recognized".
 - The package is `contexer-agent`. `pip install contexer` installs a different
   project that owns that name on PyPI.
-- Until the first PyPI release is out, install from GitHub:
+- For the newest code before a release, install from GitHub:
   `uv tool install "git+https://github.com/murtuza777/contexer-agent.git#subdirectory=contexer-agent"`.
 
 #### If the install fails on Windows
