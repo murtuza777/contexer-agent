@@ -1412,7 +1412,14 @@ and prints the fix under each problem.
 ## 18. Benchmark
 
 `bench/runner.py`, `contexer bench [--repeats N] [--live] [--app NAME] [--fixtures DIR] [--out
-FILE] [--suite gate|tester|repair|reviewer] [--agent NAME]` (run from `contexer-agent/`; the fixtures are not in the PyPI package).
+FILE] [--compare FILE] [--suite gate|tester|repair|reviewer] [--agent NAME]` (run from `contexer-agent/`; the fixtures are not in the PyPI package).
+
+Every suite prints its headline counts as rates with a 95% Wilson interval
+(`bench/stats.py`), and `--compare` says per rate whether it is higher or
+lower than in an earlier `--out` report or cannot be told apart (Newcombe's
+interval for the difference). `--repeats` repeats every variant in the
+tester, repair and reviewer suites; in the gate suite it repeats correct and
+benign code only, and each bug runs once.
 
 - Fixtures in `bench/fixtures/<app>/`: `app/` (the correct app with approved
   contracts in `app/.contexer/contracts/`), `bugs/<id>/` (file overlays with

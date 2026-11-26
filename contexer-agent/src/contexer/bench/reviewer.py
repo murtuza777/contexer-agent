@@ -30,6 +30,7 @@ from pathlib import Path
 from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import BaseModel, Field
 
+from contexer.bench.stats import Rate, sentence
 from contexer.crew.reviewer import ReviewNote, review
 
 
@@ -49,6 +50,7 @@ class ReviewCase(BaseModel):
 
 class CaseRun(BaseModel):
     name: str
+    repeat: int = 0
     planted: bool
     flagged: bool = False
     # Which source's note flagged it: "scan", "command", "reviewer" or "".
@@ -60,8 +62,11 @@ class CaseRun(BaseModel):
 
 
 class ReviewerBenchReport(BaseModel):
+    suite: str = "reviewer"
     agent: str = "scan"
     model: str = ""
+    # Reviews of each case. The counts below are of reviews.
+    repeats: int = 1
     runs: list[CaseRun] = Field(default_factory=list)
     planted: int = 0
     flagged: int = 0
@@ -73,6 +78,12 @@ class ReviewerBenchReport(BaseModel):
     tokens_out: int = 0
     cost_usd: float | None = None
     duration_seconds: float = 0.0
+
+    def rates(self) -> dict[str, Rate]:
+        return {
+            "planted issues flagged": Rate(self.flagged, self.planted),
+            "clean diffs with a false high": Rate(self.clean_with_high, self.clean),
+        }
 
 
 def discover_cases(root: Path, only: list[str] | None = None) -> list[ReviewCase]:
@@ -117,16 +128,18 @@ async def run_reviewer_bench(
     model: BaseChatModel | None = None,
     *,
     only: list[str] | None = None,
+    repeats: int = 1,
     on_case: Callable[[CaseRun], None] | None = None,
 ) -> ReviewerBenchReport:
-    """Review every case. With no model, only the scan runs."""
+    """Review every case, ``repeats`` times over. With no model, only the scan runs."""
     started = time.monotonic()
-    report = ReviewerBenchReport(agent="reviewer" if model is not None else "scan")
-    for case in discover_cases(root, only):
+    report = ReviewerBenchReport(agent="reviewer" if model is not None else "scan", repeats=repeats)
+    cases = discover_cases(root, only)
+    for repeat, case in ((r, c) for r in range(repeats) for c in cases):
         began = time.monotonic()
         # The cases have no dependencies installed and no scripts: commands are a different question.
         found = await review(case_diff(case), case.path / "after", model, intent=case.goal, run_project_commands=False)
-        run = CaseRun(name=case.name, planted=case.planted is not None, notes=found.notes, status=found.status)
+        run = CaseRun(name=case.name, repeat=repeat, planted=case.planted is not None, notes=found.notes, status=found.status)
         if case.planted is not None:
             hits = [n for n in found.notes if n.file == case.planted.file and n.category in case.planted.categories]
             run.flagged = bool(hits)
@@ -162,7 +175,7 @@ def results_markdown(report: ReviewerBenchReport) -> str:
     lines = [
         f"# Reviewer benchmark: `{report.agent}`",
         "",
-        f"`contexer bench --suite reviewer --agent {report.agent}`: {who}. {report.duration_seconds:.0f} s. "
+        f"`contexer bench --suite reviewer --agent {report.agent}{f' --repeats {report.repeats}' if report.repeats > 1 else ''}`: {who}. {report.duration_seconds:.0f} s. "
         "Written by the command; do not edit.",
         "",
         "A planted issue is **flagged** when a note points at its file with a fitting category; the note's wording is "
@@ -174,11 +187,16 @@ def results_markdown(report: ReviewerBenchReport) -> str:
         f"| {report.planted} | {report.flagged} | {by['scan']} | {by['reviewer']} | {report.clean} | {report.clean_with_high} | "
         f"{report.false_high_notes} | {report.notes_on_clean} | {report.tokens_in:,} / {report.tokens_out:,} | {cost} |",
         "",
+        f"Rates: {sentence(report.rates())}.",
+        "",
     ]
-    missed = [r.name for r in report.runs if r.planted and not r.flagged]
+    if report.repeats > 1:
+        lines += [f"Each case ran {report.repeats} times; the table counts reviews, and a case is named below once.", ""]
+    # dict.fromkeys: a case reviewed several times is named once.
+    missed = list(dict.fromkeys(r.name for r in report.runs if r.planted and not r.flagged))
     lines.append("Not flagged: " + (", ".join(f"`{name}`" for name in missed) if missed else "none") + ".")
-    flagged = [f"`{r.name}` ({r.flagged_by})" for r in report.runs if r.flagged]
+    flagged = list(dict.fromkeys(f"`{r.name}` ({r.flagged_by})" for r in report.runs if r.flagged))
     lines.append("Flagged: " + (", ".join(flagged) if flagged else "none") + ".")
-    alarms = [f"`{r.name}`" for r in report.runs if r.false_high]
+    alarms = list(dict.fromkeys(f"`{r.name}`" for r in report.runs if r.false_high))
     lines.append("Clean diffs with a false high: " + (", ".join(alarms) if alarms else "none") + ".")
     return "\n".join(lines) + "\n"

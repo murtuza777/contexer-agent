@@ -1,12 +1,15 @@
 """The benchmark scores bugs and clean runs, and refuses invalid contracts."""
 
 import json
+import re
 import shutil
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from contexer.bench import discover, run_bench
+from contexer.cli import app as cli
 from contexer.contract import ContractStore
 
 pytestmark = pytest.mark.anyio
@@ -180,3 +183,67 @@ def test_a_folder_a_stopped_dev_server_is_still_writing_to_does_not_end_the_benc
 
         assert attempts.count(".next") == 2  # it was tried again
         assert not (work / ".next").exists() and (work / "index.html").is_file()
+
+
+async def test_repeats_are_for_correct_and_benign_code_and_each_bug_still_runs_once(tmp_path: Path) -> None:
+    """The gate benchmark runs on every push: a repeat must not multiply its bug runs."""
+    from contexer.bench.stats import Rate
+
+    report = await run_bench(_mini_fixture(tmp_path), repeats=2)
+    assert [(r.kind, r.repeat) for r in report.runs] == [("good", 0), ("good", 1), ("bug", 0)]
+    checks = report.totals().gating_checks_on_clean_runs
+    assert checks > 0 and report.suite == "gate"
+    assert report.rates() == {
+        "seeded bugs caught": Rate(1, 1),
+        "clean runs with a false failure": Rate(0, 2),
+        "false-failing checks": Rate(0, checks),
+    }
+
+
+def _words(output: str) -> str:
+    """The output without colour codes or the line breaks a narrow terminal adds."""
+    return " ".join(re.sub(r"\x1b\[[0-9;]*m", "", output).split())
+
+
+def test_the_command_gives_each_rate_its_interval_and_a_second_run_cannot_be_told_apart(tmp_path: Path) -> None:
+    fixtures = str(_mini_fixture(tmp_path / "fixtures"))
+    first = tmp_path / "first.json"
+    one = CliRunner().invoke(cli, ["bench", "--fixtures", fixtures, "--repeats", "1", "--out", str(first)])
+    assert one.exit_code == 0, one.output
+    assert "seeded bugs caught 1/1, 100% (95% interval 21% to 100%)" in _words(one.output)
+    assert "clean runs with a false failure 0/1, 0% (95% interval 0% to 79%)" in _words(one.output)
+    assert json.loads(first.read_text(encoding="utf-8"))["suite"] == "gate"
+
+    two = CliRunner().invoke(cli, ["bench", "--fixtures", fixtures, "--repeats", "1", "--compare", str(first)])
+    assert two.exit_code == 0, two.output
+    said = _words(two.output)
+    assert "Compared with" in said and "was 1/1, 100% (95% interval 21% to 100%)" in said
+    assert said.count("cannot be told apart") == 3
+    assert "higher (" not in said and "lower (" not in said
+
+
+def test_a_report_to_compare_with_is_checked_before_anything_runs(tmp_path: Path) -> None:
+    fixtures = str(_mini_fixture(tmp_path / "fixtures"))
+    other = tmp_path / "tester.json"
+    other.write_text(json.dumps({"suite": "tester", "agent": "stub", "started_at": "x", "repeats": 1}), encoding="utf-8")
+    wrong_suite = CliRunner().invoke(cli, ["bench", "--fixtures", fixtures, "--compare", str(other)])
+    assert wrong_suite.exit_code == 2 and "tester suite" in _words(wrong_suite.output)
+
+    missing = CliRunner().invoke(cli, ["bench", "--fixtures", fixtures, "--compare", str(tmp_path / "none.json")])
+    assert missing.exit_code == 2
+
+    (tmp_path / "junk.json").write_text("{not json", encoding="utf-8")
+    junk = CliRunner().invoke(cli, ["bench", "--fixtures", fixtures, "--compare", str(tmp_path / "junk.json")])
+    assert junk.exit_code == 2
+    for refused in (wrong_suite, missing, junk):
+        assert "caught" not in refused.output and "clean" not in refused.output  # no variant ran
+
+
+def test_the_command_exits_non_zero_when_a_seeded_bug_is_missed(tmp_path: Path) -> None:
+    """The release workflow leans on this exit code. A restyle laid out as a bug is one no check can catch."""
+    root = _mini_fixture(tmp_path / "fixtures", bugs=())
+    shutil.copytree(FIXTURE / "benign" / "restyle", root / "todo" / "bugs" / "not-a-bug")
+    result = CliRunner().invoke(cli, ["bench", "--fixtures", str(root), "--repeats", "1"])
+    assert result.exit_code == 1, result.output
+    assert "Missed: todo/not-a-bug" in _words(result.output)
+    assert "seeded bugs caught 0/1, 0% (95% interval 0% to 79%)" in _words(result.output)

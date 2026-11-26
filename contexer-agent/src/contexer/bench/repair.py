@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from contexer.agents.base import AgentTurn, CodingAgentAdapter
 from contexer.bench.runner import FixtureApp, Variant, Workspace, discover
+from contexer.bench.stats import Rate, sentence
 from contexer.controller import RunOutcome, RunSettings
 from contexer.crew.budget import Budget
 from contexer.graph import GraphController
@@ -42,6 +43,7 @@ WARM_UP_PROMPT = (
 class RepairRun(BaseModel):
     app: str
     bug: str
+    repeat: int = 0
     fixed: bool = False
     terminal: str = ""
     attempts: int = 0
@@ -63,13 +65,19 @@ class RepairScore(BaseModel):
 
 
 class RepairReport(BaseModel):
+    suite: str = "repair"
     agent: str = ""
     crew_model: str = ""
     repair_only: bool = False
     rounds: int = 2
+    # Runs of each bug. The score counts runs.
+    repeats: int = 1
     runs: list[RepairRun] = Field(default_factory=list)
     score: RepairScore = Field(default_factory=RepairScore)
     duration_seconds: float = 0.0
+
+    def rates(self) -> dict[str, Rate]:
+        return {"seeded bugs fixed": Rate(self.score.fixed, self.score.bugs)}
 
 
 async def run_repair_bench(
@@ -81,12 +89,13 @@ async def run_repair_bench(
     limit: int | None = None,
     rounds: int = 2,
     repair_only: bool = False,
+    repeats: int = 1,
     model: BaseChatModel | None = None,
     crew_tokens: int | None = None,
     runner: CheckRunner | None = None,
     on_run: Callable[[RepairRun], None] | None = None,
 ) -> RepairReport:
-    """Run every chosen bug. ``make_agent`` is called once per run, for a clean session."""
+    """Run every chosen bug, ``repeats`` times over. ``make_agent`` is called once per run, for a clean session."""
     apps = discover(Path(fixtures_root), only)
     chosen = [(app, bug) for app in apps for bug in app.bugs]
     if bugs:
@@ -99,13 +108,15 @@ async def run_repair_bench(
         chosen = chosen[:limit]
 
     started = time.monotonic()
-    report = RepairReport(repair_only=repair_only, rounds=rounds)
+    report = RepairReport(repair_only=repair_only, rounds=rounds, repeats=repeats)
     settings = RunSettings(max_repair_rounds=rounds + (1 if repair_only else 0), replay_others=False)
     workspaces: dict[str, Workspace] = {}
     try:
-        for app, bug in chosen:
+        # One whole pass after another, so what changes over the hours of a run touches every bug alike.
+        for repeat, (app, bug) in ((r, pair) for r in range(repeats) for pair in chosen):
             workspace = workspaces.setdefault(app.name, Workspace(app))
             run = await _one(app, bug, workspace, make_agent, settings, repair_only, model, crew_tokens, runner)
+            run.repeat = repeat
             report.runs.append(run)
             if on_run is not None:
                 on_run(run)
@@ -211,7 +222,11 @@ def results_markdown(report: RepairReport) -> str:
         "| Bugs | Fixed | First try | After a repair | Attempts | Minutes | Agent cost |",
         "| --- | --- | --- | --- | --- | --- | --- |",
         f"| {s.bugs} | {s.fixed} | {s.first_try} | {s.after_repair} | {s.attempts} | {s.seconds / 60:.1f} | {cost} |",
+        "",
+        f"Rates: {sentence(report.rates())}.",
     ]
+    if report.repeats > 1:
+        lines += ["", f"Each bug ran {report.repeats} times; the table counts runs."]
     unfixed = [r for r in report.runs if not r.fixed]
     lines += ["", "Not fixed:" if unfixed else "Not fixed: none."]
     lines += [f"- `{r.app}/{r.bug}`: {r.terminal} after {r.attempts} attempt(s)" for r in unfixed]

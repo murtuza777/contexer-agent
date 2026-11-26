@@ -63,9 +63,9 @@ project's sign-in and reset and no model:
 | Passes, or cannot run, on the app the agent tested | **Unconfirmed** | Did not reproduce: dropped and counted |
 
 Also reported per app: the agent's steps and its cost when the provider
-reports one. An app that does not start is reported and not scored. The
-correct app and each benign variant run `--repeats` times (default 1), each
-bug once.
+reports one. An app that does not start is reported and not scored. Every
+variant runs `--repeats` times (default 1): the correct app, each benign
+variant and each bug.
 
 `--agent stub` reports nothing, so the suite runs with no model and scores 0
 found and 0 false alarms: the floor, and proof that the harness works.
@@ -125,6 +125,37 @@ whole suite writes `reviewer-results/<agent>.md`.
 
 Twenty small diffs written by the person who wrote the scan are a smoke
 test, not a measure of how the review does on real pull requests.
+
+## Repeats and intervals
+
+Every suite takes `--repeats N`, prints each headline count as a rate with
+its 95% Wilson interval, and takes `--compare REPORT.json`:
+
+```bash
+contexer bench --suite tester --agent tester --app bookings --repeats 5 --out now.json
+contexer bench --suite tester --agent tester --app bookings --repeats 5 --compare last-release.json
+```
+
+| Suite | What `--repeats N` repeats | Default |
+| --- | --- | --- |
+| gate | The correct app and each benign variant. Each bug runs once: no model is involved, and the benchmark runs on every push | 3 |
+| tester | Every variant, bugs too: a model finds a bug in one run and not in the next | 1 |
+| repair | Every bug, one whole pass after another | 1 |
+| reviewer | Every case | 1 |
+
+With repeats, the tables count runs, not distinct bugs or cases.
+
+`--compare` reads a report that `--out` wrote earlier for the same suite
+(checked before anything runs) and says, for each rate, `higher`, `lower`
+or `cannot be told apart`. It uses Newcombe's interval for the difference
+of two proportions, built from the two Wilson intervals: when that interval
+contains zero, the two results cannot be told apart. Two runs of the same
+configuration are reported that way. It changes no exit code.
+
+Where it stops: the intervals treat every run as an independent trial of
+one rate. Bugs differ in difficulty and a repeat of a bug is not independent
+of the first, so they are a guide to the noise, not an exact error bar. Only
+counts are compared; cost, tokens and time are not.
 
 ## What the numbers mean, and don't
 
