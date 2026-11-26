@@ -12,6 +12,8 @@ from pathlib import Path
 from contexer.contract.store import ensure_contexer_dir
 
 RUNS_DIR = "runs"
+# One line per run event, model call and tool call of a run (crew/transcript.py: Trace).
+TRACE_FILE = "trace.jsonl"
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,10 @@ class RunDir:
     @property
     def server_log(self) -> Path:
         return self.path / "server.log"
+
+    @property
+    def trace_jsonl(self) -> Path:
+        return self.path / TRACE_FILE
 
 
 def write_whole(path: Path, text: str) -> None:

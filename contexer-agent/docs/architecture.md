@@ -899,6 +899,10 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 - Tool calls in one reply run in order. A tool that raises, an unknown tool
   and bad arguments all become an error result the model can read; none ends
   the run. Results longer than 20,000 characters are cut.
+- The arguments of a call are checked against the tool's schema before the
+  tool runs. A call that does not fit gets the problem and the tool's
+  required fields as its result. The next call of that tool that runs
+  without an error is counted in `AgentResult.repaired_calls`.
 - `AgentResult.status`: `ok`, `step_limit`, `timeout`, `invalid_output`,
   `model_error`. It also carries the steps (model calls), tool calls, tokens
   in and out, the duration, and the cost when the provider reports one
@@ -910,8 +914,21 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 `runs/<run-id>/agents/<name>.jsonl`. A `start` line (model, input, tools,
 limits), then one `model` line per model call (step, seconds, tokens in and
 out, cost, text, tool calls, or the error) and one `tool` line per tool call
-(name, arguments, status, result, seconds), then an `end` line (status,
-totals, the output).
+(name, arguments, status, whether it was a repaired call, result, seconds),
+then an `end` line (status, totals, the output).
+
+**Trace** (`crew/transcript.py: Trace`): `runs/<run-id>/trace.jsonl` is one
+file for the whole run. Its first line names the version of OpenTelemetry's
+semantic conventions it follows. The engine writes every run event as the
+line `--json` prints (`graph/engine.py: _context`). Every agent writes one
+`model` line per model call (agent, provider, requested and answering model,
+tokens in, out and read from cache, finish reason, seconds, cost and whether
+it is an estimate) and one `tool` line per tool call (name, `ok`, `repaired`
+or `failed`, seconds), under `gen_ai.*` names, with `contexer.*` for what the
+conventions do not name. It holds no prompt, reply, tool argument or tool
+result; those are in the agent's transcript under the same agent and step.
+Every line is masked. `run.json` gets each agent's count of repaired calls
+from this file when the run ends.
 
 **Masking** (`crew/transcript.py: Masker`): one masker is used in four
 places.
@@ -1197,6 +1214,7 @@ checks/<contract>/     per-check screenshots (and traces when kept)
 attempt-<n>/           contexer run: the same, per attempt (plus run-result.json)
 checkpoint.sqlite      contexer run: the state after every node; what --resume reads
 agents/<name>.jsonl    one transcript per Contexer agent (crew/), secrets masked
+trace.jsonl            every run event, model call and tool call in order; no prompts or page content
 replay/                contexer test: a screenshot per replayed finding
 screens/               contexer test: screenshots the Tester took
 draft-contract.json    contexer test: the confirmed checks, not approved
