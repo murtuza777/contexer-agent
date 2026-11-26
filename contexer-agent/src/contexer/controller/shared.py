@@ -15,6 +15,7 @@ from contexer.evidence.report import write_evidence
 from contexer.evidence.rundir import RunDir, write_whole
 from contexer.gate.models import AgentRow, AgentRunSummary, AttemptRow, GateDecision, ReviewRow, RunResult, TriageRow
 from contexer.intent.store import INTENT_DIR
+from contexer.skills.store import SKILLS_DIR
 
 DEPENDENCY_FILES = {"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"}
 
@@ -87,34 +88,41 @@ class ContractGuard:
     Those are the contracts, the intent (the written goal, its corrections and its checks) and
     ``contexer.toml``. An agent that could rewrite the first two could make any work pass; one that
     could write ``contexer.toml`` could choose the command Contexer runs to start or reset the app.
+
+    The project's skills (advice the Tester reads on a later run) are put back the same way, so an agent
+    cannot leave instructions there. They are kept apart from ``saved``: ``saved`` is what a resume compares
+    with the checkpoint, and ``contexer test`` may save a skill while a run is stopped.
     """
 
     def __init__(self, project: Path) -> None:
         self.base = project
         self.saved = self._read()
+        self.skills = self._folder(SKILLS_DIR, "*.md")
+
+    def _folder(self, folder: str, pattern: str) -> dict[str, bytes]:
+        root = self.base / CONTEXER_DIR / folder
+        if not root.is_dir():
+            return {}
+        return {f"{CONTEXER_DIR}/{folder}/{p.name}": p.read_bytes() for p in sorted(root.glob(pattern)) if p.is_file()}
 
     def _read(self) -> dict[str, bytes]:
         files: dict[str, bytes] = {}
         for folder, pattern in ((CONTRACTS_DIR, "*.json"), (INTENT_DIR, "*")):
-            root = self.base / CONTEXER_DIR / folder
-            if root.is_dir():
-                files.update(
-                    {f"{CONTEXER_DIR}/{folder}/{p.name}": p.read_bytes() for p in sorted(root.glob(pattern)) if p.is_file()}
-                )
+            files.update(self._folder(folder, pattern))
         config = self.base / CONFIG_FILE
         if config.is_file():
             files[CONFIG_FILE] = config.read_bytes()
         return files
 
     def restore_if_changed(self) -> list[str]:
-        current = self._read()
-        touched = sorted(
-            name for name in set(current) | set(self.saved) if current.get(name) != self.saved.get(name)
-        )
+        current = {**self._read(), **self._folder(SKILLS_DIR, "*.md")}
+        saved = {**self.saved, **self.skills}
+        touched = sorted(name for name in set(current) | set(saved) if current.get(name) != saved.get(name))
         for name in touched:
             path = self.base / name
-            if name in self.saved:
-                path.write_bytes(self.saved[name])
+            if name in saved:
+                path.parent.mkdir(parents=True, exist_ok=True)  # the whole folder may have been deleted
+                path.write_bytes(saved[name])
             else:
                 path.unlink(missing_ok=True)
         return touched

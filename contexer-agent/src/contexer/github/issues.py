@@ -42,7 +42,9 @@ if TYPE_CHECKING:
 Command = Literal["draft", "build", "ignore"]
 
 DEFAULT_LABEL = "contexer"
-_DRAFT = re.compile(r"<!-- contexer:draft id=(?P<id>[\w.-]+) sha256=(?P<sha>[0-9a-f]+) -->")
+# Matched at the start of a comment only: a comment that quotes a draft further down (a status comment, say)
+# is not one.
+_DRAFT = re.compile(r"\s*<!-- contexer:draft id=(?P<id>[\w.-]+) sha256=(?P<sha>[0-9a-f]+) -->")
 _JSON_BLOCK = re.compile(r"```json\s*\n(?P<json>.*?)\n```", re.DOTALL)
 STATUS_MARKER = "<!-- contexer:status -->"
 WRITE_ROLES = {"admin", "maintain", "write"}
@@ -209,11 +211,11 @@ def find_draft(comments: list[dict[str, Any]], own: str = "") -> tuple[dict[str,
 
     ``own`` is the login Contexer's token posts as. Only that account's comment is a draft: with a
     personal token that is a person, in Actions it is ``github-actions[bot]``. When the login is not
-    known, a comment by any bot is taken, as before.
+    known, a comment by any bot is taken, as before. The comment has to begin with the draft marker.
     """
     for comment in reversed(comments):
         body = str(comment.get("body") or "")
-        marker = _DRAFT.search(body)
+        marker = _DRAFT.match(body)
         author = comment.get("user") or {}
         ours = (str(author.get("login") or "").lower() == own.lower()) if own else author.get("type") == "Bot"
         if marker is None or not ours:
