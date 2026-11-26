@@ -360,3 +360,81 @@ async def test_three_mistakes_in_a_row_end_the_run(tmp_path: Path) -> None:
     assert result.status == "invalid_output"
     assert result.steps == 1 + MAX_CORRECTIONS + 1
     assert result.corrections == MAX_CORRECTIONS
+
+
+# -- MOD-2: a tool call is checked against the tool's schema before it runs ---------------------
+
+
+def _pages() -> tuple[Any, list[str]]:
+    opened: list[str] = []
+
+    @tool
+    def open_page(page: str, wait: int = 0) -> str:
+        """Open a page of the app."""
+        opened.append(page)
+        return f"{page}: opened"
+
+    return open_page, opened
+
+
+async def test_a_tool_call_with_bad_arguments_is_repaired_once(tmp_path: Path) -> None:
+    open_page, opened = _pages()
+    model = ScriptedChatModel(
+        calls(("open_page", {"page": 7})), calls(("open_page", {"page": "home"})), submit(summary="ok", bugs=0)
+    )
+    result = await run_agent(_spec(), model, [open_page], "Go.", run_dir=tmp_path)
+
+    assert result.status == "ok"
+    assert opened == ["home"]  # the call that did not fit never reached the tool
+    [refused] = _tool_messages(model, 1)
+    assert refused.status == "error"
+    assert "page: Input should be a valid string" in refused.content
+    assert "`open_page` requires: page." in refused.content  # the required field is named, the optional one is not
+    assert result.repaired_calls == 1
+    first, second = _events(tmp_path, "tool")
+    assert (first["status"], first["repaired"]) == ("error", False)
+    assert (second["status"], second["repaired"]) == ("success", True)
+    assert _events(tmp_path, "end")[0]["repaired_calls"] == 1
+
+
+async def test_only_the_call_that_follows_a_refusal_of_the_same_tool_is_a_repair(tmp_path: Path) -> None:
+    open_page, _ = _pages()
+    model = ScriptedChatModel(
+        calls(("open_page", {})),  # the required argument is missing
+        calls(("look", {"page": "home"})),  # another tool: nothing was repaired
+        calls(("open_page", {"page": "home"})),  # the repair
+        calls(("open_page", {"page": "cart"})),  # an ordinary call
+        submit(summary="ok", bugs=0),
+    )
+    result = await run_agent(_spec(), model, [look, open_page], "Go.", run_dir=tmp_path)
+
+    assert result.status == "ok"
+    assert result.repaired_calls == 1
+    assert [row["repaired"] for row in _events(tmp_path, "tool")] == [False, False, True, False]
+
+
+async def test_a_call_sent_again_after_unreadable_arguments_counts_as_repaired(tmp_path: Path) -> None:
+    garbled = AIMessage(content="", invalid_tool_calls=[_garbled("look", '{"page": "ca')])
+    model = ScriptedChatModel(garbled, calls(("look", {"page": "cart"})), submit(summary="ok", bugs=0))
+    result = await run_agent(_spec(), model, [look], "Go.", run_dir=tmp_path)
+
+    assert result.status == "ok"
+    assert result.repaired_calls == 1
+
+
+async def test_an_error_inside_a_tool_is_not_reported_as_bad_arguments(tmp_path: Path) -> None:
+    @tool
+    def parse(page: str) -> str:
+        """Read a page into a verdict."""
+        return Verdict.model_validate({"summary": page}).summary  # fails inside the tool: `bugs` is missing
+
+    model = ScriptedChatModel(
+        calls(("parse", {"page": "home"})), calls(("parse", {"page": "cart"})), submit(summary="ok", bugs=0)
+    )
+    result = await run_agent(_spec(), model, [parse], "Go.", run_dir=tmp_path)
+
+    assert result.status == "ok"
+    [failure] = _tool_messages(model, 1)
+    assert failure.status == "error"
+    assert failure.content.startswith("Error: ValidationError:") and "bad arguments" not in failure.content
+    assert result.repaired_calls == 0  # the arguments were fine both times

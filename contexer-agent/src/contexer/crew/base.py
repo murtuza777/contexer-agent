@@ -16,6 +16,10 @@ are not JSON, talk where a call was expected) is answered with a correction.
 ``MAX_CORRECTIONS`` of them in a row are allowed; a reply without a mistake
 starts the count again.
 
+A tool call is checked against the tool's schema before the tool runs. One
+that does not fit gets the problem and the required fields as its result, and
+the call that then runs is counted as repaired.
+
 Every model call and tool call is written to the agent's transcript in the
 run folder. The task an agent is given and what a tool returns are masked
 before the model sees them (see ``crew/transcript.py``).
@@ -93,6 +97,9 @@ class AgentResult:
     error: str = ""
     # Replies that were sent back for correction, over the whole run.
     corrections: int = 0
+    # Tool calls that ran without an error right after a call of the same tool was refused for its
+    # arguments (not JSON, or not fitting the tool's schema).
+    repaired_calls: int = 0
     # agents/<name>.jsonl in the run folder; None when there is no run folder.
     transcript: Path | None = None
     messages: list[BaseMessage] = field(default_factory=list, repr=False)
@@ -150,6 +157,7 @@ async def run_agent(
         cost_usd=result.cost_usd,
         seconds=round(result.duration_seconds, 3),
         corrections=result.corrections,
+        repaired_calls=result.repaired_calls,
         error=result.error,
         output=result.output.model_dump(mode="json") if result.output is not None else None,
     )
@@ -194,6 +202,8 @@ class _Run:
         self.corrections = 0
         # Whether the reply being handled ended at the output limit.
         self._cut_off = False
+        # Tools whose last call was refused for its arguments. The next call that runs is a repaired one.
+        self._refused: set[str] = set()
 
     async def loop(self, user_input: str) -> None:
         spec, result = self.spec, self.result
@@ -293,7 +303,20 @@ class _Run:
             ran += 1
             self.result.tool_calls += 1
             called = time.monotonic()
-            content, status = await self._call_tool(call["name"], call["args"])
+            name = call["name"]
+            tool = self.tools.get(name)
+            problem = _bad_arguments(tool, call["args"]) if tool is not None else ""
+            repaired = False
+            if problem:
+                # Checked before the tool runs, so an error from inside a tool is never taken for this.
+                self._refused.add(name)
+                content, status = f"Error: bad arguments for `{name}`, so it was not run: {problem}", "error"
+            else:
+                mending = name in self._refused
+                self._refused.discard(name)
+                content, status = await self._call_tool(name, call["args"])
+                repaired = mending and status == "success"
+                self.result.repaired_calls += repaired
             # A page may show a password or a key; the model has no use for it.
             content = self.transcript.masker.text(content)
             self.transcript.write(
@@ -302,6 +325,7 @@ class _Run:
                 name=call["name"],
                 args=call["args"],
                 status=status,
+                repaired=repaired,
                 result=content,
                 seconds=_elapsed(called),
             )
@@ -317,6 +341,8 @@ class _Run:
             problem = self.transcript.masker.text(self._unreadable(name, str(call.get("error") or "")))
             self.transcript.write("tool", step=self.result.steps, name=name, args=call.get("args"), status="error", result=problem, seconds=0.0)
             self.messages.append(ToolMessage(f"Error: {problem}", tool_call_id=call_id, name=name, status="error"))
+            if name in self.tools:
+                self._refused.add(name)
             if self._mistake(problem):
                 return True
         return done
@@ -430,8 +456,6 @@ class _Run:
             return f"Error: there is no tool named '{name}'. The tools are: {known}.", "error"
         try:
             value = await tool.ainvoke(args)
-        except ValidationError as exc:  # the arguments did not fit the tool
-            return f"Error: bad arguments for '{name}': {_validation_problem(exc)}", "error"
         except Exception as exc:  # the model gets the error; the run goes on
             return f"Error: {type(exc).__name__}: {clean_error(exc)}", "error"
         return _as_text(value), "success"
@@ -525,6 +549,20 @@ def _validation_problem(exc: Exception) -> str:
             parts.append(f"{where}: {error['msg']}")
         return "; ".join(parts)
     return str(exc)
+
+
+def _bad_arguments(tool: BaseTool, args: Any) -> str:
+    """Why ``args`` do not fit the tool's schema, with the fields it requires named; '' when they fit."""
+    schema = tool.args_schema
+    if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+        return ""  # a tool described by a plain JSON schema: nothing here can check it
+    try:
+        schema.model_validate(args)
+    except ValidationError as exc:
+        required = [info.alias or name for name, info in schema.model_fields.items() if info.is_required()]
+        needs = f"requires: {', '.join(required)}" if required else "has no required argument"
+        return f"{_validation_problem(exc)}. `{tool.name}` {needs}. Send the call again with arguments that fit."
+    return ""
 
 
 def _as_text(value: Any) -> str:
