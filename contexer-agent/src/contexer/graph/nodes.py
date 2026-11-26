@@ -40,11 +40,13 @@ from contexer.controller.shared import (
 )
 from contexer.crew.diagnoser import DEFAULT_MAX_STEPS as DEFAULT_DIAGNOSER_STEPS
 from contexer.crew.diagnoser import Failure, Tried, brief_section, diagnose
+from contexer.crew.intent import DEFAULT_MAX_STEPS as DEFAULT_INTENT_STEPS
 from contexer.crew.intent import run_intent
 from contexer.crew.planner import DEFAULT_MAX_STEPS as DEFAULT_PLANNER_STEPS
 from contexer.crew.planner import plan_task, task_brief_section
 from contexer.crew.reviewer import DEFAULT_REVIEW_STEPS, ReviewNote, review, review_repair_prompt
 from contexer.crew.transcript import Masker
+from contexer.crew.triage import DEFAULT_MAX_STEPS as DEFAULT_TRIAGE_STEPS
 from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, TriageDecision, triage
 from contexer.crew.untrusted import quoted_goal
 from contexer.evidence.rundir import write_whole
@@ -102,6 +104,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             assume=True,  # questions are not asked mid-run; assumptions are shown with the checks, and can be corrected
             run_dir=ctx.run.path,
             budget=ctx.budget,
+            max_steps=_steps(ctx, "intent", DEFAULT_INTENT_STEPS),
             origin=(existing.origin if existing is not None else "") or state.get("goal_origin", ""),
             secrets=ctx.secrets(),
         )
@@ -535,7 +538,14 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             return {"correction": correction, "move": ""}
         n = state["n"]
         situation = _situation(ctx, state)
-        decision = await triage(situation, ctx.model_for("triage"), run_dir=ctx.run.path, budget=ctx.budget, secrets=ctx.secrets())
+        decision = await triage(
+            situation,
+            ctx.model_for("triage"),
+            run_dir=ctx.run.path,
+            budget=ctx.budget,
+            secrets=ctx.secrets(),
+            max_steps=_steps(ctx, "triage", DEFAULT_TRIAGE_STEPS),
+        )
         updates: dict[str, Any] = {
             "move": decision.move,
             "decisions": [*state.get("decisions", []), decision.model_dump(mode="json")],

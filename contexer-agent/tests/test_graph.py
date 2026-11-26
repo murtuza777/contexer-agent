@@ -543,3 +543,29 @@ async def test_a_goal_for_an_app_that_does_not_start_yet_is_drafted_from_the_goa
     outcome = await controller.run_goal(GOAL)
     assert outcome.terminal == "needs_human"  # not approved; the point is that drafting did not need a running app
     assert len(model.seen["intent"]) == 1
+
+
+async def test_the_step_caps_the_project_sets_for_intent_and_triage_reach_them(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.graph import nodes
+
+    (project / ".contexer" / "contracts" / f"{CONTRACT_ID}.json").unlink()
+    caps: dict[str, Any] = {}
+
+    def recording(name: str, real: Any) -> Any:
+        async def call(*args: Any, **kwargs: Any) -> Any:
+            caps[name] = kwargs.get("max_steps")
+            return await real(*args, **kwargs)
+
+        return call
+
+    monkeypatch.setattr(nodes, "run_intent", recording("intent", nodes.run_intent))
+    monkeypatch.setattr(nodes, "triage", recording("triage", nodes.triage))
+    settings = RunSettings(max_repair_rounds=2, agent_steps={"intent": 7, "triage": 2})
+    agent = RecordingAgent([{"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS}])
+    model = AgentScript(intent=[_intent_reply()])
+    outcome = await GraphController(
+        project, agent, settings, runner=fast_runner(), model=model, ask=lambda _r: {"approve": True}
+    ).run_goal(GOAL)
+
+    assert outcome.terminal == "succeeded", outcome.reason
+    assert caps == {"intent": 7, "triage": 2}
