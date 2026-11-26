@@ -57,6 +57,7 @@ class AgentUsage(BaseModel):
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: float | None = None
+    repaired_calls: int = 0  # tool calls that ran after one was refused for its arguments; `contexer run` fills it
 
 
 class ExplorationResult(BaseModel):

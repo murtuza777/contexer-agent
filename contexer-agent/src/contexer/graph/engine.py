@@ -30,9 +30,10 @@ from contexer.controller.models import RunOutcome, RunSettings
 from contexer.controller.prompts import implement_prompt
 from contexer.controller.shared import ContractGuard
 from contexer.crew.budget import Budget
-from contexer.evidence.rundir import RUNS_DIR, RunDir
+from contexer.crew.transcript import Masker, Trace, repaired_calls
+from contexer.evidence.rundir import RUNS_DIR, RunDir, write_whole
 from contexer.graph.build import CHECKPOINT_FILE, build_graph, step_limit
-from contexer.graph.context import STOPPED_FILE, AskFn, DetailFn, EventFn, RunContext, guard_digest
+from contexer.graph.context import STOPPED_FILE, AskFn, DetailFn, EventFn, RunContext, RunEvent, guard_digest
 from contexer.graph.nodes import crashed_outcome, stopped_outcome
 from contexer.graph.state import UNSCORED, LoopState
 from contexer.intent.store import IntentStore
@@ -282,6 +283,7 @@ class GraphController:
                         ctx.close_app()
                         self.agent.stop()
                         self.last_outcome = stopped_outcome(ctx)
+                        self._count_repairs(ctx, self.last_outcome)
                     if isinstance(exc, NodeCancelledError):
                         raise asyncio.CancelledError from exc
                     if stopped or getattr(exc, "stops_run", False):
@@ -297,6 +299,7 @@ class GraphController:
             ctx.close_app()
         if ctx.outcome is None:  # the graph ended without finalize; routing makes this unreachable
             raise RuntimeError("the run ended without an outcome")
+        self._count_repairs(ctx, ctx.outcome)
         self.last_outcome = ctx.outcome
         return ctx.outcome
 
@@ -358,7 +361,37 @@ class GraphController:
             corrections=self.corrections,
         )
         ctx.guard = ContractGuard(self.project)
+        # Every event of the run goes to trace.jsonl as the line `--json` prints, masked, then on to the view.
+        trace = Trace(run.path, Masker(ctx.secrets()))
+        watcher = self.on_detail
+
+        def record(event: RunEvent) -> None:
+            trace.write(event.as_json())
+            if watcher is not None:
+                watcher(event)
+
+        ctx.on_detail = record
         return ctx
+
+    def _count_repairs(self, ctx: RunContext, outcome: RunOutcome) -> None:
+        """Put each agent's repaired tool calls in ``run.json``, when there were any.
+
+        They are counted from the trace, where every agent of the run writes its tool calls, so the
+        number also holds for a run that was stopped and continued by another process.
+        """
+        counts = repaired_calls(ctx.run.trace_jsonl)
+        path = ctx.run.path / "run.json"
+        if not any(counts.get(row.agent) for row in outcome.agents) or not path.is_file():
+            return
+        for row in outcome.agents:
+            row.repaired_calls = counts.get(row.agent, 0)
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            for row in saved.get("agents") or []:
+                row["repaired_calls"] = counts.get(row.get("agent"), 0)
+            write_whole(path, json.dumps(saved, indent=2, ensure_ascii=False))
+        except (OSError, ValueError, AttributeError):
+            pass  # run.json stays as the run wrote it; the trace still has the calls
 
     def _others(self, contract_id: str, others: list[Contract] | None) -> list[Contract]:
         if not self.settings.replay_others:
