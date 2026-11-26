@@ -89,6 +89,9 @@ for path, name in job["files"]:
                 sys.exit(0)
 """
 _MAX_LOG_CHARS = 4_000
+# Earlier leads shown to the Diagnoser (the latest ones), and the changed files named for each.
+_MAX_TRIED = 5
+_MAX_TRIED_FILES = 12
 # What a brief may carry into the fix prompt. The brief is written by a model that read the project's
 # files, and the prompt is read by a coding agent: a long free text is a way to steer it.
 MAX_CAUSE_CHARS = 800
@@ -129,6 +132,51 @@ class RepairBrief(BaseModel):
     keep_working: list[str] = Field(default_factory=list, description="Nearby behaviour the fix must not break.")
 
 
+class Tried(BaseModel):
+    """One lead that was already given, and what the attempt that worked from it did.
+
+    Without it the Diagnoser reads the same failure and the same code after every attempt, and
+    hands in the same lead again.
+    """
+
+    attempt: int  # the attempt that worked from the lead; the lead was written after the one before it
+    cause: str = ""
+    instruction: str = ""
+    changed_files: list[str] = Field(default_factory=list)
+    # Checks as `contract/check`: which failed before the attempt and passed after it, and so on.
+    fixed: list[str] = Field(default_factory=list)
+    broke: list[str] = Field(default_factory=list)
+    still_failing: list[str] = Field(default_factory=list)
+    no_check_ran: bool = False  # the app did not start after the attempt
+    undone_to: int | None = None  # the attempt the files were put back to afterwards, if they were
+
+
+def tried_section(tried: Sequence[Tried]) -> list[str]:
+    """The earlier leads as lines of the Diagnoser's task. A model wrote each lead, so it is quoted as data."""
+    if not tried:
+        return []
+    lines = [
+        "## What was already tried",
+        "Each lead below was handed to the coding agent after an earlier attempt. None of them made every check pass.",
+        "",
+    ]
+    for item in tried[-_MAX_TRIED:]:
+        lead = [f"Likely cause: {item.cause.strip()}"] if item.cause.strip() else []
+        if item.instruction.strip():
+            lead.append(f"Suggested change: {item.instruction.strip()}")
+        lines += [f"### The lead after attempt {item.attempt - 1}", untrusted("earlier-lead", "\n".join(lead))]
+        lines.append(f"Attempt {item.attempt} changed: {', '.join(item.changed_files[:_MAX_TRIED_FILES]) or 'no file'}")
+        if item.no_check_ran:
+            lines.append("After it the app did not start, so no check could run.")
+        for label, checks in (("Now passing", item.fixed), ("Broken by it", item.broke), ("Still failing", item.still_failing)):
+            if checks and not item.no_check_ran:
+                lines.append(f"{label}: {', '.join(checks)}")
+        if item.undone_to is not None:
+            lines.append(f"Its change was undone: the files went back to attempt {item.undone_to}.")
+        lines.append("")
+    return lines
+
+
 @dataclass
 class DiagnosisResult:
     brief: RepairBrief | None
@@ -152,6 +200,7 @@ async def diagnose(
     intent: str = "",
     diff: str = "",
     server_log: str = "",
+    tried: Sequence[Tried] = (),
     run_dir: Path | None = None,
     max_steps: int = DEFAULT_MAX_STEPS,
     secrets: Sequence[str] = (),
@@ -172,6 +221,7 @@ async def diagnose(
         parts += ["## The latest diff", untrusted("diff", diff.strip()[:_MAX_DIFF_CHARS]), ""]
     if server_log.strip():
         parts += ["## The end of the server log", untrusted("server-log", server_log.strip()[-_MAX_LOG_CHARS:]), ""]
+    parts += tried_section(tried)
     parts.append("Find the likely cause and hand in the brief.")
     ran = await run_agent(
         spec, model, project_tools(project_dir), "\n".join(parts), run_dir=run_dir, secrets=list(secrets), budget=budget

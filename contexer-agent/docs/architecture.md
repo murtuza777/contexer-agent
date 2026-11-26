@@ -1061,7 +1061,11 @@ flowchart LR
   for the walk and the matching, then is stopped and says so. Its
   `RepairBrief` adds the likely cause (labelled a hypothesis), the files,
   the instruction and what must keep working. With no brief the prompt is
-  still complete.
+  still complete. In a run, each lead is kept in the state (`leads`), and the next
+  diagnosis is shown every earlier lead with the files the attempt after it changed
+  and the checks that then passed, broke or kept failing (`graph/nodes.py: _tried`);
+  the prompt tells the Diagnoser to say when its lead repeats one of them. Nothing in
+  code compares the leads.
 - **Planner** (`crew/planner.py`). Runs once before the first coding turn,
   in the `plan` node, with the Diagnoser's two tools and nothing else. It
   is given the goal, the approved checks as `format_contract` prints them,
