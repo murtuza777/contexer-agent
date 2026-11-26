@@ -146,7 +146,12 @@ def run(
         agent_steps={name: cap for name in CREW_AGENTS if (cap := config.agents.for_agent(name).max_steps)},
     )
     crew_budget = run_budget(config, max_usd)
-    model_for_crew = crew_model(project)
+    model_for_crew = crew_model(
+        project,
+        on_refused=lambda why: term.note(
+            console, "warn", f"{escape(why)} Contexer's own agents are off for this run, and fixed rules decide each next step."
+        ),
+    )
     try:  # before anything is spent: a model the project names and Contexer cannot build
         models_for_crew = (
             crew_models(project, config, default_provider=config.compiler.provider, agents=RUN_AGENTS)
@@ -265,13 +270,22 @@ def one_engine(flag: str | None) -> None:
             )
 
 
-def crew_model(project: Path) -> Any:
-    """The model for Contexer's own agents (Intent, Triage, Diagnoser), or None when none is configured or usable."""
+def crew_model(project: Path, on_refused: Callable[[str], None] | None = None) -> Any:
+    """The model for Contexer's own agents (Intent, Triage, Diagnoser), or None when none is configured or usable.
+
+    A model that is configured and cannot call tools is refused, and ``on_refused`` is told why:
+    without that the run went on under rules and nothing said the model had been set aside.
+    """
     from contexer.cli.test_cli import build_model
     from contexer.llm.base import LLMError
+    from contexer.llm.chat import ToolCallingError
 
     try:
         return build_model(project)
+    except ToolCallingError as exc:
+        if on_refused is not None:
+            on_refused(str(exc))
+        return None
     except (LLMError, ValueError):
         return None
 

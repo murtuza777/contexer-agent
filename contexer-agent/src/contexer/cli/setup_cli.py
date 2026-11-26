@@ -24,7 +24,9 @@ from contexer.config.user import (
     save_user_settings,
 )
 from contexer.llm.base import LLMProvider
-from contexer.llm.catalog import PROVIDERS, ProviderSpec, provider_spec
+from contexer.llm.capabilities import ModelCapabilities, model_capabilities, save_measurement
+from contexer.llm.catalog import PROVIDERS, ProviderSpec, normalize_endpoint, provider_spec
+from contexer.llm.chat import ModelChoice, ToolCallingError, chat_model_from, check_tool_calling, clean_error
 from contexer.llm.discovery import DiscoveryError, ModelInfo, check_key, list_models, try_model
 
 AGENT_BINARIES = {"claude-code": "claude", "codex": "codex", "opencode": "opencode"}
@@ -87,6 +89,7 @@ def setup(
             console.print("[dim]Nothing was saved. Pick another model, or retry if the provider is rate-limiting.[/]")
             raise typer.Exit(code=1)
         console.print(f"[green]✓[/] {escape(chosen)} answered in {seconds:.1f}s [dim]({escape(detail)})[/]")
+    record = _capabilities(console, spec, chosen, api_key, url, available, measure=test)
 
     agent_name, agent_choice = _choose_agent(console, spec, chosen, agent, agent_model, yes)
     if pasted and api_key:
@@ -112,8 +115,54 @@ def setup(
     if pasted and api_key:
         console.print(f"  key       {escape(spec.key_env)} {escape(mask(api_key))} [dim]in {escape(str(contexer_home()))}, never in a project[/]")
     ensure_browser(console, ask=not yes)
+    show_capabilities(console, record)
     console.print()
     console.print('[dim]Next:[/] contexer doctor · contexer run "<what must be true>" [dim](in your app\'s folder)[/]')
+
+
+def _capabilities(
+    console: Console,
+    spec: ProviderSpec,
+    model: str,
+    api_key: str | None,
+    url: str,
+    available: list[ModelInfo],
+    measure: bool,
+) -> ModelCapabilities:
+    """What is known about the chosen model. With ``measure``, tool calling nobody vouches for is tried once and saved.
+
+    One real tool call (``check_tool_calling``): a few hundred tokens, made only where the provider's
+    list is silent and the model is not one Contexer has run its agents on.
+    """
+    endpoint = normalize_endpoint(url)
+    record = model_capabilities(spec.id, model, api_key=api_key, base_url=endpoint, models=available)
+    if not measure or record.native_tools.source != "assumed":
+        return record
+    choice = ModelChoice(spec=spec, model=model, api_key=api_key or "local", base_url=endpoint)
+    try:
+        with console.status(f"[dim]Asking {escape(model)} to call one tool...[/]"):
+            asyncio.run(check_tool_calling(chat_model_from(choice, max_tokens=2000)))
+    except ToolCallingError:
+        save_measurement(spec.id, endpoint, model, native_tools=False)
+        console.print(
+            f"[yellow]![/] {escape(model)} cannot call tools. It can still draft checks, but Contexer's agents "
+            "need tool calling: `contexer test` will refuse it and `contexer run` will decide by fixed rules."
+        )
+    except Exception as exc:
+        console.print(f"[yellow]![/] Tool calling could not be measured ({escape(clean_error(exc))}); it stays assumed.")
+        return record
+    else:
+        save_measurement(spec.id, endpoint, model, native_tools=True)
+        console.print(f"[green]✓[/] {escape(model)} called a tool and used its result")
+    return model_capabilities(spec.id, model, api_key=api_key, base_url=endpoint, models=available)
+
+
+def show_capabilities(console: Console, record: ModelCapabilities) -> None:
+    """Each capability of the model and where it is known from."""
+    console.print()
+    console.print(f"[bold]What Contexer knows about {escape(record.model)}[/]")
+    for name, value, origin in record.rows():
+        console.print(f"  {name:<15} {escape(value)} [dim]({escape(origin)})[/]")
 
 
 def ensure_browser(console: Console, ask: bool, install: bool = False) -> bool:

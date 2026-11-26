@@ -103,11 +103,13 @@ def build_model(project: Path, provider: str | None = None, model: str | None = 
     """The chat model the agents run on: ``--provider``/``--model``, else the project's and the user's choice.
 
     The choice follows the drafting model (``[compiler]`` in contexer.toml,
-    then ``contexer setup``, then the first key found). A model the provider
-    lists as unable to call tools is refused here, before anything starts.
+    then ``contexer setup``, then the first key found). A model known to be
+    unable to call tools (the provider lists it so, or ``contexer setup``
+    measured it) is refused here, before anything starts.
     """
     from contexer.cli.gate_cli import compiler_llm
     from contexer.config.settings import load_config
+    from contexer.llm.capabilities import remember
     from contexer.llm.chat import chat_model, require_tools, resolve_model
 
     config = load_config()
@@ -120,7 +122,8 @@ def build_model(project: Path, provider: str | None = None, model: str | None = 
             )
         provider, model = chosen.name, model or chosen.model
     choice = resolve_model(provider, model, config)
-    require_tools(choice.spec.id, choice.model, api_key=choice.api_key, base_url=choice.base_url)
+    record = require_tools(choice.spec.id, choice.model, api_key=choice.api_key, base_url=choice.base_url)
+    remember(record, choice.base_url)  # `capabilities_of(model)` gives it back to whoever runs an agent on the model
     return chat_model(provider, choice.model, config=config)
 
 
