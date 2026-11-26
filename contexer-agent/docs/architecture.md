@@ -1056,7 +1056,9 @@ flowchart LR
   and closed to `.contexer/`, `.git/`, dependencies, `.aws/`, `.ssh/` and files that hold
   credentials by name (`.env`, `*.env`, `.npmrc`, `.netrc`, `*.pem`, `*.key`, `id_rsa`...).
   `grep` resolves every file first, so a link or a junction cannot lead out of the project
-  or into a closed folder. Its
+  or into a closed folder. It searches for the literal text; a regular expression,
+  when the model asks for one, runs in a separate process. One search has two seconds
+  for the walk and the matching, then is stopped and says so. Its
   `RepairBrief` adds the likely cause (labelled a hypothesis), the files,
   the instruction and what must keep working. With no brief the prompt is
   still complete.
