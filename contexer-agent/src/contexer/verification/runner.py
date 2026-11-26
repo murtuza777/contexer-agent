@@ -48,6 +48,36 @@ class SignInError(Exception):
     """The configured login flow did not reach a signed-in state."""
 
 
+# How long a ``no_errors`` check waits for the page's own short timers to finish before it counts errors.
+QUIET_TIMEOUT_MS = 3000
+
+# Counts the page's pending short timers, so "no errors" is asked once the app has finished starting and
+# not after a fixed wait a slow machine can outlast. The app's timers run exactly as before: the same
+# callback, delay, arguments and id. A timer longer than LIMIT, and one given as a string, is not counted.
+_PENDING_TIMERS_SCRIPT = """
+(() => {
+  if (window.__contexerPendingTimers) return;
+  const LIMIT = 2000;
+  const pending = new Set();
+  const set = window.setTimeout, clear = window.clearTimeout;
+  window.setTimeout = function (fn, delay, ...args) {
+    if (typeof fn !== "function" || (Number(delay) || 0) > LIMIT) return set.call(this, fn, delay, ...args);
+    const id = set.call(this, function () {
+      pending.delete(id);
+      return fn.apply(this, arguments);
+    }, delay, ...args);
+    pending.add(id);
+    return id;
+  };
+  window.clearTimeout = function (id) {
+    pending.delete(id);
+    return clear.call(this, id);
+  };
+  Object.defineProperty(window, "__contexerPendingTimers", { value: () => pending.size });
+})();
+"""
+
+
 class CheckRunner:
     """Runs each check in a fresh browser context.
 
@@ -224,6 +254,7 @@ class CheckRunner:
             ignore_https_errors=True,
             storage_state=cast(Any, storage_state) if signed_in else None,
         )
+        await context.add_init_script(_PENDING_TIMERS_SCRIPT)
         # A trace records request headers, so a signed-in check's trace holds the session
         # cookie; CI uploads traces as artifacts. Only an explicit --trace on records them.
         tracing = self.trace != "off" and artifacts_dir is not None and (not signed_in or self.trace == "on")
@@ -388,6 +419,8 @@ class CheckRunner:
             for i, exp in enumerate(check.expect):
                 if exp.kind != "no_errors":
                     outcomes[i] = await self._evaluate(page, exp, baselines.get(i))
+            if any(exp.kind == "no_errors" for exp in check.expect):
+                await self._wait_for_quiet(page)
             for i, exp in enumerate(check.expect):
                 if exp.kind == "no_errors":
                     errors = page_errors + console_errors
@@ -402,6 +435,21 @@ class CheckRunner:
         except Exception as exc:
             logger.debug("Check %s aborted: %s", criterion_id, exc)
             return finish(False, failed_step=f"check execution ({_short(exc)})"), page
+
+    async def _wait_for_quiet(self, page: Page) -> None:
+        """Wait until the page has no short timer pending, at most ``QUIET_TIMEOUT_MS``.
+
+        An app that throws 150 ms after it loads threw after the fixed settle time on a slow machine, and
+        the check passed. A page that never goes quiet (a clock, a poller) is not an error: the wait ends.
+        """
+        try:
+            await page.wait_for_function(
+                "() => !window.__contexerPendingTimers || window.__contexerPendingTimers() === 0",
+                timeout=QUIET_TIMEOUT_MS,
+            )
+        except Exception:  # noqa: BLE001 - still busy, or the page navigated away: count what there is
+            return
+        await page.wait_for_timeout(50)  # the error of the last callback reaches us after its timer is gone
 
     # -- steps ----------------------------------------------------------------
 

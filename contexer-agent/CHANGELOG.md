@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-11-26
+
+The first release on PyPI: `uv tool install contexer-agent`.
+
 An audit of the whole system on 2026-11-24: [what was found](docs/production/audit.md),
 [the research behind the plan](docs/production/research.md), [the roadmap](docs/production/roadmap.md)
 and [the tickets](docs/production/tickets.md).
@@ -23,6 +27,15 @@ and [the tickets](docs/production/tickets.md).
   (replay it in a browser and say what was seen), `contexer_brief` (the instruction for it) and
   `contexer_status` (the last run). No tool approves a contract, edits one or changes a setting, and
   a contract is named by its id, never by a path. Adds the dependency `mcp>=2.3,<3.0`.
+- **CI on Ubuntu, Windows and macOS.** Ubuntu runs everything, as before. Windows and macOS run
+  lint, the type check and every test that starts no browser on each push. All three install the
+  package cleanly with pipx and follow steps 1 and 2 of `docs/try-it.md` (`contexer --version`,
+  `contexer setup --browser`, `contexer demo` ending in `6 verified, 1 refuted`). The seeded-bug
+  benchmark runs on all three once a week and when started by hand. pip downloads and the
+  Playwright browsers are cached. Known: on macOS the benchmark missed one seeded bug
+  (`shop/load-crash`) in its first run; it caught all 46 on Ubuntu and Windows.
+- `pytest --no-browser` skips a test at the moment it starts a browser and runs every other test
+  whole, for a machine with no Chromium.
 - **A stop hook: the agent cannot say "done" while an approved check fails.**
   `contexer init --agent claude-code` (or `codex`) adds a Stop hook to the agent's project settings,
   keeping what is there. The hook runs `contexer hook stop`, which replays the approved contracts
