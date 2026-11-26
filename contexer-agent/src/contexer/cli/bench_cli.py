@@ -9,7 +9,9 @@ with ``contexer run``'s loop.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
+from typing import NamedTuple
 
 import typer
 from rich.console import Console
@@ -18,16 +20,26 @@ from rich.table import Table
 
 from contexer.bench import AppScore, BenchReport, VariantRun, run_bench
 from contexer.bench.runner import CompileStats
+from contexer.bench.stats import Rate
+from contexer.bench.stats import compare as compare_rates
 from contexer.cli import term
 
 
 def bench(
     fixtures: Path | None = typer.Option(None, "--fixtures", help="Fixtures directory (default: ./bench/fixtures)."),
     repeats: int | None = typer.Option(
-        None, "--repeats", "-n", min=1, help="Runs per good/benign variant (default: 3; 1 for the tester suite)."
+        None,
+        "--repeats",
+        "-n",
+        min=1,
+        help="gate: runs of the correct app and of each benign variant (default 3; each bug runs once). "
+        "tester, repair, reviewer: runs of every variant, bug or case (default 1).",
     ),
     app: list[str] = typer.Option([], "--app", help="Only these fixture apps (repeatable)."),
     out: Path | None = typer.Option(None, "--out", help="Write the full report as JSON."),
+    compare: Path | None = typer.Option(
+        None, "--compare", help="A report --out wrote earlier for the same suite: say which rates differ from it, and which cannot be told apart."
+    ),
     live: bool = typer.Option(False, "--live", help="Score contracts the LLM compiles from each goal instead."),
     suite: str = typer.Option(
         "gate",
@@ -58,16 +70,19 @@ def bench(
             "https://github.com/murtuza777/contexer-agent and run it from contexer-agent/, or pass --fixtures"
         )
 
+    # Read before anything runs: a wrong path must not be found out after the benchmark.
+    earlier = _Earlier(compare, _earlier_rates(compare, suite)) if compare is not None else None
+
     if suite == "reviewer":
-        _bench_reviewer(console, root, app, out, agent)
+        _bench_reviewer(console, root, app, out, agent, repeats or 1, earlier)
         return
     if suite == "repair":
-        _bench_repair(console, root, app, out, agent, model, bug, limit, rounds, repair_only)
+        _bench_repair(console, root, app, out, agent, model, bug, limit, rounds, repair_only, repeats or 1, earlier)
         return
     if suite == "tester":
         if live:
             raise typer.BadParameter("--live belongs to the gate suite; the tester suite takes --agent")
-        _bench_tester(console, root, repeats or 1, app, out, agent, steps)
+        _bench_tester(console, root, repeats or 1, app, out, agent, steps, earlier)
         return
     repeats = repeats or 3
 
@@ -98,6 +113,7 @@ def bench(
         run_bench(root, repeats=repeats, only=app or None, on_run=progress, live_llm=llm, on_compiled=compiled)
     )
     render_bench(console, report)
+    _print_rates(console, report.rates(), earlier)
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
@@ -132,8 +148,73 @@ def render_bench(console: Console, report: BenchReport) -> None:
     console.print(f"[dim]{report.duration_seconds:.0f}s[/]")
 
 
+class _Earlier(NamedTuple):
+    """The report ``--compare`` names, and the rates it holds."""
+
+    path: Path
+    rates: dict[str, Rate]
+
+
+def _earlier_rates(path: Path, suite: str) -> dict[str, Rate]:
+    """The rates in a report ``--out`` wrote for this suite; anything else is refused."""
+    from pydantic import ValidationError
+
+    def refuse(why: str) -> typer.BadParameter:
+        return typer.BadParameter(f"{path} {why}", param_hint="--compare")
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise refuse(f"cannot be read as a report written by --out: {exc}") from exc
+    if not isinstance(data, dict):
+        raise refuse("is not a report written by --out")
+    # Reports written before the field existed have none; they are taken on trust.
+    wrote = data.get("suite", suite)
+    if wrote != suite:
+        raise refuse(f"was written by the {wrote} suite, and this run is the {suite} suite")
+    try:
+        if suite == "tester":
+            from contexer.bench.tester import TesterBenchReport
+
+            return TesterBenchReport.model_validate(data).rates()
+        if suite == "repair":
+            from contexer.bench.repair import RepairReport
+
+            return RepairReport.model_validate(data).rates()
+        if suite == "reviewer":
+            from contexer.bench.reviewer import ReviewerBenchReport
+
+            return ReviewerBenchReport.model_validate(data).rates()
+        return BenchReport.model_validate(data).rates()
+    except ValidationError as exc:
+        raise refuse(f"is not a report of the {suite} suite: {exc.errors()[0]['msg']}") from exc
+
+
+def _print_rates(console: Console, rates: dict[str, Rate], earlier: _Earlier | None) -> None:
+    """Each headline count as a rate with its interval, and how it stands against an earlier report."""
+    term.section(console, "Rates")
+    term.fields(console, [(name, escape(rate.text())) for name, rate in rates.items()])
+    if earlier is None:
+        return
+    term.section(console, "Compared with", term.path(earlier.path))
+    term.fields(
+        console,
+        [
+            (name, escape(f"was {earlier.rates[name].text()}: {compare_rates(rate, earlier.rates[name])}"))
+            for name, rate in rates.items()
+        ],
+    )
+
+
 def _bench_tester(
-    console: Console, root: Path, repeats: int, only: list[str], out: Path | None, agent: str, steps: int | None
+    console: Console,
+    root: Path,
+    repeats: int,
+    only: list[str],
+    out: Path | None,
+    agent: str,
+    steps: int | None,
+    earlier: _Earlier | None = None,
 ) -> None:
     from contexer.bench.tester import TESTER_AGENTS, TesterRun, results_markdown, run_tester_bench
 
@@ -143,7 +224,7 @@ def _bench_tester(
         )
 
     def progress(run: TesterRun) -> None:
-        console.print(_tester_line(run))
+        console.print(_tester_line(run, bugs_numbered=repeats > 1))
 
     term.header(console, "bench", f"{term.path(root)} · tester suite · agent {agent} · {repeats} repeat(s)")
     tester = TESTER_AGENTS[agent]()
@@ -178,6 +259,7 @@ def _bench_tester(
     )
     if totals.errors:
         console.print(f"[red]{totals.errors} run(s) not scored: the app did not start, or the agent failed.[/]")
+    _print_rates(console, report.rates(), earlier)
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
@@ -192,7 +274,9 @@ def _bench_tester(
     raise typer.Exit(code=1 if totals.errors else 0)
 
 
-def _bench_reviewer(console: Console, root: Path, only: list[str], out: Path | None, agent: str) -> None:
+def _bench_reviewer(
+    console: Console, root: Path, only: list[str], out: Path | None, agent: str, repeats: int = 1, earlier: _Earlier | None = None
+) -> None:
     from contexer.bench.reviewer import CaseRun, results_markdown, run_reviewer_bench
     from contexer.cli import run_cli
     from contexer.config.project import load_project_env
@@ -215,9 +299,9 @@ def _bench_reviewer(console: Console, root: Path, only: list[str], out: Path | N
             mark = f"[red]{run.false_high} false high[/]" if run.false_high else "[green]quiet[/]"
         console.print(f"  {mark} {escape(run.name)} [dim]{len(run.notes)} note(s) {run.seconds:.0f}s[/]")
 
-    term.header(console, "bench", f"{term.path(cases)} · reviewer suite · {agent}")
+    term.header(console, "bench", f"{term.path(cases)} · reviewer suite · {agent} · {repeats} repeat(s)")
     try:
-        report = asyncio.run(run_reviewer_bench(cases, model, only=only or None, on_case=progress))
+        report = asyncio.run(run_reviewer_bench(cases, model, only=only or None, repeats=repeats, on_case=progress))
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     report.model = describe_model(model) if model is not None else ""
@@ -226,6 +310,7 @@ def _bench_reviewer(console: Console, root: Path, only: list[str], out: Path | N
         f"Planted issues flagged: [bold]{report.flagged}/{report.planted}[/] · clean diffs with a false high-severity note: "
         f"[bold]{report.clean_with_high}/{report.clean}[/]"
     )
+    _print_rates(console, report.rates(), earlier)
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
@@ -248,6 +333,8 @@ def _bench_repair(
     limit: int | None,
     rounds: int,
     repair_only: bool,
+    repeats: int = 1,
+    earlier: _Earlier | None = None,
 ) -> None:
     from contexer.agents import create_agent
     from contexer.bench.repair import RepairRun, results_markdown, run_repair_bench
@@ -269,7 +356,7 @@ def _bench_repair(
         cost = f" ${run.cost_usd:.2f}" if run.cost_usd else ""
         moves = f" [dim]({escape(', '.join(run.moves))})[/]" if run.moves else ""
         console.print(
-            f"  {mark} {escape(run.app)}/{escape(run.bug)} · {run.attempts} attempt(s){moves} "
+            f"  {mark} {escape(run.app)}/{escape(run.bug)}{f' #{run.repeat + 1}' if repeats > 1 else ''} · {run.attempts} attempt(s){moves} "
             f"[dim]{run.duration_seconds:.0f}s{cost}[/]"
         )
 
@@ -285,6 +372,7 @@ def _bench_repair(
                 limit=limit,
                 rounds=rounds,
                 repair_only=repair_only,
+                repeats=repeats,
                 model=crew,
                 on_run=progress,
             )
@@ -309,6 +397,7 @@ def _bench_repair(
     )
     console.print()
     console.print(table)
+    _print_rates(console, report.rates(), earlier)
     if out:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(report.model_dump_json(indent=2), encoding="utf-8")
@@ -316,11 +405,11 @@ def _bench_repair(
         console.print(f"[dim]Report written to {escape(str(out))} and {escape(str(out.with_suffix('.md')))}[/]")
 
 
-def _tester_line(run: object) -> str:
+def _tester_line(run: object, bugs_numbered: bool = False) -> str:
     from contexer.bench.tester import TesterRun
 
     assert isinstance(run, TesterRun)
-    label = f"{run.app}/{run.kind}/{run.name}" + (f" #{run.repeat + 1}" if run.kind != "bug" else "")
+    label = f"{run.app}/{run.kind}/{run.name}" + (f" #{run.repeat + 1}" if run.kind != "bug" or bugs_numbered else "")
     from contexer.bench.tester import NOT_SCORED
 
     if run.error.startswith(NOT_SCORED):

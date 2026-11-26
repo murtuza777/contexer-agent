@@ -1,5 +1,18 @@
-# Builds the contexer-agent package on every push to main, and publishes it to PyPI when a
-# version tag (v0.6.0) is pushed.
+# Builds the contexer-agent package on every push to main. When a version tag (v0.6.0) is pushed, it
+# checks the release gates on the tagged commit, and only if they hold publishes to PyPI and makes a
+# GitHub release with the benchmark results attached.
+#
+# The gates are docs/production/roadmap.md, section 8. The `gate` job checks the ones code can check:
+#   - the gate benchmark, run here on the tagged commit: every seeded bug caught, no false failure;
+#   - CI on the tagged commit: the latest run a push started has passed (tests, lint and types on
+#     three systems, the clean install).
+# The decision is contexer-agent/src/contexer/bench/gates.py, which has unit tests. `publish` needs
+# `gate`, so a gate that fails or is skipped leaves the publish skipped.
+# Not checked here, because they need a model key: the repair, reviewer and tester suites. They are a
+# person's step before tagging: contexer-agent/bench/README.md, "Release gates".
+#
+# To try the gates without publishing: run this workflow by hand on a branch (Actions > Release > Run
+# workflow). `gate` runs; `publish` and `release` only ever run for a tag.
 #
 # Publishing uses PyPI trusted publishing: no token is stored anywhere. Once, on pypi.org
 # (Account settings > Publishing > Add a new pending publisher), register:
@@ -54,9 +67,74 @@ jobs:
           path: contexer-agent/dist/
           if-no-files-found: error
 
+  gate:
+    # Not on a plain push to main: the benchmark already runs there in ci.yml.
+    name: Release gates
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # The benchmark takes about 18 minutes on Ubuntu.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        working-directory: contexer-agent
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: contexer-agent/pyproject.toml
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "22"
+      - name: Install
+        run: python -m pip install --quiet -e .
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(python -c 'from importlib.metadata import version; print(version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install Chromium
+        run: |
+          python -m playwright install chromium
+          python -c "from playwright.sync_api import sync_playwright as s; p = s().start(); p.chromium.launch().close(); p.stop()" \
+            || python -m playwright install-deps chromium
+      - name: Gate benchmark on this commit
+        # Exits 1 on a missed bug, a false failure or an app that was not scored: that alone fails the job.
+        run: contexer bench --repeats 2 --out bench-results.json
+      - name: CI runs on this commit
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA"
+          --json databaseId,event,status,conclusion,createdAt,url --limit 50 > ci-runs.json
+      - name: Release gates
+        # Runs after a failed benchmark too, so the summary says why. A failed step still fails the job.
+        if: ${{ !cancelled() }}
+        run: |
+          python -m contexer.bench.gates --bench bench-results.json --ci ci-runs.json --summary release-gates.md
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: test ! -f release-gates.md || cat release-gates.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: release-gates
+          path: |
+            contexer-agent/bench-results.json
+            contexer-agent/release-gates.md
+          if-no-files-found: ignore
+
   publish:
     name: Publish to PyPI
-    needs: build
+    # No status function here on purpose: the job is then skipped when `build` or `gate` failed or was skipped.
+    needs: [build, gate]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:
@@ -70,3 +148,33 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@v1.14.3
+
+  release:
+    # After PyPI, which cannot be undone: a GitHub release then never names a version that is not there.
+    name: GitHub release with the benchmark results
+    needs: [gate, publish]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-gates
+          path: gates/
+      - name: Create the release, or add the files to one that exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber \
+              dist/* gates/bench-results.json gates/release-gates.md
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" \
+              --notes-file gates/release-gates.md --generate-notes \
+              dist/* gates/bench-results.json gates/release-gates.md
+          fi

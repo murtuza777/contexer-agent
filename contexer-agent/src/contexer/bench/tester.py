@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from contexer.appserver import AppStartError, RunningApp, open_app
 from contexer.bench.runner import FixtureApp, Variant, VariantKind, Workspace, discover
+from contexer.bench.stats import Rate, sentence
 from contexer.contract import Contract
 from contexer.contract.models import utc_now
 from contexer.evidence.rundir import RunDir
@@ -233,6 +234,7 @@ class TesterScore(BaseModel):
 
 
 class TesterBenchReport(BaseModel):
+    suite: str = "tester"
     agent: str
     # The model the agent ran on, when it has one.
     model: str = ""
@@ -252,6 +254,13 @@ class TesterBenchReport(BaseModel):
                 total.cost_usd = (total.cost_usd or 0.0) + score.cost_usd
         return total
 
+    def rates(self) -> dict[str, Rate]:
+        total = self.totals()
+        return {
+            "seeded bugs found": Rate(total.found, total.bugs),
+            "clean runs with a false alarm": Rate(total.false_alarm_runs, total.clean_runs),
+        }
+
 
 async def run_tester_bench(
     fixtures_root: Path,
@@ -261,7 +270,10 @@ async def run_tester_bench(
     only: list[str] | None = None,
     on_run: Callable[[TesterRun], None] | None = None,
 ) -> TesterBenchReport:
-    """Run ``agent`` on the correct app and every benign variant ``repeats`` times, and on every bug once."""
+    """Run ``agent`` on every variant ``repeats`` times: the correct app, each benign variant and each bug.
+
+    Bugs repeat too, unlike in the gate suite: a model finds a bug in one run and not in the next.
+    """
     started = time.monotonic()
     report = TesterBenchReport(agent=agent.name, started_at=utc_now(), repeats=repeats)
     for app in discover(fixtures_root, only):
@@ -270,8 +282,7 @@ async def run_tester_bench(
         goal = _goal(app)
         good = Variant(app=app.name, kind="good", name="good")
         plan: list[tuple[Variant, int]] = [(good, r) for r in range(repeats)]
-        plan += [(v, r) for v in app.benign for r in range(repeats)]
-        plan += [(v, 0) for v in app.bugs]
+        plan += [(v, r) for v in [*app.benign, *app.bugs] for r in range(repeats)]
         with Workspace(app) as workspace:
             for variant, repeat in plan:
                 run = await _run_variant(agent, goal, variant, repeat, workspace)
@@ -395,11 +406,19 @@ def _score(score: TesterScore, run: TesterRun) -> None:
         score.bugs += 1
         if run.found:
             score.found += 1
-        else:
+        elif run.name not in score.missed_bugs:  # named once, however many repeats missed it
             score.missed_bugs.append(run.name)
     else:
         score.clean_runs += 1
         score.false_alarm_runs += 1 if run.false_alarms else 0
+
+
+def _missed(report: TesterBenchReport, bug: str) -> str:
+    """A bug that was not found, and in how many of its runs when it ran more than once."""
+    if report.repeats == 1:
+        return f"`{bug}`"
+    runs = [r for r in report.runs if r.kind == "bug" and f"{r.app}/{r.name}" == bug and not r.error.startswith(NOT_SCORED)]
+    return f"`{bug}` (in {sum(not r.found for r in runs)} of {len(runs)} runs)"
 
 
 def results_markdown(report: TesterBenchReport) -> str:
@@ -431,8 +450,11 @@ def results_markdown(report: TesterBenchReport) -> str:
             f"{score.false_alarm_runs} / {score.clean_runs} | {score.rejected} | {score.unconfirmed} | {score.steps} | "
             f"{score.tokens_in:,} / {score.tokens_out:,} | {cost} |"
         )
+    lines += ["", f"Rates: {sentence(report.rates())}."]
+    if report.repeats > 1:
+        lines += ["", f'Every variant ran {report.repeats} times; "Seeded bugs" and "Found" count runs.']
     if total.missed_bugs:
-        lines += ["", "Not found: " + ", ".join(f"`{bug}`" for bug in total.missed_bugs) + "."]
+        lines += ["", "Not found: " + ", ".join(_missed(report, bug) for bug in total.missed_bugs) + "."]
     if total.stopped_early:
         lines += ["", f"In {total.stopped_early} run(s) the agent stopped early (a step or time limit, or a model error); what it had recorded was still scored."]
     if total.errors:

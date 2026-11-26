@@ -150,6 +150,29 @@ async def test_the_results_page_states_the_numbers(tmp_path: Path) -> None:
     assert "| **total** | 1 | 1 | 0 | 0 / 1 | 0 | 1 | 8 | 0 / 0 | $0.02 |" in page
 
 
+async def test_repeats_run_every_variant_again_bugs_too_and_the_page_gives_each_rate_its_interval(tmp_path: Path) -> None:
+    """A model finds a bug in one run and not in the next, so a found rate needs the bug runs repeated."""
+    from contexer.bench.stats import Rate
+
+    report = await run_tester_bench(_mini_fixture(tmp_path), ScriptedTester(REAL), repeats=2)
+    [score] = report.apps
+    assert [(r.kind, r.repeat) for r in report.runs] == [("good", 0), ("good", 1), ("bug", 0), ("bug", 1)]
+    assert (score.bugs, score.found, score.clean_runs, score.false_alarm_runs) == (2, 2, 2, 0)
+    assert report.suite == "tester"
+    assert report.rates() == {"seeded bugs found": Rate(2, 2), "clean runs with a false alarm": Rate(0, 2)}
+
+    page = results_markdown(report)
+    assert "Every variant ran 2 times" in page
+    assert "seeded bugs found 2/2, 100% (95% interval 34% to 100%)" in page
+    assert "clean runs with a false alarm 0/2, 0% (95% interval 0% to 66%)" in page
+
+
+async def test_a_bug_missed_in_several_repeats_is_named_once_with_how_often(tmp_path: Path) -> None:
+    report = await run_tester_bench(_mini_fixture(tmp_path), StubTester(), repeats=2)
+    assert report.totals().missed_bugs == [f"todo/{BUG}"]
+    assert f"Not found: `todo/{BUG}` (in 2 of 2 runs)." in results_markdown(report)
+
+
 def test_the_command_runs_the_suite_with_the_stub_agent_and_writes_the_results(tmp_path: Path) -> None:
     bench = tmp_path / "bench"
     _mini_fixture(bench / "fixtures")

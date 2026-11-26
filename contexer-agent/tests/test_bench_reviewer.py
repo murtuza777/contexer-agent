@@ -74,6 +74,47 @@ async def test_a_models_note_counts_only_on_the_planted_file_and_a_high_note_on_
     assert "clean-style-only" in text  # the false alarm is named
 
 
+async def test_repeats_review_every_case_again_and_the_results_give_each_rate_its_interval() -> None:
+    from contexer.bench.stats import Rate
+
+    report = await run_reviewer_bench(CASES, None, only=["secret-in-source", "off-by-one-page", "clean-rename"], repeats=3)
+
+    assert [(r.name, r.repeat) for r in report.runs][:4] == [
+        ("clean-rename", 0), ("off-by-one-page", 0), ("secret-in-source", 0), ("clean-rename", 1),
+    ]  # fmt: skip
+    assert (report.planted, report.flagged, report.clean, report.clean_with_high) == (6, 3, 3, 0)
+    assert (report.repeats, report.suite) == (3, "reviewer")
+    assert report.rates() == {"planted issues flagged": Rate(3, 6), "clean diffs with a false high": Rate(0, 3)}
+
+    text = results_markdown(report)
+    assert "Each case ran 3 times" in text
+    assert "planted issues flagged 3/6, 50% (95% interval 19% to 81%)" in text
+    assert "clean diffs with a false high 0/3, 0% (95% interval 0% to 56%)" in text
+    assert "Not flagged: `off-by-one-page`." in text  # named once, not once per repeat
+    assert "Flagged: `secret-in-source` (scan)." in text
+
+
+def test_the_command_repeats_the_reviewer_suite(tmp_path: Path) -> None:
+    shutil.copytree(CASES, tmp_path / "reviewer")
+    (tmp_path / "fixtures").mkdir()
+    out = tmp_path / "reviewer.json"
+    result = CliRunner().invoke(
+        cli,
+        ["bench", "--suite", "reviewer", "--agent", "scan", "--fixtures", str(tmp_path / "fixtures"), "--repeats", "2",
+         "--out", str(out), "--compare", str(CASES.parent / "does-not-exist.json")],
+    )  # fmt: skip
+    assert result.exit_code == 2  # the report to compare with is looked for first
+
+    result = CliRunner().invoke(
+        cli,
+        ["bench", "--suite", "reviewer", "--agent", "scan", "--fixtures", str(tmp_path / "fixtures"), "--repeats", "2", "--out", str(out)],
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert (data["planted"], data["flagged"], data["clean"], data["repeats"]) == (20, 8, 20, 2)
+    assert "planted issues flagged 8/20, 40% (95% interval 22% to 61%)" in " ".join(result.output.split())
+
+
 async def test_an_unknown_case_is_an_error() -> None:
     with pytest.raises(ValueError, match="no case"):
         await run_reviewer_bench(CASES, None, only=["does-not-exist"])

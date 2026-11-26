@@ -63,9 +63,9 @@ project's sign-in and reset and no model:
 | Passes, or cannot run, on the app the agent tested | **Unconfirmed** | Did not reproduce: dropped and counted |
 
 Also reported per app: the agent's steps and its cost when the provider
-reports one. An app that does not start is reported and not scored. The
-correct app and each benign variant run `--repeats` times (default 1), each
-bug once.
+reports one. An app that does not start is reported and not scored. Every
+variant runs `--repeats` times (default 1): the correct app, each benign
+variant and each bug.
 
 `--agent stub` reports nothing, so the suite runs with no model and scores 0
 found and 0 false alarms: the floor, and proof that the harness works.
@@ -125,6 +125,68 @@ whole suite writes `reviewer-results/<agent>.md`.
 
 Twenty small diffs written by the person who wrote the scan are a smoke
 test, not a measure of how the review does on real pull requests.
+
+## Repeats and intervals
+
+Every suite takes `--repeats N`, prints each headline count as a rate with
+its 95% Wilson interval, and takes `--compare REPORT.json`:
+
+```bash
+contexer bench --suite tester --agent tester --app bookings --repeats 5 --out now.json
+contexer bench --suite tester --agent tester --app bookings --repeats 5 --compare last-release.json
+```
+
+| Suite | What `--repeats N` repeats | Default |
+| --- | --- | --- |
+| gate | The correct app and each benign variant. Each bug runs once: no model is involved, and the benchmark runs on every push | 3 |
+| tester | Every variant, bugs too: a model finds a bug in one run and not in the next | 1 |
+| repair | Every bug, one whole pass after another | 1 |
+| reviewer | Every case | 1 |
+
+With repeats, the tables count runs, not distinct bugs or cases.
+
+`--compare` reads a report that `--out` wrote earlier for the same suite
+(checked before anything runs) and says, for each rate, `higher`, `lower`
+or `cannot be told apart`. It uses Newcombe's interval for the difference
+of two proportions, built from the two Wilson intervals: when that interval
+contains zero, the two results cannot be told apart. Two runs of the same
+configuration are reported that way. It changes no exit code.
+
+Where it stops: the intervals treat every run as an independent trial of
+one rate. Bugs differ in difficulty and a repeat of a bug is not independent
+of the first, so they are a guide to the noise, not an exact error bar. Only
+counts are compared; cost, tokens and time are not.
+
+## Release gates
+
+A release is cut only when the gates in
+[docs/production/roadmap.md](../docs/production/roadmap.md), section 8, hold
+on its commit. `.github/workflows/release.yml` checks what code can check
+when a `v*` tag is pushed, and publishes nothing unless it holds:
+
+| Gate | Checked by | How |
+| --- | --- | --- |
+| Gate benchmark: every seeded bug caught, no false failure | the workflow | `contexer bench --repeats 2` on the tagged commit, on Ubuntu, then `python -m contexer.bench.gates` |
+| Tests, lint, types and the clean install on three systems; the hostile suite (`tests/test_security.py`, inside the tests) | the workflow | The latest CI run a push started on the tagged commit must have passed |
+| Repair suite: no worse than the last release | a person | `contexer bench --suite repair --agent NAME --repeats 5 --compare LAST.json` |
+| Reviewer suite: every planted issue flagged, at most 1 false high in 10 | a person | `contexer bench --suite reviewer --agent reviewer` |
+| Tester, held-out app: no more false alarms than the last release | a person | `contexer bench --suite tester --agent tester --app bookings --repeats 5 --compare LAST.json` |
+| False success: no run ends `succeeded` without a gate pass | partly the workflow | A missed bug in the gate benchmark is one. The other suites are a person's |
+
+The three gates a person runs need a model key, which the workflow does not
+have. Before tagging:
+
+1. Run them, keep each `--out` report for the next release's `--compare`,
+   and read "lower" on a rate that should be high (or "higher" on false
+   alarms) as a failed gate. "Cannot be told apart" is "no worse".
+2. Check that CI has finished and passed on the commit. A tag pushed while
+   CI is still running is refused; run the failed `Release gates` job again
+   when CI is done.
+3. To try the workflow's gates without publishing, run the Release workflow
+   by hand on a branch: the gate job runs, the publish jobs do not.
+
+The gate job attaches `bench-results.json` and `release-gates.md` to the
+GitHub release. The benchmark in the release workflow runs on Ubuntu only.
 
 ## What the numbers mean, and don't
 

@@ -38,6 +38,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from contexer.appserver import AppStartError, open_app
+from contexer.bench.stats import Rate
 from contexer.contract import Contract, ContractStore
 from contexer.evidence.rundir import RunDir
 from contexer.gate.models import RunResult
@@ -126,11 +127,22 @@ class AppScore(BaseModel):
 
 
 class BenchReport(BaseModel):
+    # Which suite wrote the file, so a report is never compared with another suite's.
+    suite: str = "gate"
     started_at: str
     duration_seconds: float = 0.0
+    # Runs of the correct app and of each benign variant. Each bug runs once: its verdict needs no model.
     repeats: int
     apps: list[AppScore] = Field(default_factory=list)
     runs: list[VariantRun] = Field(default_factory=list)
+
+    def rates(self) -> dict[str, Rate]:
+        total = self.totals()
+        return {
+            "seeded bugs caught": Rate(total.caught, total.bugs),
+            "clean runs with a false failure": Rate(total.false_failure_runs, total.clean_runs),
+            "false-failing checks": Rate(total.false_failing_checks, total.gating_checks_on_clean_runs),
+        }
 
     def totals(self) -> AppScore:
         total = AppScore(app="total")

@@ -142,6 +142,44 @@ def test_the_command_runs_the_repair_suite_and_writes_the_report(fixtures: Path,
     assert out.with_suffix(".md").is_file()
 
 
+async def test_repeats_run_every_bug_again_and_the_results_give_the_rate_its_interval(fixtures: Path) -> None:
+    from contexer.bench.stats import Rate
+
+    report = await _bench(fixtures, _fixes, repeats=2)
+    assert [(r.bug, r.repeat) for r in report.runs] == [
+        ("complete-throws", 0), ("count-ignores-done", 0), ("complete-throws", 1), ("count-ignores-done", 1),
+    ]  # fmt: skip
+    assert (report.score.bugs, report.score.fixed, report.repeats, report.suite) == (4, 4, 2, "repair")
+    assert report.rates() == {"seeded bugs fixed": Rate(4, 4)}
+
+    text = results_markdown(report)
+    assert "Each bug ran 2 times" in text
+    assert "seeded bugs fixed 4/4, 100% (95% interval 51% to 100%)" in text
+
+
+def test_the_command_repeats_the_repair_suite_and_compares_it_with_an_earlier_report(
+    fixtures: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("contexer.cli.run_cli.crew_model", lambda *_a, **_k: None)
+    turns = tmp_path / "turns.json"
+    turns.write_text(json.dumps([{"app.js": GOOD_JS}]), encoding="utf-8")
+    earlier = tmp_path / "earlier.json"
+    earlier.write_text(json.dumps({"suite": "repair", "score": {"bugs": 46, "fixed": 46}}), encoding="utf-8")
+    out = tmp_path / "repair.json"
+    result = CliRunner().invoke(
+        cli,
+        ["bench", "--suite", "repair", "--fixtures", str(fixtures), "--agent", "scripted", "--model", str(turns),
+         "--limit", "1", "--repeats", "2", "--out", str(out), "--compare", str(earlier)],
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert [(r["bug"], r["repeat"], r["fixed"]) for r in data["runs"]] == [("complete-throws", 0, True), ("complete-throws", 1, True)]
+    said = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", result.output).split())
+    assert "seeded bugs fixed 2/2, 100% (95% interval 34% to 100%)" in said
+    # Two of two against 46 of 46: nothing here says the two differ.
+    assert "was 46/46, 100% (95% interval 92% to 100%)" in said and "cannot be told apart" in said
+
+
 def test_the_repair_suite_needs_a_coding_agent(fixtures: Path) -> None:
     result = CliRunner().invoke(cli, ["bench", "--suite", "repair", "--fixtures", str(fixtures)])
     plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)  # CI colours the usage text
