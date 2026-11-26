@@ -40,7 +40,7 @@ MAX_QUESTIONS = 3
 MAX_BEHAVIOURS = 25
 MAX_BEHAVIOUR_CHARS = 300
 _PROMPT = Path(__file__).resolve().parent / "prompts" / "intent.md"
-_MAX_STEPS = 4
+DEFAULT_MAX_STEPS = 4
 _TIMEOUT = 300.0
 _MAX_OUTPUT_TOKENS = 8000
 
@@ -108,6 +108,7 @@ async def run_intent(
     budget: Budget | None = None,
     origin: str = "",
     secrets: Sequence[str] = (),
+    max_steps: int = DEFAULT_MAX_STEPS,
 ) -> IntentResult:
     """Write or update the intent for ``goal``.
 
@@ -125,7 +126,7 @@ async def run_intent(
         name="intent",
         system_prompt=intent_prompt(),
         output_schema=IntentDraft,
-        max_steps=_MAX_STEPS,
+        max_steps=max_steps,
         timeout=_TIMEOUT,
         max_output_tokens=_MAX_OUTPUT_TOKENS,
     )
@@ -155,7 +156,7 @@ async def run_intent(
             name="intent",
             system_prompt=intent_prompt(),
             output_schema=_FixedChecks,
-            max_steps=_MAX_STEPS,
+            max_steps=max_steps,
             timeout=_TIMEOUT,
             max_output_tokens=_MAX_OUTPUT_TOKENS,
         )

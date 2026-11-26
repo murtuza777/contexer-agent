@@ -177,3 +177,13 @@ def test_the_prompt_says_what_triage_cannot_do() -> None:
     prompt = triage_prompt()
     assert prompt.startswith("You are Triage")
     assert "cannot" in prompt and "pass" in prompt
+
+
+async def test_triage_takes_the_step_cap_it_is_given(tmp_path: Path) -> None:
+    import json
+
+    model = ScriptedChatModel(says("Let me think."), submit(move="stop", reason="No progress."))
+    decision = await triage(_situation(), model, run_dir=tmp_path, max_steps=1)
+    start = json.loads((tmp_path / "agents" / "triage.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert start["max_steps"] == 1
+    assert decision.source == "rules" and "step_limit" in decision.rejected  # one step, and it was not an answer

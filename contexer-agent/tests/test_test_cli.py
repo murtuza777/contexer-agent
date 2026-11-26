@@ -787,3 +787,105 @@ def test_the_test_command_waits_its_turn_while_a_run_works_in_the_project(demo: 
     assert result.exit_code == 2, result.output
     assert "20261119-000000-busy" in out and "already" in out
     assert "Traceback" not in result.output
+
+
+# -- [agents] in contexer.toml ----------------------------------------------------------------------
+
+AGENTS_TOML = """
+[agents.intent]
+model = "intent-model"
+max_steps = 3
+
+[agents.tester]
+model = "tester-model"
+max_steps = 7
+
+[agents.challenger]
+provider = "azure"
+model = "challenger-model"
+max_steps = 2
+
+[agents.diagnoser]
+max_steps = 5
+"""
+
+
+@pytest.fixture
+def per_agent(demo: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str | None, AgentScript]:
+    """A scripted model per model name; ``None`` is the default model. ``built`` records what was asked for."""
+    (demo / "contexer.toml").write_text(AGENTS_TOML, encoding="utf-8")
+    models: dict[str | None, AgentScript] = {
+        None: AgentScript(tester=[EXPLORE, REPORT_BOTH, BROKEN]),
+        "intent-model": AgentScript(),
+        "tester-model": AgentScript(tester=[EXPLORE, REPORT_BOTH, BROKEN]),
+        "challenger-model": AgentScript(),
+        "flag-model": AgentScript(tester=[EXPLORE, REPORT_BOTH, BROKEN]),
+    }
+    built: list[tuple[str | None, str | None]] = []
+
+    def build(_project: Path, provider: str | None = None, model: str | None = None) -> AgentScript:
+        built.append((provider, model))
+        return models[model]
+
+    monkeypatch.setattr("contexer.cli.test_cli.build_model", build)
+    models["built"] = built  # type: ignore[assignment]
+    return models
+
+
+def _started_with(folder: Path, agent: str) -> int:
+    return json.loads((folder / "agents" / f"{agent}.jsonl").read_text(encoding="utf-8").splitlines()[0])["max_steps"]
+
+
+def test_each_agent_of_a_test_runs_on_the_model_and_the_step_cap_it_was_given(demo: Path, per_agent: dict[Any, Any]) -> None:
+    result = _run(INTENT, "--dir", str(demo))
+
+    assert result.exit_code == 1, result.output
+    assert set(per_agent["intent-model"].seen) == {"intent"}
+    assert set(per_agent["tester-model"].seen) == {"tester"}
+    assert set(per_agent["challenger-model"].seen) == {"challenger"}
+    assert set(per_agent[None].seen) == {"diagnoser"}  # not named: the default model
+    assert ("azure", "challenger-model") in per_agent["built"]
+    folder = _run_folder(demo)
+    assert {name: _started_with(folder, name) for name in ("intent", "tester", "challenger", "diagnoser")} == {
+        "intent": 3, "tester": 7, "challenger": 2, "diagnoser": 5,
+    }  # fmt: skip
+
+
+def test_a_model_or_a_step_cap_on_the_command_line_wins_over_contexer_toml(demo: Path, per_agent: dict[Any, Any]) -> None:
+    result = _run(INTENT, "--dir", str(demo), "--model", "flag-model", "--steps", "4")
+
+    assert result.exit_code == 1, result.output
+    assert set(per_agent["flag-model"].seen) == {"intent", "tester", "challenger", "diagnoser"}
+    assert per_agent["built"] == [(None, "flag-model")]
+    folder = _run_folder(demo)
+    assert _started_with(folder, "tester") == 4
+    assert _started_with(folder, "challenger") == 2  # the flags name the model and the Tester's steps, nothing else
+
+
+def test_an_agents_model_that_cannot_be_built_stops_the_test_before_it_starts(demo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (demo / "contexer.toml").write_text(AGENTS_TOML, encoding="utf-8")
+
+    def build(_project: Path, provider: str | None = None, model: str | None = None) -> Any:
+        if model == "challenger-model":
+            raise ToolCallingError("The azure model 'challenger-model' cannot call tools, which Contexer's agents need.")
+        return AgentScript()
+
+    monkeypatch.setattr("contexer.cli.test_cli.build_model", build)
+    result = _run(INTENT, "--dir", str(demo))
+
+    out = _plain(result.output)
+    assert result.exit_code == 2, result.output
+    assert "[agents.challenger]" in out and "cannot call tools" in out
+    assert not (demo / ".contexer" / "runs").exists()  # nothing was started
+
+
+def test_a_provider_with_no_model_under_agents_is_refused_not_ignored(demo: Path, scripted: Any) -> None:
+    (demo / "contexer.toml").write_text('[agents.tester]\nprovider = "azure"\n', encoding="utf-8")
+    scripted()
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    out = _plain(result.output)
+    assert result.exit_code == 2, result.output
+    assert "set with no model" in out and "tester" in out
+    assert not (demo / ".contexer" / "runs").exists()  # nothing was started

@@ -547,8 +547,15 @@ prompts; `tests/test_controller.py` pins what those produce.
   to $6.26 against a $5 limit.
 - **A model per agent.** `[agents.<name>] model`, `provider` and
   `max_steps` for intent, planner, tester, challenger, triage, diagnoser
-  and reviewer. An agent that is not named uses the default model. A model
-  that cannot be built is reported and the default is used.
+  and reviewer. An agent that is not named uses the default model.
+  `contexer run` reads it for the five agents it runs and `contexer test`
+  for its four (intent, tester, challenger, diagnoser); a model named on
+  `contexer test --model` is for every agent of that run. A model that
+  cannot be built, an unknown provider, and a provider with no model stop
+  the command before it starts. Not wired yet: `max_steps` for Intent and
+  Triage inside `contexer run` (both take the argument; `graph/nodes.py`
+  does not pass it), and the issue flow, which runs every agent on the
+  default model.
 - **The estimate** (`crew/estimate.py`) is printed before a run: the most
   coding-agent turns and model calls it can make, from the caps in code.
   It is a ceiling, not a prediction.
@@ -880,14 +887,29 @@ models built from the same catalog:
   `.../openai/v1`. OpenRouter keeps its
   attribution headers and, for the default model, its free fallback list.
   Building a model makes no network call, and LangChain is imported only then.
-- `supports_tools(provider, model)`: True, False or None (the provider does
-  not say), read from the provider's model list; never a model request.
-  `contexer doctor` shows it as "Tool calling".
+- `llm/capabilities.py: ModelCapabilities` is the record per model: context
+  window, native tool calling, parallel calls, strict schemas, vision, and
+  the input, output and cached-input price. Each fact carries its source:
+  `catalogue` (the provider's model list; OpenRouter publishes all of it),
+  `measured` (the model is in `catalog.MEASURED_MODELS`, today `gpt-5.4`
+  for tool calling only, or `contexer setup` made one real tool call with
+  `check_tool_calling` and saved the answer in `~/.contexer/models.json`),
+  or `assumed` (nobody says: the agents' expectation, or "not known" for
+  the window and the prices). `model_capabilities(provider, model)` builds
+  it with one read of the model list and no model request. `contexer
+  doctor` prints every row with its source, `contexer setup` prints it
+  after saving, and `build_model` keeps it so `capabilities_of(model)`
+  returns it for the chat model an agent runs on. Nothing in `crew/base.py`
+  reads it yet.
+- `supports_tools(provider, model)`: True, False or None (nobody says),
+  taken from that record.
 - A model that cannot call tools gives a `ToolCallingError` that names it:
-  from `require_tools` when the provider's list says so, from
+  from `require_tools` when the record says so (catalogue or measured), from
   `tool_calling_error` when the API refuses the request, and from
-  `check_tool_calling` (one real tool call and its result, used by the live
-  test) when the model answers without calling the tool.
+  `check_tool_calling` (one real tool call and its result, used by
+  `contexer setup` and the live test) when the model answers without
+  calling the tool. `contexer test` stops on it; `contexer run` says it
+  and goes on with fixed rules and no agents.
 
 ### The agent loop (`crew/base.py`)
 
@@ -1464,7 +1486,7 @@ and prints the fix under each problem.
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
 | `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins |
 | `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens, used when the provider reports no cost |
-| `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer` |
+| `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer`. Read by `run` and `test`. `provider` needs `model`; a model that cannot be built stops the command |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
 | `[limits] cost_usd` | none | Cost limit for the same, where the provider reports prices |
 

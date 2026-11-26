@@ -113,3 +113,12 @@ async def test_nothing_to_challenge_and_no_budget_left_make_no_model_call(tmp_pa
     spent.spend(10, 5)
     result = await challenge([REAL], INTENT, model, run_dir=tmp_path, budget=spent)
     assert result.standing == [REAL] and model.seen == []
+
+
+async def test_the_challenger_takes_the_step_cap_it_is_given(tmp_path: Path) -> None:
+    import json
+
+    model = ScriptedChatModel(submit(verdicts=[]))
+    await challenge([REAL], INTENT, model, run_dir=tmp_path, max_steps=2)
+    start = json.loads((tmp_path / "agents" / "challenger.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert start["max_steps"] == 2

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from contexer.config.settings import DEFAULT_OPENROUTER_MODEL, OPENROUTER_FREE_ROUTER, ContexerConfig, load_config
 from contexer.llm import discovery
 from contexer.llm.base import LLMAuthenticationError, LLMError, sanitize_sensitive_text
+from contexer.llm.capabilities import ModelCapabilities, model_capabilities
 from contexer.llm.catalog import ProviderSpec, is_azure, normalize_endpoint, provider_spec
 
 if TYPE_CHECKING:
@@ -101,6 +102,19 @@ def chat_model(
     """
     config = config or load_config()
     choice = resolve_model(provider, model, config)
+    return chat_model_from(choice, config=config, max_tokens=max_tokens, timeout=timeout, http_async_client=http_async_client)
+
+
+def chat_model_from(
+    choice: ModelChoice,
+    *,
+    config: ContexerConfig | None = None,
+    max_tokens: int | None = None,
+    timeout: float = DEFAULT_REQUEST_TIMEOUT,
+    http_async_client: httpx.AsyncClient | None = None,
+) -> BaseChatModel:
+    """A chat model for exactly this provider, model, key and endpoint (``contexer setup`` has them before they are saved)."""
+    config = config or load_config()
     if choice.spec.protocol == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
@@ -172,26 +186,21 @@ def supports_tools(
 
     A metadata lookup, never a model request. OpenRouter lists each model's
     supported parameters; every Claude model on Anthropic's API accepts tools;
-    most other providers publish nothing, so the answer is None and the first
-    agent run finds out (see :func:`tool_calling_error`).
+    a model Contexer has run its agents on, or that ``contexer setup`` measured
+    with one tool call, is known too. Otherwise the answer is None and the
+    first agent run finds out (see :func:`tool_calling_error`).
     """
-    spec = provider_spec(provider)
-    if spec.protocol == "anthropic":
-        return True
-    try:
-        models = discovery.list_models(spec, api_key or spec.key(), base_url, transport)
-    except discovery.DiscoveryError:
-        return None
-    for info in models:
-        if info.id == model:
-            return info.tools
-    return None
+    known = model_capabilities(provider, model, api_key=api_key, base_url=base_url, transport=transport).native_tools
+    return None if known.source == "assumed" else known.value
 
 
-def require_tools(provider: str, model: str, **probe: Any) -> None:
-    """Raise :class:`ToolCallingError` when the provider says ``model`` cannot call tools."""
-    if supports_tools(provider, model, **probe) is False:
-        raise ToolCallingError(_cannot_call_tools(f"{provider_spec(provider).id} model '{model}'"))
+def require_tools(provider: str, model: str, **probe: Any) -> ModelCapabilities:
+    """The model's capability record. Raises :class:`ToolCallingError` when it is known that ``model`` cannot call tools."""
+    record = model_capabilities(provider, model, **probe)
+    if record.native_tools.source != "assumed" and not record.native_tools.value:
+        label = f"{record.provider} model '{model}'"
+        raise ToolCallingError(f"{_cannot_call_tools(label)} ({record.native_tools.origin()})")
+    return record
 
 
 _NO_TOOLS_PHRASES = (

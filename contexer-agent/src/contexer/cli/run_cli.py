@@ -146,17 +146,20 @@ def run(
         agent_steps={name: cap for name in CREW_AGENTS if (cap := config.agents.for_agent(name).max_steps)},
     )
     crew_budget = run_budget(config, max_usd)
-    model_for_crew = crew_model(project)
-    models_for_crew = (
-        crew_models(
-            project,
-            config,
-            default_provider=config.compiler.provider,
-            on_problem=lambda text: term.note(console, "warn", escape(text)),
-        )
-        if model_for_crew is not None
-        else {}
+    model_for_crew = crew_model(
+        project,
+        on_refused=lambda why: term.note(
+            console, "warn", f"{escape(why)} Contexer's own agents are off for this run, and fixed rules decide each next step."
+        ),
     )
+    try:  # before anything is spent: a model the project names and Contexer cannot build
+        models_for_crew = (
+            crew_models(project, config, default_provider=config.compiler.provider, agents=RUN_AGENTS)
+            if model_for_crew is not None
+            else {}
+        )
+    except AgentSettingError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     draft_id: str | None = None
     contract: Contract | None = None
     graph_preview: RunResult | None = None
@@ -267,13 +270,22 @@ def one_engine(flag: str | None) -> None:
             )
 
 
-def crew_model(project: Path) -> Any:
-    """The model for Contexer's own agents (Intent, Triage, Diagnoser), or None when none is configured or usable."""
+def crew_model(project: Path, on_refused: Callable[[str], None] | None = None) -> Any:
+    """The model for Contexer's own agents (Intent, Triage, Diagnoser), or None when none is configured or usable.
+
+    A model that is configured and cannot call tools is refused, and ``on_refused`` is told why:
+    without that the run went on under rules and nothing said the model had been set aside.
+    """
     from contexer.cli.test_cli import build_model
     from contexer.llm.base import LLMError
+    from contexer.llm.chat import ToolCallingError
 
     try:
         return build_model(project)
+    except ToolCallingError as exc:
+        if on_refused is not None:
+            on_refused(str(exc))
+        return None
     except (LLMError, ValueError):
         return None
 
@@ -317,29 +329,40 @@ def run_budget(config: ProjectConfig, max_usd: float | None = None) -> Budget:
     )
 
 
+# The agents `contexer run` uses. The Tester and the Challenger belong to `contexer test`.
+RUN_AGENTS = ("intent", "planner", "triage", "diagnoser", "reviewer")
+
+
+class AgentSettingError(ValueError):
+    """A setting under ``[agents.<name>]`` in contexer.toml that cannot be applied."""
+
+
 def crew_models(
     project: Path,
     config: ProjectConfig,
     *,
     default_provider: str | None = None,
-    on_problem: Callable[[str], None] | None = None,
+    agents: tuple[str, ...] = CREW_AGENTS,
 ) -> dict[str, Any]:
-    """A model for each agent the project names one for. An agent whose model cannot be built uses the default."""
+    """A model for each of ``agents`` the project names one for; the others use the default.
+
+    A model that cannot be built raises :class:`AgentSettingError`. It used to be a warning and
+    the default model: a project that asked for a cheap model was then billed for the other one.
+    """
     from contexer.cli import test_cli
     from contexer.llm.base import LLMError
 
     models: dict[str, Any] = {}
-    for name in CREW_AGENTS:
+    for name in agents:
         chosen = config.agents.for_agent(name)
         if not chosen.model:
             continue
         try:
             models[name] = test_cli.build_model(project, chosen.provider or default_provider, chosen.model)
         except (LLMError, ValueError) as exc:
-            if on_problem is not None:
-                on_problem(
-                    f"The model '{chosen.model}' for {name} cannot be used ({exc}); {name} runs on the default model."
-                )
+            raise AgentSettingError(
+                f"[agents.{name}] in contexer.toml names the model '{chosen.model}', which cannot be used: {exc}"
+            ) from exc
     return models
 
 

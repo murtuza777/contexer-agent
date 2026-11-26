@@ -44,6 +44,9 @@ from contexer.cli import term
 from contexer.cli.gate_cli import DirOption, UrlOption
 from contexer.contract import ContractStore
 from contexer.contract.models import utc_now
+from contexer.crew import challenger as challenger_agent
+from contexer.crew import diagnoser as diagnoser_agent
+from contexer.crew import intent as intent_agent
 from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
 from contexer.crew.challenger import challenge
 from contexer.crew.diagnoser import Failure, diagnose, fix_prompt
@@ -82,6 +85,14 @@ _STOPPED_EARLY = {
 
 Mode = Literal["explore", "again"]
 ModelFactory = Callable[[], "BaseChatModel"]
+# The agents `contexer test` runs. `[agents.<name>]` in contexer.toml gives each its model and step cap.
+TEST_AGENTS = ("intent", "tester", "challenger", "diagnoser")
+_OWN_STEPS = {
+    "intent": intent_agent.DEFAULT_MAX_STEPS,
+    "tester": DEFAULT_MAX_STEPS,
+    "challenger": challenger_agent.DEFAULT_MAX_STEPS,
+    "diagnoser": diagnoser_agent.DEFAULT_MAX_STEPS,
+}
 
 
 class NoModelError(LLMError):
@@ -92,11 +103,13 @@ def build_model(project: Path, provider: str | None = None, model: str | None = 
     """The chat model the agents run on: ``--provider``/``--model``, else the project's and the user's choice.
 
     The choice follows the drafting model (``[compiler]`` in contexer.toml,
-    then ``contexer setup``, then the first key found). A model the provider
-    lists as unable to call tools is refused here, before anything starts.
+    then ``contexer setup``, then the first key found). A model known to be
+    unable to call tools (the provider lists it so, or ``contexer setup``
+    measured it) is refused here, before anything starts.
     """
     from contexer.cli.gate_cli import compiler_llm
     from contexer.config.settings import load_config
+    from contexer.llm.capabilities import remember
     from contexer.llm.chat import chat_model, require_tools, resolve_model
 
     config = load_config()
@@ -109,7 +122,8 @@ def build_model(project: Path, provider: str | None = None, model: str | None = 
             )
         provider, model = chosen.name, model or chosen.model
     choice = resolve_model(provider, model, config)
-    require_tools(choice.spec.id, choice.model, api_key=choice.api_key, base_url=choice.base_url)
+    record = require_tools(choice.spec.id, choice.model, api_key=choice.api_key, base_url=choice.base_url)
+    remember(record, choice.base_url)  # `capabilities_of(model)` gives it back to whoever runs an agent on the model
     return chat_model(provider, choice.model, config=config)
 
 
@@ -180,8 +194,12 @@ def test(
     allow_remote: bool = typer.Option(
         False, "--allow-remote", help="Test a --url that is not on this machine or a private network."
     ),
-    steps: int = typer.Option(DEFAULT_MAX_STEPS, "--steps", min=1, help="The most model calls the tester may make."),
-    model: str | None = typer.Option(None, "--model", help="Model id for the agents (default: your drafting model)."),
+    steps: int | None = typer.Option(
+        None, "--steps", min=1, help=f"The most model calls the tester may make (default: [agents.tester] max_steps, else {DEFAULT_MAX_STEPS})."
+    ),
+    model: str | None = typer.Option(
+        None, "--model", help="Model id for every agent in this run (default: [agents.<name>] model, else your drafting model)."
+    ),
     provider: str | None = typer.Option(None, "--provider", help="Provider for --model, e.g. anthropic, azure, openrouter."),
     save: bool = typer.Option(False, "--save", help="Save the confirmed checks as a draft contract in the project."),
     json_output: bool = typer.Option(False, "--json", help="Print result.json to stdout."),
@@ -210,11 +228,15 @@ def test(
     from contexer.config.project import ProjectConfigError, load_project_config
 
     try:
-        limits = load_project_config(project).limits
+        config = load_project_config(project)
     except ProjectConfigError as exc:
         term.note(console, "fail", f"[red]Could not test:[/] {escape(str(exc))}")
         raise typer.Exit(code=2) from None
+    limits = config.limits
     budget = Budget(max_tokens=max_tokens or limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=limits.cost_usd)
+    agent_steps = {name: cap for name in TEST_AGENTS if (cap := config.agents.for_agent(name).max_steps)}
+    if steps is not None:
+        agent_steps["tester"] = steps  # the flag wins
 
     store = IntentStore(project)
     stored = store.find(intent) if intent else store.latest()
@@ -230,15 +252,26 @@ def test(
     term.header(console, "test", goal)
 
     cached: list[Any] = []
+    named: list[dict[str, Any]] = []
 
     def model_factory() -> BaseChatModel:
         if not cached:
             cached.append(build_model(project, provider, model))
         return cached[0]
 
+    def agent_models() -> dict[str, BaseChatModel]:
+        """The models contexer.toml names per agent. A model named on the command line is for every agent."""
+        if not named:
+            from contexer.cli.run_cli import crew_models
+
+            flagged = bool(model or provider)
+            named.append({} if flagged else crew_models(project, config, default_provider=config.compiler.provider, agents=TEST_AGENTS))
+        return named[0]
+
     if not again:  # --again needs no model unless the saved checks pass
         try:
             model_factory()
+            agent_models()
         except (LLMError, ValueError) as exc:
             term.note(console, "fail", f"[red]Could not test:[/] {escape(str(exc))}")
             raise typer.Exit(code=2) from None
@@ -252,7 +285,6 @@ def test(
                     goal,
                     model_factory,
                     url=url,
-                    steps=steps,
                     save=save,
                     console=console,
                     mode="again" if again else "explore",
@@ -261,6 +293,8 @@ def test(
                     stored=stored,
                     budget=budget,
                     use_skills=not no_skills,
+                    agent_models=agent_models,
+                    agent_steps=agent_steps,
                 )
             )
     except RunLocked as exc:
@@ -302,7 +336,7 @@ async def run_test(
     model_factory: ModelFactory,
     *,
     url: str | None = None,
-    steps: int = DEFAULT_MAX_STEPS,
+    steps: int | None = None,
     save: bool = False,
     console: Console | None = None,
     mode: Mode = "explore",
@@ -311,8 +345,17 @@ async def run_test(
     stored: IntentSpec | None = None,
     budget: Budget | None = None,
     use_skills: bool = True,
+    agent_models: Callable[[], dict[str, BaseChatModel]] | None = None,
+    agent_steps: dict[str, int] | None = None,
 ) -> ExplorationResult:
-    """Start the app, sign in, and run one ``contexer test``; the evidence is written whatever happens."""
+    """Start the app, sign in, and run one ``contexer test``; the evidence is written whatever happens.
+
+    ``agent_models`` and ``agent_steps`` are what ``[agents.<name>]`` gives an agent by name; an agent
+    with neither runs on ``model_factory``'s model with its own step cap. ``steps`` is the Tester's cap.
+    """
+    caps = dict(agent_steps or {})
+    if steps is not None:
+        caps["tester"] = steps
     console = console or Console()
     started = time.monotonic()
     run = RunDir.create(project)
@@ -340,7 +383,8 @@ async def run_test(
                 result.error = f"Could not sign in with the [auth] flow in contexer.toml: {session.sign_in_error}"
             else:
                 job = _Job(project, run, session, app, state, console, result, budget or Budget(DEFAULT_MAX_TOKENS), use_skills)
-                await job.run(goal, model_factory, steps=steps, save=save, mode=mode, correction=correction, assume=assume, stored=stored)
+                job.agent_models, job.agent_steps = agent_models, caps
+                await job.run(goal, model_factory, save=save, mode=mode, correction=correction, assume=assume, stored=stored)
     except AppStartError as exc:
         result.error = str(exc)
     result.duration_seconds = time.monotonic() - started
@@ -372,13 +416,20 @@ class _Job:
         self.credentials = credential_secrets(session.auth.as_check()) if session.auth is not None else []
         self.intents = IntentStore(project)
         self.contracts = ContractStore(project)
+        # What [agents.<name>] gives an agent: its own model (built when first needed) and its step cap.
+        self.agent_models: Callable[[], dict[str, BaseChatModel]] | None = None
+        self.agent_steps: dict[str, int] = {}
+        self.models: dict[str, BaseChatModel] = {}
+
+    def _cap(self, agent: str) -> int:
+        """The step cap the project set for an agent, or the agent's own."""
+        return self.agent_steps.get(agent) or _OWN_STEPS[agent]
 
     async def run(
         self,
         goal: str,
         model_factory: ModelFactory,
         *,
-        steps: int,
         save: bool,
         mode: Mode,
         correction: str | None,
@@ -401,13 +452,17 @@ class _Job:
 
         try:
             chat = model_factory()
+            self.models = self.agent_models() if self.agent_models is not None else {}
         except (LLMError, ValueError) as exc:
             result.works, result.outcome, result.tester_error = carried_works, "could_not_test", str(exc)
             return
         from contexer.llm.chat import describe_model
 
+        models = self.models
+        steps = self.agent_steps.get("tester", DEFAULT_MAX_STEPS)
         result.model = describe_model(chat)
-        term.fields(self.console, [("Model", escape(result.model))])
+        own = [f"{name} on {describe_model(models[name])}" for name in TEST_AGENTS if name in models]
+        term.fields(self.console, [("Model", escape(result.model) + (f" [dim]· {escape(', '.join(own))}[/]" if own else ""))])
 
         browser = BrowserSession(
             self.app.url, run_dir=self.run_dir.path, storage_state=self.state, reset=self.reset, timeout_scale=self.scale
@@ -421,7 +476,8 @@ class _Job:
             return
         try:
             if mode == "explore":
-                spec, checks = await self._understand(spec, checks, chat, await browser.snapshot(), correction, assume)
+                intent_model = models.get("intent") or chat
+                spec, checks = await self._understand(spec, checks, intent_model, await browser.snapshot(), correction, assume)
             self.intents.save(spec)
             self.intents.save_checks(spec.id, checks)
             skills = SkillStore(self.project).matching(spec.as_text()) if self.use_skills else []
@@ -435,7 +491,7 @@ class _Job:
             with self.console.status(f"[dim]The tester is using the app (at most {steps} steps)...[/dim]"):
                 tested = await run_tester(
                     spec.as_text(),
-                    chat,
+                    models.get("tester") or chat,
                     browser,
                     run_dir=self.run_dir.path,
                     existing_checks=list(dict.fromkeys(existing)),
@@ -473,7 +529,13 @@ class _Job:
             # tester's doing; it can only remove, and what it removes is shown with the reason.
             with self.console.status("[dim]Challenging the confirmed bugs...[/dim]"):
                 challenged = await challenge(
-                    report.bugs, spec.as_text(), chat, run_dir=self.run_dir.path, budget=self.budget, secrets=secrets
+                    report.bugs,
+                    spec.as_text(),
+                    models.get("challenger") or chat,
+                    run_dir=self.run_dir.path,
+                    budget=self.budget,
+                    secrets=secrets,
+                    max_steps=self._cap("challenger"),
                 )
             if challenged.status != "skipped":
                 self._spent("challenger", challenged.steps, challenged.tokens_in, challenged.tokens_out, challenged.cost_usd)
@@ -498,7 +560,7 @@ class _Job:
             with self.console.status("[dim]Looking for the cause in the code...[/dim]"):
                 diagnosis = await diagnose(
                     failures,
-                    chat,
+                    models.get("diagnoser") or chat,
                     self.project,
                     intent=spec.as_text(),
                     diff=_git_diff(self.project),
@@ -506,6 +568,7 @@ class _Job:
                     run_dir=self.run_dir.path,
                     secrets=secrets,
                     budget=self.budget,
+                    max_steps=self._cap("diagnoser"),
                 )
             self._spent("diagnoser", diagnosis.steps, diagnosis.tokens_in, diagnosis.tokens_out, diagnosis.cost_usd)
             self._write_fix_prompt(failures, diagnosis.brief, spec, [w.title for w in result.works])
@@ -581,6 +644,7 @@ class _Job:
                 run_dir=self.run_dir.path,
                 budget=self.budget,
                 secrets=self.credentials,
+                max_steps=self._cap("intent"),
             )
         self._spent("intent", first.steps, first.tokens_in, first.tokens_out, first.cost_usd)
         spec, checks, dropped = first.spec, first.checks, list(first.dropped)
@@ -603,6 +667,7 @@ class _Job:
                     run_dir=self.run_dir.path,
                     budget=self.budget,
                     secrets=self.credentials,
+                    max_steps=self._cap("intent"),
                 )
             self._spent("intent", second.steps, second.tokens_in, second.tokens_out, second.cost_usd)
             # Asked once: whatever the agent would ask now is left for `--correct`.
