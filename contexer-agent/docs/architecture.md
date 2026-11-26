@@ -1582,7 +1582,7 @@ Results and method: [bench/RESULTS.md](../bench/RESULTS.md).
 
 | Workflow | Triggers | Does |
 | --- | --- | --- |
-| `ci.yml` | push to main and `feat/**`, pull requests | Python 3.12 + Node 22, `pip install -e ".[dev]"`, Chromium (apt only if it will not start). Two jobs in parallel, each with its own time limit: `Tests` (ruff, pyright, the test suite without the live OpenCode test) and `Seeded-bug benchmark` (`contexer bench --repeats 2`). They were one job until the tests alone took 18 minutes and the job was cancelled at its 30-minute limit with nothing failing |
+| `ci.yml` | push to main and `feat/**`, pull requests | Python 3.12 + Node 22, `pip install -e ".[dev]"`, Chromium (apt only if it will not start). Two jobs in parallel, each with its own time limit: `Tests` (ruff, pyright, the test suite without the live OpenCode test) and `Seeded-bug benchmark` (`contexer bench --repeats 2`). They were one job until the tests alone took 18 minutes and the job was cancelled at its 30-minute limit with nothing failing. The tests run on one worker process per core (`pytest -n auto`, pytest-xdist): 12 minutes for the Ubuntu job on 2026-11-26, where one process took 33 |
 | `acceptance-gate.yml` | the same | Runs the root action on `contexer-agent/bench/fixtures/todo/app`: Contexer gating its own fixture |
 | `release.yml` | push to main and `v*` tags (path-filtered), manual | Build: tag matches version, `python -m build`, `twine check --strict`, install the wheel in a fresh venv and run it. Publish (tags only): PyPI trusted publishing in the `pypi` environment |
 

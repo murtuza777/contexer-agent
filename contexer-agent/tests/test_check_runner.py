@@ -337,3 +337,78 @@ async def test_the_second_replay_can_be_turned_off(slow_first_load) -> None:
     once = CheckRunner(action_timeout=1.0, expect_timeout=1.0, replay_failed=False)
     [result] = await once.run(url, [("crit-ready", check(READY))])
     assert not result.passed and loads["n"] == 1
+
+
+# -- no_errors waits for the page to go quiet ---------------------------------------------------------
+
+LATE = """<!doctype html><html><body><h1>Late</h1><p id="out"></p><script>
+%s
+</script></body></html>
+"""
+
+
+async def _no_errors(tmp_path: Path, script: str) -> tuple[object, float]:
+    import time
+
+    (tmp_path / "index.html").write_text(LATE % script, encoding="utf-8")
+    with StaticAppServer(tmp_path) as server:
+        began = time.monotonic()
+        [result] = await CheckRunner(action_timeout=1.0, expect_timeout=1.0).run(
+            server.url, [("loads-clean", check({"expect": [{"kind": "no_errors"}]}))]
+        )
+    return result, time.monotonic() - began
+
+
+@pytest.mark.anyio
+async def test_an_error_thrown_after_the_settle_time_is_still_counted(tmp_path: Path) -> None:
+    # A slow machine stretches an app's own start-up past any fixed wait; the check must not pass then.
+    result, _ = await _no_errors(
+        tmp_path,
+        'new Promise((done) => setTimeout(done, 700)).then(() => { lateAnalytics.track("loaded"); });',
+    )
+
+    assert not result.passed
+    assert "lateAnalytics" in result.outcomes[0].actual
+
+
+@pytest.mark.anyio
+async def test_an_error_thrown_by_a_timer_a_timer_started_is_counted(tmp_path: Path) -> None:
+    result, _ = await _no_errors(tmp_path, "setTimeout(() => setTimeout(() => { secondStage(); }, 300), 300);")
+
+    assert not result.passed and "secondStage" in result.outcomes[0].actual
+
+
+@pytest.mark.anyio
+async def test_a_page_that_never_goes_quiet_is_not_waited_for_for_ever(tmp_path: Path) -> None:
+    result, seconds = await _no_errors(
+        tmp_path,
+        'let n = 0; function tick() { n += 1; document.getElementById("out").textContent = n; setTimeout(tick, 100); } tick();',
+    )
+
+    assert result.passed, result.failure_report()
+    assert seconds < 8  # a bounded wait: a clock or a poller is not an error
+
+
+@pytest.mark.anyio
+async def test_a_timer_far_in_the_future_is_not_waited_for(tmp_path: Path) -> None:
+    result, seconds = await _no_errors(tmp_path, "setTimeout(() => { sessionTimeout(); }, 60000);")
+
+    assert result.passed and seconds < 6  # stated limit: what happens a minute later is outside a check
+
+
+@pytest.mark.anyio
+async def test_the_apps_timers_behave_as_before(tmp_path: Path) -> None:
+    script = (
+        'const cancelled = setTimeout(() => { document.getElementById("out").textContent = "wrong"; }, 50);'
+        "clearTimeout(cancelled);"
+        'setTimeout((a, b) => { document.getElementById("out").textContent = a + b; }, 80, "ar", "gs");'
+        'setTimeout("window.fromString = 1", 10);'
+    )
+    (tmp_path / "index.html").write_text(LATE % script, encoding="utf-8")
+    with StaticAppServer(tmp_path) as server:
+        [result] = await CheckRunner(action_timeout=1.0, expect_timeout=1.0).run(
+            server.url,
+            [("timers", check({"expect": [{"kind": "text", "target": {"css": "#out"}, "equals": "args"}, {"kind": "no_errors"}]}))],
+        )
+
+    assert result.passed, result.failure_report()
