@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 # The tests and the benchmark are separate jobs: together they no longer fit in one 30-minute job
-# (the tests alone take about 18 minutes since every controller case runs on both engines), and a
+# (the tests alone took about 18 minutes then, and 33 before they ran on several workers), and a
 # job that reaches its limit is cancelled, which reads as a failure with nothing actually failing.
 #
 # Three operating systems (DX-3). Ubuntu runs everything. Windows and macOS run lint, types and
@@ -25,8 +25,10 @@ jobs:
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    # The whole suite took 29 and 34 minutes on Ubuntu in two runs on 2026-11-25, and passed 35 on the 26th.
-    timeout-minutes: 55
+    # On one process the suite took 29 to 35 minutes on Ubuntu. On one worker per core (-n auto, below)
+    # the job took 12 minutes on Ubuntu (4 cores), 8 on Windows (4) and 9 on macOS (3) on 2026-11-26.
+    # The limit leaves room for the apt step, which adds about 9 minutes when Chromium will not start.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -82,10 +84,13 @@ jobs:
       - name: Tests
         # --no-browser (tests/conftest.py) skips a test at the moment it starts a browser; -rs lists
         # what was skipped and why, so the log of a system without a browser says what it did not run.
-        run: >-
-          python -m pytest -q -p no:cacheprovider --durations=15
-          --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
-          ${{ !matrix.browser && '--no-browser -rs' || '' }}
+        # -n auto (pytest-xdist): one worker process per core, each with its own browser, dev
+        # servers and temporary folders. The first line of the step says how many cores there were.
+        run: |
+          python -c "import os; print('cores:', os.cpu_count())"
+          python -m pytest -q -p no:cacheprovider --durations=15 -n auto \
+            --deselect tests/test_opencode_integration.py::test_live_opencode_e2e \
+            ${{ !matrix.browser && '--no-browser -rs' || '' }}
 
   install:
     # docs/try-it.md, steps 1 and 2, as a new user would: nothing from the checkout on the path
