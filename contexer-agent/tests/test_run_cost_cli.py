@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from contexer.cli import app
-from contexer.cli.run_cli import bill_line, crew_models, run_budget
+from contexer.cli.run_cli import AgentSettingError, bill_line, crew_models, run_budget
 from contexer.config.project import load_project_config
 from contexer.controller import RunOutcome
 from contexer.evidence.test_report import AgentUsage
@@ -60,14 +60,33 @@ def test_only_the_agents_the_project_names_get_their_own_model(project: Path, mo
     assert sorted(built) == [("azure", "small-model"), ("azure", "small-model")]  # triage takes the default provider
 
 
-def test_a_model_that_cannot_be_built_is_said_and_the_default_is_used(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_model_that_cannot_be_built_is_an_error_that_names_the_setting(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def broken(_project: Path, provider: str | None = None, model: str | None = None) -> Any:
         raise ValueError(f"no deployment named {model}")
 
     monkeypatch.setattr("contexer.cli.test_cli.build_model", broken)
-    problems: list[str] = []
-    assert crew_models(project, load_project_config(project), default_provider="azure", on_problem=problems.append) == {}
-    assert len(problems) == 2 and "small-model" in problems[0] and "triage" in problems[0]
+    with pytest.raises(AgentSettingError, match=r"\[agents\.triage\].*small-model.*no deployment named small-model"):
+        crew_models(project, load_project_config(project), default_provider="azure")
+    # Only the agents a command runs are built: `contexer test` never runs Triage or the Reviewer.
+    assert crew_models(project, load_project_config(project), agents=("intent", "tester", "challenger", "diagnoser")) == {}
+
+
+def test_a_run_stops_at_the_start_when_an_agents_model_cannot_be_built(project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def build(_project: Path, provider: str | None = None, model: str | None = None) -> Any:
+        if model:
+            raise ValueError(f"no deployment named {model}")
+        return object()
+
+    monkeypatch.setattr("contexer.cli.test_cli.build_model", build)
+    turns = tmp_path / "turns.json"
+    turns.write_text(json.dumps([{"app.js": GOOD_JS + "// x\n"}]), encoding="utf-8")
+    result = CliRunner().invoke(
+        app, ["run", "--contract", "todo-basics", "--dir", str(project), "--agent", "scripted", "--model", str(turns), "--yes"]
+    )
+    shown = " ".join(result.output.split())
+    assert result.exit_code == 2, result.output
+    assert "[agents.triage]" in shown and "small-model" in shown
+    assert not (project / ".contexer" / "runs").exists()  # nothing was started
 
 
 def test_the_bill_names_each_agent_and_says_when_it_is_an_estimate() -> None:

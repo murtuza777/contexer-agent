@@ -30,7 +30,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from contexer.verification.checks import Check, Expectation, Step
 
@@ -76,6 +76,15 @@ class LimitSettings(BaseModel):
 CREW_AGENTS = ("intent", "planner", "tester", "challenger", "triage", "diagnoser", "reviewer")
 
 
+def _provider_id(value: str | None) -> str | None:
+    """The catalog's id for a provider named in ``contexer.toml``; an unknown one is an error that lists them."""
+    if value is None:
+        return None
+    from contexer.llm.catalog import provider_spec
+
+    return provider_spec(value).id
+
+
 class CrewAgentSettings(BaseModel):
     """One of Contexer's own agents: the model it runs on and how many steps it may take."""
 
@@ -84,6 +93,18 @@ class CrewAgentSettings(BaseModel):
     provider: str | None = None
     model: str | None = None
     max_steps: int | None = Field(default=None, gt=0)
+
+    @field_validator("provider")
+    @classmethod
+    def _known_provider(cls, value: str | None) -> str | None:
+        return _provider_id(value)
+
+    @model_validator(mode="after")
+    def _provider_needs_a_model(self) -> CrewAgentSettings:
+        # Used to be read and dropped: the agent ran on the default provider and nothing said so.
+        if self.provider and not self.model:
+            raise ValueError(f"provider = \"{self.provider}\" is set with no model: add model = \"...\" beside it, or remove provider")
+        return self
 
 
 class AgentsSettings(BaseModel):
@@ -101,6 +122,9 @@ class AgentsSettings(BaseModel):
     [agents.reviewer]
     max_steps = 8
     ```
+
+    ``contexer run`` and ``contexer test`` both read it. A model that cannot be built, and a
+    provider named with no model, stop the command before it starts.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -168,11 +192,7 @@ class CompilerSettings(BaseModel):
     @field_validator("provider")
     @classmethod
     def _known_provider(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        from contexer.llm.catalog import provider_spec
-
-        return provider_spec(value).id  # ValueError names the providers that exist
+        return _provider_id(value)
 
 
 class ProjectConfig(BaseModel):

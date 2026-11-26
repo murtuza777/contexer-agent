@@ -107,7 +107,13 @@ max_steps = 5
 
 @pytest.mark.parametrize(
     "text",
-    ["[agents]\nmax_usd = -1\n", "[agents.reviewer]\nmax_steps = 0\n", '[agents.janitor]\nmodel = "x"\n'],
+    [
+        "[agents]\nmax_usd = -1\n",
+        "[agents.reviewer]\nmax_steps = 0\n",
+        '[agents.janitor]\nmodel = "x"\n',
+        '[agents.tester]\nprovider = "azure"\n',  # a provider and no model: nothing could be built from it
+        '[agents.tester]\nprovider = "nowhere"\nmodel = "x"\n',
+    ],
 )
 def test_a_budget_that_makes_no_sense_or_an_agent_that_does_not_exist_is_refused(tmp_path: Path, text: str) -> None:
     with pytest.raises(ProjectConfigError):

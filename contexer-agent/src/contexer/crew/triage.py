@@ -31,6 +31,8 @@ Move = Literal["repair_same_session", "fresh_approach", "rollback_and_retry", "a
 MOVES: tuple[Move, ...] = get_args(Move)
 # How often one run may stop to ask its user what to do.
 MAX_ASKS = 1
+# One call decides; the others are room for a correction.
+DEFAULT_MAX_STEPS = 3
 _MAX_REASON_CHARS = 300
 _MAX_FINDINGS_CHARS = 6000
 _PROMPT = Path(__file__).resolve().parent / "prompts" / "triage.md"
@@ -153,6 +155,7 @@ async def triage(
     run_dir: Path | None = None,
     budget: Budget | None = None,
     secrets: Sequence[str] = (),
+    max_steps: int = DEFAULT_MAX_STEPS,
 ) -> TriageDecision:
     """Choose the next move. Never raises; never returns a move that :func:`legal_moves` does not list.
 
@@ -162,7 +165,7 @@ async def triage(
     legal = legal_moves(situation)
     if model is None or (budget is not None and budget.exhausted()):
         return fallback
-    spec = AgentSpec(name="triage", system_prompt=triage_prompt(), output_schema=_Choice, max_steps=3, timeout=120.0, max_output_tokens=1000)
+    spec = AgentSpec(name="triage", system_prompt=triage_prompt(), output_schema=_Choice, max_steps=max_steps, timeout=120.0, max_output_tokens=1000)
     ran = await run_agent(spec, model, [], _task(situation, legal), run_dir=run_dir, secrets=list(secrets), budget=budget)
     usage = {"steps": ran.steps, "tokens_in": ran.tokens_in, "tokens_out": ran.tokens_out, "cost_usd": ran.cost_usd}
     if not isinstance(ran.output, _Choice):
