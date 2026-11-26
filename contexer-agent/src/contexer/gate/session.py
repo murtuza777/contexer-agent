@@ -131,10 +131,14 @@ class VerificationSession:
         analyzer: GoalAnalyzer,
         contract_id: str,
         repo_context: RepositoryContext | None = None,
+        origin: str = "",
     ) -> Contract:
-        """Compile a goal into a draft contract grounded in the app's current UI."""
+        """Compile a goal into a draft contract grounded in the app's current UI.
+
+        ``origin`` is where a goal nobody typed came from (a GitHub issue); the drafting prompt quotes it as data.
+        """
         ui = self.load.ui_snapshot if self.load and self.load.success else ""
-        analysis = await analyzer.analyze(goal, repo_context, ui, secrets=sign_in_secrets(self.auth))
+        analysis = await analyzer.analyze(goal, repo_context, ui, secrets=sign_in_secrets(self.auth), origin=origin)
         return Contract.from_analysis(analysis, contract_id)
 
     async def verify(

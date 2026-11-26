@@ -101,7 +101,7 @@ def draft(
             )
         else:
             drafting = compiler_llm(project)
-            contract, preview, analyzer = _draft(console, project, store, issue_goal(issue), url, drafting, contract_id)
+            contract, preview, analyzer = _draft(console, project, store, issue_goal(issue), url, drafting, contract_id, origin)
             contract = contract.model_copy(update={"origin": origin})
             store.save(contract)
             note = ""
@@ -221,6 +221,8 @@ def event(
         typer.echo("Nothing for Contexer in this event.")
         return
     if command == "draft":
+        if name == "issue_comment":  # a label needs triage rights on GitHub; anyone can comment
+            _writers_only(project_dir.resolve(), number, who)
         draft(number, project_dir, None)
     else:
         said_at = str((payload.get("comment") or {}).get("created_at") or "") or None
@@ -239,6 +241,19 @@ def changed_after(draft: dict[str, Any], approved_at: str | None) -> bool:
         return datetime.fromisoformat(stamp.replace("Z", "+00:00")) > datetime.fromisoformat(approved_at.replace("Z", "+00:00"))
     except ValueError:
         return False
+
+
+def _writers_only(project: Path, number: int, who: str) -> None:
+    """Stop unless ``who`` has write access: a draft spends the model's tokens and posts on the issue."""
+    console = Console()
+    load_project_env(project)
+    with _client(console, project) as client:
+        try:
+            role = client.permission(who)
+        except GitHubError as exc:
+            _stop(console, client, number, f"Could not check @{who}'s access: {exc}", 3)
+        if role not in WRITE_ROLES:
+            _stop(console, client, number, f"@{who}, only people with write access can ask Contexer to draft checks.", 2)
 
 
 def _answers(client: GitHubClient, number: int) -> list[Answer]:
