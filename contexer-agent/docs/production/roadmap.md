@@ -73,8 +73,9 @@ person. Every milestone ends with a stop for review.
 - **Objective.** Nothing known can end a run falsely, leak a token in the
   issue flow, or lose a push to an unscanned secret.
 - **Current state.** Ten fixes landed on 2026-11-24 ([audit.md](audit.md)
-  §4), then `SEC-1` to `SEC-4` the same day. Open: the release (`REL-1`),
-  which is the owner's step.
+  §4), then `SEC-1` to `SEC-4` the same day. `REL-1` was done on
+  2026-11-26 as 0.6.0, on PyPI. Milestone A is complete; the licence
+  decision (§7) is open.
 - **Required.** `SEC-1`, `SEC-2`, `SEC-3`, `SEC-4`, `REL-1`.
 - **Depends on.** Nothing. `REL-1` needs the owner.
 - **Accept when.** Each ticket's regression test passes; a hook planted in
@@ -111,7 +112,11 @@ person. Every milestone ends with a stop for review.
 ### C. Security that holds in Actions
 
 - **Objective.** The issue flow can be pointed at a public repository.
-- **Current state.** Never run against a real issue. `S5` to `S10` open.
+- **Current state.** Never run against a real issue. `SEC-5` to `SEC-8`
+  were built on 2026-11-26, and four of the seven items of `SEC-9` (open:
+  a release tag in the workflow templates, Actions pinned by commit,
+  Action inputs through `env:`, upper bounds on five dependencies). None
+  of it is in a release yet. Not built: `SEC-10`, `REL-8`.
 - **Required.** `SEC-5` to `SEC-9`, `SEC-10` (two jobs: build with no
   write token, push from a second), `REL-8` (the issue flow run for real).
 - **Depends on.** A.
@@ -129,7 +134,12 @@ person. Every milestone ends with a stop for review.
 
 - **Objective.** Know which models can drive Contexer's agents and say so
   in the tool, from measurement.
-- **Current state.** One model measured. No capability data. No fallback.
+- **Current state.** One model measured. No fallback for a tool call
+  printed as text. Built on 2026-11-26: `MOD-1` (the record exists and
+  `doctor` and `setup` show it; no agent is built from it yet), `MOD-2`,
+  `MOD-5` (open: `max_steps` for Intent and Triage inside `contexer run`),
+  `EVAL-3` (no suite has been re-run with repeats). Not built: `MOD-3`,
+  `MOD-4`, `EVAL-1`, `EVAL-2`.
 - **Required.** `MOD-1` (capability record per model), `MOD-2`
   (validate-and-repair turn), `MOD-3` (tool calls found in text), `MOD-4`
   (strict schemas and `require_parameters`), `MOD-5` (`[agents]` wired
@@ -150,7 +160,11 @@ person. Every milestone ends with a stop for review.
 
 - **Objective.** A person sees where a run's money and time went, and can
   compare two models or two versions.
-- **Current state.** [audit.md](audit.md) §5.4 and §5.6.
+- **Current state.** [audit.md](audit.md) §5.4 and §5.6. Built on
+  2026-11-26: `OBS-1` (without `--trace-content` and retries per call) and
+  `CTX-1`. Not built: `COST-3` (the record of `MOD-1` has the prices; the
+  budget is not told which model a call was for), `COST-1`, `COST-2`,
+  `COST-4`, `OBS-2`, `OBS-3`, `OBS-4`, `CTX-2`, `CTX-3`, `CTX-4`.
 - **Required.** `COST-1` (unknown cost is said, not counted as zero),
   `COST-2` (cached tokens and cache markers), `COST-3` (a price per model
   from the provider's catalogue), `COST-4` (the budget covers `contexer
@@ -176,8 +190,13 @@ person. Every milestone ends with a stop for review.
 
 - **Objective.** A first proven result in five minutes, from inside the
   coding agent.
-- **Current state.** A separate CLI. Tried from a clean install on Windows
-  only.
+- **Current state.** Built by 2026-11-26: `INT-1`, `INT-2`, `BRIEF-1`,
+  `DX-1`, `DX-2` (off by default; no real pull request opened with it
+  yet), `DX-3`, `DX-5`, `DOC-1`. CI installs the package cleanly and runs
+  `contexer demo` on Ubuntu, Windows and macOS; the steps of the guide
+  that need a model key were followed on Windows only. Not built: `DX-4`,
+  `BRIEF-2`, `CTX-5`. The five-minute run by a person has not been timed
+  on any system.
 - **Required.** `DX-1` (a skill and a command for Claude Code, Codex and
   OpenCode that calls `contexer verify` and reads what failed), `DX-2`
   (screenshots of each check in the pull request), `DX-3` (clean installs
@@ -198,6 +217,9 @@ person. Every milestone ends with a stop for review.
 
 - **Objective.** Add only what code can prove.
 - **Current state.** [readiness.md](../agentic/readiness.md) §5 chose four.
+  None is built. `AGT-1` was looked at on 2026-11-26 and left: it needs a
+  baseline replay before the first turn and a decision by the owner on how
+  a stale check is shown ([tickets.md](tickets.md)).
 - **Required.** `AGT-1` (regression guard as its own finding), `AGT-2`
   (dependency checker), `AGT-3` (scope guard), `AGT-4` (access prober, and
   with it an HTTP check).
@@ -211,6 +233,10 @@ person. Every milestone ends with a stop for review.
 
 - **Objective.** Twenty people use it on their own apps and the numbers
   are read weekly.
+- **Current state.** `REL-11` was built on 2026-11-26: the release
+  workflow checks the gate benchmark and CI on the tagged commit before it
+  publishes. It has not been run, and the gates that need a model key are
+  a person's step. Not built: `REL-9`, `REL-10`, `DOC-2`.
 - **Required.** `REL-9` (three more real projects, checks read by a
   person), `REL-10` (Codex run live), `DOC-2` (troubleshooting from the
   beta's own failures), `REL-11` (release checklist and quality gates).
@@ -248,12 +274,14 @@ parallel with `MOD-1` and `MOD-2`; then `EVAL-1` and `EVAL-2`.
 
 1. ~~`SEC-1`, `SEC-2`, `SEC-4`~~ and `SEC-3`: fixed on 2026-11-24.
 4. ~~`REL-3`~~ and ~~`REL-5`~~: fixed on 2026-11-25.
-6. `DX-3`: never run on macOS; Linux only in CI.
-7. `REL-1`: no release exists to install.
-8. `DOC-1`: no plain statement of what is sent to which provider.
+6. ~~`DX-3`~~: built on 2026-11-26. CI runs on three systems; the browser
+   tests run on Ubuntu only, and the macOS benchmark has not been run
+   again since the `no_errors` fix.
+7. ~~`REL-1`~~: done on 2026-11-26 as 0.6.0.
+8. ~~`DOC-1`~~: built on 2026-11-26.
 
-**Blocks the issue flow only** (ship the beta with it off): `SEC-3`,
-`SEC-6`, `SEC-10`, `REL-8`.
+**Blocks the issue flow only** (ship the beta with it off): ~~`SEC-3`~~,
+~~`SEC-6`~~ (built on 2026-11-26), `SEC-10`, `REL-8`.
 
 **Not a blocker.** Everything in D, E and G; the run view; OpenTelemetry;
 a second coding agent live. They are P1 or P2.
@@ -366,8 +394,11 @@ A release is cut only when all hold on its commit:
 | False success | 0 runs in any suite end `succeeded` without a gate pass | All suites |
 | Clean install | First proven check in 5 minutes on three systems | `DX-3` |
 
-"No worse" needs repeats and an interval (`EVAL-3`); until then it means
-equal counts.
+"No worse" means that `--compare` against the last release's report does
+not say `lower` for a rate that should be high, or `higher` for false
+alarms (`EVAL-3`). The release workflow checks the first two rows by
+itself (`REL-11`: the gate benchmark, and the CI run on the same commit);
+the rows that need a model key are a person's step before tagging.
 
 ---
 
@@ -392,6 +423,12 @@ Today, after the fixes of 2026-11-25: 1 holds as far as is known; 2 holds
 in the code but not in a release (`SEC-1` to `SEC-4` are fixed, not
 shipped); 3 holds on Windows only; 4 holds since `REL-5`; 5 holds; 6 is
 half written.
+
+On 2026-11-26: for 2, `SEC-1` to `SEC-4` are in the release 0.6.0, and
+`SEC-5` to `SEC-9` are on `main` and not released; for 3, CI installs the
+package and runs `contexer demo` on three systems, and the steps that
+need a model key were followed on Windows only; 6 is written
+([data-and-limits.md](../data-and-limits.md)).
 
 ---
 
