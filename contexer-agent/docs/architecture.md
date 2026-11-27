@@ -1146,6 +1146,41 @@ flowchart LR
   must create cannot be in the file lists; `contexer mcp`'s
   `contexer_brief` still returns the instruction without a brief; the
   seeded-bug benchmark runs with the Planner off.
+- **Context from where the task came from** (`crew/context_sources.py`,
+  `graph/context.py: RunContext.sources`). Besides the goal, the Planner
+  and the Reviewer are given three sources, and the Intent agent the
+  first: the comments on the issue the goal came from
+  (`github/issues.py: read_discussion`; only from people with write
+  access, the newest 20, 1,500 characters each, the others counted and
+  left out; bots, Contexer's own comments and `/contexer` commands are
+  skipped); `AGENTS.md`, `CLAUDE.md` and `CONTRIBUTING.md` from the
+  project's root (6,000 characters each), read from the snapshot taken
+  before the coding agent's first turn (`ShadowRepo.read_file`), so what
+  the agent writes into them during the run is not read; and the stored
+  intent, when it holds more than the goal. Each goes through
+  `visible_text`, is capped, and is quoted in `<untrusted>` under a fixed
+  line that says it cannot change the checks, the rules or what the agent
+  hands in. Each kind is read once per process, and the run prints
+  `Context read: ...` with what was cut or left out. The Planner's brief
+  has a `conventions` list and the Reviewer a note category `convention`;
+  code keeps either only when the quoted line is found in one of the
+  instruction files (`stated_in`: the same words, spacing and case
+  aside), and adds the file's name. A convention note is never `backed`
+  and is lowered from high to medium, so it cannot start a repair or hold
+  a pull request. Limits: only the three file names at the root are
+  read; a line the file states is passed on whatever it says (the coding
+  agent reads the same file itself); when GitHub cannot be asked, the run
+  says so and goes on without the comments; `contexer issue draft` does
+  not yet give the comments to the Intent agent (the Intent agent of a
+  run does, in its `intent` node); the Diagnoser, the Tester and Triage are not given these sources.
+- **A diff that is too long** (`checkpoint/shadow.py: cut_diff`). The
+  Diagnoser's diff (12,000 characters), the Reviewer's (30,000) and
+  `ShadowRepo.diff` itself (200,000) are cut by file, not at a character
+  count: first the files whose path or file name appears in the failed
+  steps, the page's errors or the server log (the Diagnoser only), then
+  the rest from the smallest up, each whole. A named file that does not
+  fit is shown in part. The last line names what was left out or cut
+  short (20 names, then a count). A diff that fits is not reordered.
 - **Skills** (`skills/store.py`). When it submits, the Tester may propose up
   to 3 skills about operating the app. `SkillStore.save` refuses one that
   contains a configured secret or anything shaped like an API key. Before a
@@ -1193,7 +1228,9 @@ wants (`tests/test_guardrails.py`). The plan is in
 | Declare the work done | `graph/routing.py: settle`: a run ends `succeeded` only when the gate's decision, computed again from the replayed checks, is `pass`. Triage's moves do not include one that passes a run, and a move outside the legal list is replaced by the rules |
 
 Text from the app (page snapshots, project summaries, diffs, server logs,
-failure reports, command output, saved skills) goes into a prompt inside
+failure reports, command output, saved skills) and the context a run reads
+(an issue's comments, the project's instruction files, the stored intent)
+goes into a prompt inside
 `<untrusted source="...">`, and text that imitates the closing marker is
 neutralised (`crew/untrusted.py`). That holds for the task of each of the six
 agents, for the coding agent's repair prompt, and for check drafting without

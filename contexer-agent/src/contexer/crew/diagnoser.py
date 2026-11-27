@@ -30,6 +30,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field
 
+from contexer.checkpoint.shadow import cut_diff
 from contexer.crew.base import AgentSpec, AgentStatus, run_agent
 from contexer.crew.budget import Budget
 from contexer.crew.untrusted import untrusted
@@ -218,7 +219,9 @@ async def diagnose(
     for failure in failures:
         parts += [f"### {failure.title}", *failure.check.describe_lines(), "", untrusted("browser", failure.result.failure_report()), ""]
     if diff.strip():
-        parts += ["## The latest diff", untrusted("diff", diff.strip()[:_MAX_DIFF_CHARS]), ""]
+        # The files that the failures and the server log name go first, so a long diff is not cut before them.
+        named = "\n".join([*(line for f in failures for line in (*f.check.describe_lines(), f.result.failure_report())), server_log])
+        parts += ["## The latest diff", untrusted("diff", cut_diff(diff.strip(), _MAX_DIFF_CHARS, named)), ""]
     if server_log.strip():
         parts += ["## The end of the server log", untrusted("server-log", server_log.strip()[-_MAX_LOG_CHARS:]), ""]
     parts += tried_section(tried)

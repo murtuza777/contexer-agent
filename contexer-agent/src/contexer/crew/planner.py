@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from contexer.contract import Contract
 from contexer.crew.base import AgentSpec, AgentStatus, run_agent
 from contexer.crew.budget import Budget
+from contexer.crew.context_sources import ContextSource, context_section, stated_line
 from contexer.crew.diagnoser import existing_files, project_tools
 from contexer.crew.untrusted import quoted_goal, untrusted
 from contexer.verification.models import format_contract
@@ -48,6 +49,10 @@ class TaskBrief(BaseModel):
     order: list[str] = Field(default_factory=list, description="The steps of the work, in order. A file to create is named here.")
     edge_cases: list[str] = Field(default_factory=list, description="Cases the checks imply and a first attempt tends to miss.")
     keep: list[str] = Field(default_factory=list, description="What must not change: names, behaviour, files next to the change.")
+    conventions: list[str] = Field(
+        default_factory=list,
+        description="Lines from the project's instruction files that this change must follow, each quoted word for word.",
+    )
 
 
 @dataclass
@@ -72,12 +77,16 @@ async def plan_task(
     *,
     others: Sequence[Contract] = (),
     repo_summary: str = "",
+    sources: Sequence[ContextSource] = (),
     run_dir: Path | None = None,
     max_steps: int = DEFAULT_MAX_STEPS,
     secrets: Sequence[str] = (),
     budget: Budget | None = None,
 ) -> PlanResult:
-    """Let ``model`` read the project and plan the work for ``contract``. No brief when it could not finish."""
+    """Let ``model`` read the project and plan the work for ``contract``. No brief when it could not finish.
+
+    ``sources`` is what else was written about the task (``crew/context_sources.py``), quoted as data.
+    """
     spec = AgentSpec(
         name="planner",
         system_prompt=planner_prompt(),
@@ -97,12 +106,14 @@ async def plan_task(
         parts += ["## Behaviour approved earlier that must keep working", *[f"- {other.goal}" for other in others], ""]
     if repo_summary.strip():
         parts += ["## The project", untrusted("project", repo_summary), ""]
+    if sources:
+        parts += [context_section(sources), ""]
     parts.append("Read what you need and hand in the brief.")
     ran = await run_agent(
         spec, model, project_tools(project_dir), "\n".join(parts), run_dir=run_dir, secrets=list(secrets), budget=budget
     )
     return PlanResult(
-        brief=validated_task_brief(ran.output, project_dir) if isinstance(ran.output, TaskBrief) else None,
+        brief=validated_task_brief(ran.output, project_dir, sources) if isinstance(ran.output, TaskBrief) else None,
         status=ran.status,
         steps=ran.steps,
         tokens_in=ran.tokens_in,
@@ -112,12 +123,14 @@ async def plan_task(
     )
 
 
-def validated_task_brief(brief: TaskBrief, project_dir: Path) -> TaskBrief:
+def validated_task_brief(brief: TaskBrief, project_dir: Path, sources: Sequence[ContextSource] = ()) -> TaskBrief:
     """The brief with only what may reach a coding agent.
 
     Files pass the same check as the Diagnoser's (``existing_files``): inside the project, there, and
     not Contexer's or a secret. Every other item becomes one capped line, so it cannot start a section
-    of its own. Nothing here judges whether the plan is good: it bounds what a steered Planner can say.
+    of its own. A convention is kept only when an instruction file in ``sources`` states it, and is
+    shown with that file's name. Nothing here judges whether the plan is good: it bounds what a steered
+    Planner can say.
     """
     change = existing_files(brief.change, project_dir)[:MAX_FILES]
     read_first = [name for name in existing_files(brief.read_first, project_dir) if name not in change][:MAX_FILES]
@@ -128,7 +141,13 @@ def validated_task_brief(brief: TaskBrief, project_dir: Path) -> TaskBrief:
         order=_lines(brief.order),
         edge_cases=_lines(brief.edge_cases),
         keep=_lines(brief.keep),
+        conventions=_stated(brief.conventions, sources),
     )
+
+
+def _stated(quotes: Sequence[str], sources: Sequence[ContextSource]) -> list[str]:
+    found = [stated_line(quote, sources) for quote in quotes]
+    return list(dict.fromkeys(f"{name}: {line}" for name, line in found if name))[:MAX_ITEMS]
 
 
 def _lines(items: Sequence[str]) -> list[str]:
@@ -159,6 +178,7 @@ def task_brief_section(brief: TaskBrief | None) -> str:
         ("Order of work:", brief.order),
         ("Edge cases the checks imply:", brief.edge_cases),
         ("Must not change:", brief.keep),
+        ("Conventions this project states (quoted from its own files):", brief.conventions),
     ):
         shown = [item.strip() for item in items if item.strip()]
         if shown:
