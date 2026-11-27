@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +27,12 @@ from contexer.contract import Contract, ContractStore
 from contexer.controller.models import RunOutcome, RunSettings
 from contexer.controller.shared import ContractGuard
 from contexer.crew.budget import Budget
+from contexer.crew.context_sources import ContextSource, instruction_sources, intent_source, issue_source, sources_read
 from contexer.crew.transcript import environment_secrets
 from contexer.evidence.rundir import RunDir, write_whole
 from contexer.gate.models import RunResult
-from contexer.intent.store import IntentStore
+from contexer.github import issues as github_issues
+from contexer.intent.store import IntentError, IntentSpec, IntentStore
 from contexer.verification.runner import CheckRunner
 from contexer.workflow.inspector import RepositoryContext
 
@@ -104,6 +107,8 @@ class RunContext:
     started: float = field(default_factory=time.monotonic)
     base_elapsed: float = 0.0
     _results: dict[int, RunResult] = field(default_factory=dict)
+    # What was read about the task besides its goal, by kind; each kind is read once (``sources``).
+    _sources: dict[str, list[ContextSource]] = field(default_factory=dict)
 
     def model_for(self, agent: str) -> BaseChatModel | None:
         return self.models.get(agent) or self.model
@@ -119,6 +124,49 @@ class RunContext:
         except ProjectConfigError:
             typed = []
         return [*typed, *environment_secrets()]
+
+    def sources(self, state: Mapping[str, Any], kinds: Sequence[str] = ("issue", "instructions", "intent")) -> list[ContextSource]:
+        """What was written about the task besides its goal (``crew/context_sources.py``), for an agent's task.
+
+        The instruction files come from the snapshot taken before the coding agent's first turn, so
+        nothing the agent writes into them is read here. The intent comes from the store, which the
+        guard puts back after every turn. The issue is asked for once. Each kind is read the first
+        time an agent needs it, and the run says then what was read.
+        """
+        new: list[ContextSource] = []
+        unread = ""
+        for kind in kinds:
+            if kind in self._sources:
+                continue
+            found: list[ContextSource] = []
+            if kind == "instructions":
+                found = instruction_sources(partial(self.shadow.read_file, state["snapshots"]["0"]))
+            elif kind == "issue":
+                origin = state.get("goal_origin") or (self.contract.origin if self.contract is not None else "")
+                number = github_issues.issue_number(origin)
+                discussion = github_issues.read_discussion(self.project, number) if number is not None else None
+                if discussion is not None:
+                    source = issue_source(origin, discussion)
+                    found = [source] if source is not None else []
+                elif number is not None:
+                    unread = f"the comments on {origin.strip()} could not be read"
+            elif kind == "intent":
+                source = intent_source(self._intent(state.get("intent_id") or ""))
+                found = [source] if source is not None else []
+            self._sources[kind] = found
+            new += found
+        if new or unread:
+            said = ", ".join(part for part in (sources_read(new), unread) if part)
+            self.event("strategy", f"Context read: {said}", sources=[source.name for source in new])
+        return [source for kind in kinds for source in self._sources.get(kind, [])]
+
+    def _intent(self, intent_id: str) -> IntentSpec | None:
+        try:
+            if intent_id:
+                return self.intents.load(intent_id) if self.intents.exists(intent_id) else None
+            return self.intents.find(self.contract.goal) if self.contract is not None else None
+        except (IntentError, OSError, ValueError):
+            return None
 
     def spent(self, coding_usd: float) -> str:
         """Tell the budget what the coding agent has spent; returns why the whole run must stop, or ''."""

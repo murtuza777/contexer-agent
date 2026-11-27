@@ -37,12 +37,13 @@ from pydantic import BaseModel, Field
 
 from contexer.crew.base import AgentSpec, run_agent
 from contexer.crew.budget import Budget
+from contexer.crew.context_sources import ContextSource, context_section, stated_line
 from contexer.crew.diagnoser import project_tools
 from contexer.crew.untrusted import untrusted
 from contexer.procutil import spawn_tree, without_agent_session
 
 Severity = Literal["low", "medium", "high"]
-Category = Literal["security", "tests", "debug", "logic", "other"]
+Category = Literal["security", "tests", "debug", "logic", "convention", "other"]
 Source = Literal["scan", "command", "reviewer"]
 CommandStatus = Literal["passed", "failed", "timed_out", "not_run"]
 
@@ -381,6 +382,7 @@ class _Note(BaseModel):
     severity: Severity = Field(description="high: must be looked at before merging. medium: should be fixed. low: tidy-up.")
     category: Category
     explanation: str = Field(description="What is wrong and why it matters, in one or two sentences.")
+    convention: str = Field("", description="For the category convention only: the line of the instruction file the change breaks, word for word.")
 
 
 class Review(BaseModel):
@@ -400,6 +402,7 @@ async def review(
     *,
     intent: str = "",
     checks: Sequence[str] = (),
+    sources: Sequence[ContextSource] = (),
     run_project_commands: bool = True,
     command_timeout: float = DEFAULT_COMMAND_TIMEOUT,
     run_dir: Path | None = None,
@@ -407,7 +410,11 @@ async def review(
     secrets: Sequence[str] = (),
     max_steps: int = DEFAULT_REVIEW_STEPS,
 ) -> ReviewResult:
-    """Review ``diff`` (the change from the baseline to the project as it is now in ``project_dir``)."""
+    """Review ``diff`` (the change from the baseline to the project as it is now in ``project_dir``).
+
+    ``sources`` is what else was written about the task (``crew/context_sources.py``): with the
+    project's instruction files among them, the Reviewer may note a convention the change breaks.
+    """
     result = ReviewResult()
     if not diff.strip():
         return result
@@ -437,19 +444,21 @@ async def review(
     ]
     spec = AgentSpec(name="reviewer", system_prompt=reviewer_prompt(), output_schema=Review, max_steps=max_steps, timeout=_TIMEOUT)
     ran = await run_agent(
-        spec, model, tools, _task(diff, intent, checks, result), run_dir=run_dir, secrets=list(secrets), budget=budget
+        spec, model, tools, _task(diff, intent, checks, result, sources), run_dir=run_dir, secrets=list(secrets), budget=budget
     )
     result.status = ran.status
     result.steps, result.tokens_in, result.tokens_out = ran.steps, ran.tokens_in, ran.tokens_out
     result.cost_usd, result.error = ran.cost_usd, ran.error
     if isinstance(ran.output, Review):
-        result.notes += _accepted(ran.output.notes, touched, result.notes)
+        result.notes += _accepted(ran.output.notes, touched, result.notes, sources)
     result.notes = _ordered(result.notes)[:MAX_NOTES]
     return result
 
 
-def _task(diff: str, intent: str, checks: Sequence[str], found: ReviewResult) -> str:
+def _task(diff: str, intent: str, checks: Sequence[str], found: ReviewResult, sources: Sequence[ContextSource] = ()) -> str:
     parts = ["## What the change is for", intent.strip() or "(not stated)", ""]
+    if sources:
+        parts += [context_section(sources), ""]
     if checks:
         parts += ["## The checks that passed in the browser", *[f"- {line}" for line in checks][:40], ""]
     if found.notes:
@@ -470,8 +479,15 @@ def _task(diff: str, intent: str, checks: Sequence[str], found: ReviewResult) ->
     return "\n".join(parts)
 
 
-def _accepted(notes: Sequence[_Note], touched: Sequence[str], known: Sequence[ReviewNote]) -> list[ReviewNote]:
-    """The model's notes with what code allows: about a file the change touches, capped, and never ``backed``."""
+def _accepted(
+    notes: Sequence[_Note], touched: Sequence[str], known: Sequence[ReviewNote], sources: Sequence[ContextSource] = ()
+) -> list[ReviewNote]:
+    """The model's notes with what code allows: about a file the change touches, capped, and never ``backed``.
+
+    A note about a broken convention is kept only when an instruction file states the line it quotes; the
+    note then begins with that line and the file's name. It is never ``high``: what an instruction file
+    says is the project's style, and a file anyone can edit does not get to hold a pull request back.
+    """
     files = set(touched)
     seen = {(n.file, n.line, n.category) for n in known}
     seen_files = {(n.file, n.category) for n in known if n.category == "debug"}
@@ -485,11 +501,18 @@ def _accepted(notes: Sequence[_Note], touched: Sequence[str], known: Sequence[Re
         key = (file, line, note.category)
         if key in seen or (file, note.category) in seen_files:
             continue
-        seen.add(key)
         if len(explanation) > MAX_EXPLANATION_CHARS:
             explanation = explanation[: MAX_EXPLANATION_CHARS - 3].rstrip() + "..."
+        severity = note.severity
+        if note.category == "convention":
+            stated, quote = stated_line(note.convention, sources)
+            if not stated:
+                continue
+            explanation = f'{stated} states: "{quote}" {explanation}'
+            severity = "medium" if severity == "high" else severity
+        seen.add(key)
         accepted.append(
-            ReviewNote(file=file, line=line, severity=note.severity, category=note.category, explanation=explanation, source="reviewer")
+            ReviewNote(file=file, line=line, severity=severity, category=note.category, explanation=explanation, source="reviewer")
         )
     return accepted
 

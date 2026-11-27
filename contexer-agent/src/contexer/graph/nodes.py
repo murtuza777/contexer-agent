@@ -103,6 +103,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             run_dir=ctx.run.path,
             budget=ctx.budget,
             origin=(existing.origin if existing is not None else "") or state.get("goal_origin", ""),
+            sources=ctx.sources(state, ("issue",)),
             secrets=ctx.secrets(),
         )
         ctx.intents.save(result.spec)
@@ -224,6 +225,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 ctx.project,
                 others=ctx.others,
                 repo_summary=ctx.repo.format_summary() if ctx.repo is not None else "",
+                sources=ctx.sources(state),
                 run_dir=ctx.run.path,
                 budget=ctx.budget,
                 max_steps=_steps(ctx, "planner", DEFAULT_PLANNER_STEPS),
@@ -485,6 +487,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             ctx.model_for("reviewer"),
             intent=quoted_goal(contract.goal, contract.origin),
             checks=[c.description for c in contract.criteria],
+            sources=ctx.sources(state) if ctx.model_for("reviewer") is not None else (),
             run_dir=ctx.run.path,
             budget=ctx.budget,
             max_steps=_steps(ctx, "reviewer", DEFAULT_REVIEW_STEPS),

@@ -26,14 +26,16 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import ValidationError
 
 from contexer.contract import Contract
 from contexer.gate.models import RunResult
+from contexer.github.api import GitHubClient, GitHubError, github_token, repo_of
 
 if TYPE_CHECKING:
     from contexer.crew.intent import Question
@@ -52,6 +54,10 @@ WRITE_ROLES = {"admin", "maintain", "write"}
 ISSUE_ORIGIN = "GitHub issue #{number}"
 _ANSWER = re.compile(r"^\s*/contexer\s+answer\s+(?P<text>.+)", re.IGNORECASE | re.DOTALL)
 MAX_ANSWER_CHARS = 1000
+# What of an issue's discussion the agents of a run are given: the newest comments, each cut to this length.
+MAX_COMMENT_CHARS = 1500
+MAX_COMMENTS = 20
+_ISSUE_ORIGIN = re.compile(r"GitHub issue #(\d+)")
 
 
 @dataclass(frozen=True)
@@ -130,6 +136,76 @@ def issue_answers(comments: list[dict[str, Any]]) -> list[Answer]:
         if text and login:
             answers.append(Answer(by=login, text=text))
     return answers
+
+
+@dataclass(frozen=True)
+class IssueComment:
+    by: str
+    text: str
+
+
+@dataclass(frozen=True)
+class Discussion:
+    """What was said on an issue by people who may decide what is built there."""
+
+    comments: list[IssueComment]
+    # Comments by people without write access: counted, never quoted.
+    left_out: int = 0
+
+
+def issue_number(origin: str) -> int | None:
+    """The issue a contract's ``origin`` names, when it names one."""
+    match = _ISSUE_ORIGIN.fullmatch(origin.strip())
+    return int(match.group(1)) if match else None
+
+
+def issue_discussion(comments: list[dict[str, Any]], may_write: Callable[[str], bool]) -> Discussion:
+    """The comments on an issue as a run's agents may read them, oldest first.
+
+    Anyone can comment on a public issue, so only people with write access are quoted
+    (``may_write``, asked once per person); the others are counted. A bot's comments, Contexer's own
+    (a draft, a status) and ``/contexer`` commands are not discussion. Each comment is what GitHub
+    shows of it (``visible_text``), cut to ``MAX_COMMENT_CHARS``; the newest ``MAX_COMMENTS`` are kept.
+    """
+    allowed: dict[str, bool] = {}
+    kept: list[IssueComment] = []
+    left_out = 0
+    for comment in comments:
+        author = comment.get("user") or {}
+        login = str(author.get("login") or "")
+        body = str(comment.get("body") or "").lstrip()
+        if not login or author.get("type") == "Bot" or body.startswith("<!-- contexer:") or body.lower().startswith("/contexer"):
+            continue
+        text = visible_text(body)[:MAX_COMMENT_CHARS]
+        if not text:
+            continue
+        if login not in allowed:
+            allowed[login] = may_write(login)
+        if allowed[login]:
+            kept.append(IssueComment(by=login, text=text))
+        else:
+            left_out += 1
+    return Discussion(comments=kept[-MAX_COMMENTS:], left_out=left_out)
+
+
+def read_discussion(project: Path, number: int) -> Discussion | None:
+    """The discussion on issue ``number`` of the project's repository; None when GitHub cannot be asked."""
+    repo = repo_of(project)
+    token = github_token() if repo else None
+    if not repo or not token:
+        return None
+    try:
+        with GitHubClient(repo, token) as client:
+
+            def may_write(login: str) -> bool:
+                try:
+                    return client.permission(login) in WRITE_ROLES
+                except GitHubError:
+                    return False
+
+            return issue_discussion(client.comments(number), may_write)
+    except GitHubError:
+        return None
 
 
 def draft_comment(

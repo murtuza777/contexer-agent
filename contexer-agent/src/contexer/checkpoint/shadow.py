@@ -129,6 +129,21 @@ class ShadowRepo:
         out = self._git("diff", "--no-ext-diff", "--no-textconv", "--name-only", "--no-renames", a, b)
         return [line for line in out.splitlines() if line]
 
+    def read_file(self, commit: str, path: str, max_bytes: int = 1_000_000) -> str | None:
+        """The text of ``path`` as snapshot ``commit`` recorded it; None when it was not a file there, or is larger.
+
+        For what must be read as it was before a coding agent's turn, whatever the agent wrote since.
+        A link is not followed: the snapshot holds where it points, not a file.
+        """
+        try:
+            listed = self._git("ls-tree", "-l", commit, "--", path).strip()
+            mode, kind, blob, size = listed.split("\t")[0].split()
+            if kind != "blob" or mode not in ("100644", "100755") or int(size) > max_bytes:
+                return None
+            return self._git("cat-file", "blob", blob)
+        except (SnapshotError, ValueError):
+            return None
+
     def diff(self, a: str, b: str, max_chars: int = 200_000) -> str:
         text = self._git("diff", "--no-ext-diff", "--no-textconv", "--no-color", "--stat", "--patch", a, b)
         return text if len(text) <= max_chars else text[:max_chars] + "\n... (diff truncated)\n"
