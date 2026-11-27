@@ -12,10 +12,12 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console, RenderableType
 from rich.live import Live
@@ -57,6 +59,55 @@ def plain_mark(kind: str) -> tuple[str, str]:
     """The mark's character and its style, for a line that is built as ``Text`` and not as markup."""
     fancy, plain = _MARKS[kind]
     return (fancy if _encodable(fancy) else plain), _MARK_STYLE[kind]
+
+
+# ``--plain``: what a mark at the start of a line is called, and what the other symbols become.
+_PLAIN_MARKS = {"✓": "ok:", "✗": "not ok:", "?": "open:", "!": "warning:", "›": ">", "•": "-"}
+_PLAIN_MARK = re.compile(r"(?m)^([ \t]*)([✓✗?!›•]) ")
+_PLAIN_CHARS = str.maketrans({"✓": "ok", "✗": "not ok", "›": ">", "•": "-", "·": "-", "…": "...", "–": "-", "—": "-"})
+# Wide enough that no line is wrapped: a wrapped path cannot be copied out of a CI log.
+_PLAIN_WIDTH = 100_000
+
+
+class _PlainFile:
+    """Writes to ``file`` with marks as words and separators as commas, and no padding at the end of a line."""
+
+    def __init__(self, file: Any) -> None:
+        self._file = file
+        self.encoding = getattr(file, "encoding", None) or "utf-8"
+
+    def write(self, text: str) -> int:
+        plain = _PLAIN_MARK.sub(lambda found: f"{found[1]}{_PLAIN_MARKS[found[2]]} ", text.replace(" · ", ", "))
+        self._file.write(re.sub(r"[ \t]+(?=\r?\n)", "", plain.translate(_PLAIN_CHARS)))
+        return len(text)
+
+    def flush(self) -> None:
+        self._file.flush()
+
+    def isatty(self) -> bool:
+        return False
+
+
+def plain_console(file: Any = None) -> Console:
+    """The console of ``--plain``: for a CI log, a pipe and a screen reader.
+
+    No colour, nothing redrawn (it is not a terminal to the code that draws), a mark said as a word
+    (``ok:``, ``not ok:``, ``open:``, ``warning:``), ``·`` as a comma, and lines that are not wrapped.
+    """
+    return Console(
+        file=_PlainFile(file if file is not None else sys.stdout),  # type: ignore[arg-type]
+        force_terminal=False,
+        no_color=True,
+        color_system=None,
+        width=_PLAIN_WIDTH,
+        highlight=False,
+        emoji=False,
+        legacy_windows=False,
+    )
+
+
+def is_plain(console: Console) -> bool:
+    return isinstance(console.file, _PlainFile)
 
 
 def header(console: Console, command: str, subject: str = "") -> None:
@@ -112,6 +163,22 @@ def path(value: str | Path) -> str:
 def note(console: Console, kind: str, text: str) -> None:
     """``! Weak draft: ...``: a one-off message that needs attention, with its mark."""
     console.print(f"{mark(kind)} {text}")
+
+
+def error(console: Console, what: str, why: str, next_step: str, code: int) -> None:
+    """One form for an error: what happened and why, what to do next, and the exit code.
+
+    ``✗ Cannot resume: no run '20260101-000000-abcd' in this project.``
+    ``  Next: `contexer runs` lists the runs that can be continued.``
+    ``  Exit code 2.``
+
+    All three texts are plain, not markup. On a console that prints nothing (``--json``) the error goes to
+    stderr, so it is still said and stdout stays one JSON object per line.
+    """
+    out = Console(stderr=True) if console.quiet else console
+    out.print(f"{mark('fail')} [red]{escape(what)}:[/] {escape(why)}", highlight=False)
+    out.print(f"  Next: {escape(next_step)}", highlight=False)
+    out.print(f"  [dim]Exit code {code}.[/]", highlight=False)
 
 
 def duration(seconds: float) -> str:
