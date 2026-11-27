@@ -19,6 +19,7 @@ NODES: tuple[str, ...] = (
     "intent",
     "approve",
     "plan",
+    "baseline",
     "coder_turn",
     "guard_snapshot",
     "ensure_app",
@@ -55,6 +56,13 @@ def after_approve(state: LoopState) -> str:
 
 
 def after_plan(state: LoopState) -> str:
+    if _ended(state):
+        return "finalize"
+    # The earlier contracts are replayed once, before the first turn. With none there is no such step.
+    return "baseline" if state.get("other_ids") and state.get("baseline") is None else "coder_turn"
+
+
+def after_baseline(state: LoopState) -> str:
     return "finalize" if _ended(state) else "coder_turn"
 
 
@@ -114,6 +122,7 @@ EDGES: dict[str, Callable[[LoopState], str]] = {
     "intent": after_intent,
     "approve": after_approve,
     "plan": after_plan,
+    "baseline": after_baseline,
     "coder_turn": after_coder_turn,
     "guard_snapshot": after_guard_snapshot,
     "ensure_app": after_ensure_app,
@@ -129,7 +138,8 @@ EDGES: dict[str, Callable[[LoopState], str]] = {
 TARGETS: dict[str, tuple[str, ...]] = {
     "intent": ("approve", "finalize"),
     "approve": ("plan", "coder_turn", "intent", "finalize"),
-    "plan": ("coder_turn", "finalize"),
+    "plan": ("baseline", "coder_turn", "finalize"),
+    "baseline": ("coder_turn", "finalize"),
     "coder_turn": ("guard_snapshot", "intent", "finalize"),
     "guard_snapshot": ("ensure_app", "finalize"),
     "ensure_app": ("test", "finalize"),

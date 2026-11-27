@@ -8,10 +8,17 @@ The rules are deliberately fail-safe:
 * a contract that is a draft, or was edited after approval, is not trusted
   until a person approves it;
 * LLM-judged criteria are advisory unless the policy says ``block``, because a
-  noisy judge in a merge gate gets switched off.
+  noisy judge in a merge gate gets switched off;
+* a check named in ``stale`` that fails is left out and listed. Only a run
+  passes ``stale``: it replayed the earlier contracts before its first turn,
+  so it knows which of their checks this change did not break. ``contexer
+  verify``, ``contexer replay``, the MCP server and the stop hook have no such
+  replay, and a failing approved check fails there.
 """
 
 from __future__ import annotations
+
+from collections.abc import Collection
 
 from contexer.gate.models import ContractOutcome, GateDecision, GateOutcome, JudgedPolicy
 
@@ -24,6 +31,7 @@ def decide(
     require_approval: bool = True,
     judged_policy: JudgedPolicy = "advisory",
     app_error: str | None = None,
+    stale: Collection[str] = (),
 ) -> GateDecision:
     if app_error:
         return GateDecision(outcome="error", reasons=[app_error])
@@ -33,6 +41,7 @@ def decide(
     worst: GateOutcome = "pass"
     reasons: list[str] = []
     counts = {"verified": 0, "refuted": 0, "unverified": 0, "advisory": 0}
+    left_out: list[str] = []
 
     def escalate(level: GateOutcome, reason: str) -> None:
         nonlocal worst
@@ -66,6 +75,9 @@ def decide(
                 continue
             gating += 1
             verdict = result.verdict
+            if verdict != "verified" and f"{cid}/{result.criterion_id}" in stale:
+                left_out.append(f"{cid}/{result.criterion_id}")
+                continue
             counts[verdict] += 1
             if verdict == "refuted":
                 escalate("fail", f"[{cid}/{result.criterion_id}] {result.description}: {result.evidence}")
@@ -77,4 +89,12 @@ def decide(
         if gating == 0:
             escalate("needs_action", f"[{cid}] has no executable checks, so nothing was proven.")
 
-    return GateDecision(outcome=worst, reasons=reasons, **counts)
+    return GateDecision(
+        outcome=worst,
+        reasons=reasons,
+        verified=counts["verified"],
+        refuted=counts["refuted"],
+        unverified=counts["unverified"],
+        advisory=counts["advisory"],
+        stale=left_out,
+    )

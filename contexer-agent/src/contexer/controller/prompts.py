@@ -97,6 +97,19 @@ def repair_prompt(
         # The app started but nothing could be checked, e.g. the sign-in flow broke.
         parts.append("No check could run:\n" + untrusted("browser", "\n".join(result.decision.reasons)))
     failing = _failing(result)
+    # What this change broke comes first: an earlier approved behaviour that passed before the first turn.
+    regressions = result.decision.regressions
+    broken = [(cid, r) for cid, r in failing if f"{cid}/{r.criterion_id}" in regressions]
+    if broken:
+        named = "\n".join(
+            f"- {cid}/{r.criterion_id}: broken in attempt {regressions[f'{cid}/{r.criterion_id}']}" for cid, r in broken
+        )
+        observed = "\n\n".join(_bundle(cid, r) for cid, r in broken)
+        parts.append(
+            f"{len(broken)} check(s) of previously approved behaviour passed before your changes and fail now. "
+            f"These are regressions. Repair them first, before the new work:\n{named}\n\n" + untrusted("browser", observed)
+        )
+        failing = [(cid, r) for cid, r in failing if f"{cid}/{r.criterion_id}" not in regressions]
     if failing:
         observed = "\n\n".join(_bundle(cid, r) for cid, r in failing)
         parts.append(f"{len(failing)} check(s) did not pass:\n\n" + untrusted("browser", observed))
@@ -145,9 +158,10 @@ def _results(verification: VerificationResult | None) -> list[CriterionResult]:
 
 def _failing(result: RunResult) -> list[tuple[str, CriterionResult]]:
     out: list[tuple[str, CriterionResult]] = []
+    stale = set(result.decision.stale)  # already failing before the run: not this change's to repair
     for outcome in result.contracts:
         for r in _results(outcome.verification):
-            if r.proven and r.verdict != "verified":
+            if r.proven and r.verdict != "verified" and f"{outcome.contract.id}/{r.criterion_id}" not in stale:
                 out.append((outcome.contract.id, r))
     return out
 

@@ -61,6 +61,7 @@ def test_the_graph_has_the_nodes_the_design_names() -> None:
         "intent",
         "approve",
         "plan",
+        "baseline",
         "coder_turn",
         "guard_snapshot",
         "ensure_app",
