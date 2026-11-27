@@ -949,6 +949,19 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
   never read from text this way, nor is a reply that was cut off or that
   carries the `<untrusted>` marker. Anything else that looks like a call is
   sent back with a correction, as before.
+- Before each model call the conversation is sized: the larger of its
+  characters divided by 3, and the tokens the provider counted for the last
+  request plus the characters added since. Past 60% (`CONTEXT_SHARE`) of the
+  model's context window, the content of old tool results is replaced by a
+  one-line note under the same call id (`_drop_old_results`). Only results
+  of calls that worked and are longer than 400 characters are replaced. The
+  last three of those and the newest result of each tool are kept; the
+  task, the model's own replies and calls, corrections and error results
+  are never changed. A model whose record states no window is taken to have
+  128,000 tokens (`ASSUMED_CONTEXT_WINDOW`), so a model with a smaller
+  window that no catalogue states is not protected. The count is
+  `AgentResult.dropped_results`, and the transcript gets a `dropped` line;
+  its `tool` lines still hold every result in full.
 - `AgentResult.status`: `ok`, `step_limit`, `timeout`, `invalid_output`,
   `model_error`. It also carries the steps (model calls), tool calls, tokens
   in and out, the duration, and the cost when the provider reports one

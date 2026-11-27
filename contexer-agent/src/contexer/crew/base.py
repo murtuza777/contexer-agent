@@ -27,6 +27,10 @@ A tool call is checked against the tool's schema before the tool runs. One
 that does not fit gets the problem and the required fields as its result, and
 the call that then runs is counted as repaired.
 
+When the conversation nears the model's context window, the content of old
+tool results (page snapshots, mostly) is replaced by a one-line note. See
+``_drop_old_results`` for what is kept.
+
 Every model call and tool call is written to the agent's transcript in the
 run folder. The task an agent is given and what a tool returns are masked
 before the model sees them (see ``crew/transcript.py``).
@@ -78,6 +82,17 @@ MAX_TOOL_RESULT_CHARS = 20_000
 MAX_TOOL_CALLS_PER_REPLY = 25
 # The same call with the same arguments may run this many times in a row; the next one is refused.
 MAX_IDENTICAL_CALLS = 3
+# When the conversation passes this share of the model's context window, old tool results are dropped.
+CONTEXT_SHARE = 0.6
+# The window taken for a model whose record does not state one. Most models an agent is run on have at
+# least this; one with less and no stated window is not protected.
+ASSUMED_CONTEXT_WINDOW = 128_000
+# The newest tool results that are never dropped, and the length under which a result is not worth dropping.
+KEPT_RESULTS = 3
+MIN_DROPPED_CHARS = 400
+# Characters per token when a conversation is sized from its text. Low on purpose: page trees are dense,
+# and counting too many tokens only drops a result a little early.
+_CHARS_PER_TOKEN = 3
 
 
 @dataclass(frozen=True)
@@ -115,6 +130,8 @@ class AgentResult:
     # Tool calls the server returned as text that were run as calls (only on a model not known to call
     # tools natively).
     text_fallback_calls: int = 0
+    # Old tool results whose content was replaced by a note because the conversation neared the model's window.
+    dropped_results: int = 0
     # agents/<name>.jsonl in the run folder; None when there is no run folder.
     transcript: Path | None = None
     messages: list[BaseMessage] = field(default_factory=list, repr=False)
@@ -176,6 +193,7 @@ async def run_agent(
         corrections=result.corrections,
         repaired_calls=result.repaired_calls,
         text_fallback_calls=result.text_fallback_calls,
+        dropped_results=result.dropped_results,
         error=result.error,
         output=result.output.model_dump(mode="json") if result.output is not None else None,
     )
@@ -226,8 +244,14 @@ class _Run:
         self._refused: set[str] = set()
         # A call written as text is run only when nothing says this model calls tools natively: on a model
         # the provider's list or a measurement vouches for, text that looks like a call is a mistake.
-        native = capabilities_of(model).native_tools
+        record = capabilities_of(model)
+        native = record.native_tools
         self._reads_text_calls = not (native.value and native.source != "assumed")
+        # Tokens the conversation may hold before old tool results are dropped.
+        self._room = int((record.context_window.value or ASSUMED_CONTEXT_WINDOW) * CONTEXT_SHARE)
+        # What the provider counted for the last request and its reply, and how many messages that covered.
+        self._counted = 0
+        self._counted_to = 0
 
     async def loop(self, user_input: str) -> None:
         spec, result = self.spec, self.result
@@ -251,6 +275,7 @@ class _Run:
                 result.error = f"{spec.name} stopped: {spent}"
                 return
             result.steps += 1
+            self._drop_old_results()
             called = time.monotonic()
             try:
                 reply = await self.bound.ainvoke(
@@ -269,6 +294,7 @@ class _Run:
                 reply = AIMessage(content=str(getattr(reply, "content", reply)))
             self.messages.append(reply)
             self._count(reply)
+            self._counted, self._counted_to = _counted_tokens(reply), len(self.messages)
             finish = _finish_reason(reply)
             self._cut_off = finish in _CUT_OFF
             usage = reply.usage_metadata or {}
@@ -291,6 +317,47 @@ class _Run:
             if await self._handle(reply):
                 return
         result.error = f"{spec.name} used all {spec.max_steps} steps without handing in an answer"
+
+    def _drop_old_results(self) -> None:
+        """Before a model call: when the conversation nears the model's window, old tool results become a note.
+
+        Only the content of a long result of a call that worked is replaced, and the message stays under
+        its call's id, so the request is still one a provider accepts. The last ``KEPT_RESULTS`` such
+        results and the newest result of each tool (the page as it is now) are kept. The task, what the
+        model itself said or called, a correction and an error are never touched; the transcript still
+        has every result in full.
+        """
+        size = max(
+            _tokens(self.messages),
+            # The provider's own count where there is one: it includes the tools' schemas.
+            self._counted + _tokens(self.messages[self._counted_to :]) if self._counted else 0,
+        )
+        if size <= self._room:
+            return
+        long_results = [
+            (index, message)
+            for index, message in enumerate(self.messages)
+            if isinstance(message, ToolMessage)
+            and message.status == "success"
+            and len(str(message.content)) > MIN_DROPPED_CHARS
+        ]
+        newest = {message.name: index for index, message in long_results}
+        kept = {index for index, _ in long_results[-KEPT_RESULTS:]} | set(newest.values())
+        dropped = 0
+        for index, message in long_results:
+            if index in kept:
+                continue
+            note = (
+                f"[This result of `{message.name}` ({len(str(message.content)):,} characters) was dropped to keep "
+                "the conversation short. Call the tool again if you need it.]"
+            )
+            self.messages[index] = ToolMessage(
+                note, tool_call_id=message.tool_call_id, name=message.name, status=message.status
+            )
+            dropped += 1
+        if dropped:
+            self.result.dropped_results += dropped
+            self.transcript.write("dropped", step=self.result.steps, results=dropped, tokens=size, room=self._room)
 
     async def _handle(self, reply: AIMessage) -> bool:
         """Act on one model reply. True when the run is over."""
@@ -694,6 +761,22 @@ def _bad_arguments(tool: BaseTool, args: Any) -> str:
         needs = f"requires: {', '.join(required)}" if required else "has no required argument"
         return f"{_validation_problem(exc)}. `{tool.name}` {needs}. Send the call again with arguments that fit."
     return ""
+
+
+def _tokens(messages: Sequence[BaseMessage]) -> int:
+    """Roughly how many tokens ``messages`` are, from their text and the calls they carry."""
+    chars = 0
+    for message in messages:
+        chars += len(str(message.content))
+        if isinstance(message, AIMessage):
+            chars += sum(len(call["name"]) + len(json.dumps(call["args"], default=str)) for call in message.tool_calls)
+    return chars // _CHARS_PER_TOKEN
+
+
+def _counted_tokens(reply: AIMessage) -> int:
+    """The tokens the provider counted for the request and this reply together; 0 when it did not say."""
+    usage = reply.usage_metadata or {}
+    return int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
 
 
 def _as_text(value: Any) -> str:
