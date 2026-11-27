@@ -239,7 +239,7 @@ def build(
         # unknown spend as 0 is refused, and the issue is told why.
         crew_budget = run_budget(config)
         called = [models.get(name) or crew for name in RUN_AGENTS] if crew is not None else []
-        cannot_keep = unenforceable(crew_budget, models=called, coding_agent="" if agent.reports_cost else agent.name)
+        cannot_keep = unenforceable(crew_budget, models=called, coding_agent="" if agent.reports_cost else agent.name, flag="")
         if cannot_keep:
             _stop(console, client, number, cannot_keep, 2, hand_over)
         check_free_quota(console, None, agent, yes=True)
