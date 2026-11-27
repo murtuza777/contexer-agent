@@ -373,3 +373,153 @@ def test_each_planted_name_is_found(tmp_path: Path, file: str, name: str, severi
 @pytest.mark.parametrize(("file", "name"), CLEAN)
 def test_each_clean_manifest_is_quiet(tmp_path: Path, file: str, name: str) -> None:
     assert dependency_findings([_manifest(tmp_path, file, name)], tmp_path, Registry(KNOWN), now=NOW) == []
+
+
+# -- a registry set for the user, and the setting that turns the lookup off ---------------------
+
+
+@pytest.fixture(autouse=True)
+def _a_home_of_its_own(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """No test reads the configuration of the person (or the CI machine) running it."""
+    home = tmp_path_factory.mktemp("home")
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(home))
+    monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    for name in ("npm_config_registry", "NPM_CONFIG_REGISTRY", "NPM_CONFIG_USERCONFIG", "npm_config_userconfig", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_CONFIG_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(dependencies, "_SYSTEM_PIP_CONFIG", ())
+    return home
+
+
+def _npm_change(project: Path) -> tuple[str, list[tuple[int, str]], list[str]]:
+    _package(project, {"acme-billing-core": "^1.0.0"})
+    return _change("package.json", ['    "acme-billing-core": "^1.0.0"'])
+
+
+def _pip_change(project: Path) -> tuple[str, list[tuple[int, str]], list[str]]:
+    (project / "requirements.txt").write_text("acme-billing\n", encoding="utf-8")
+    return _change("requirements.txt", ["acme-billing"], start=1)
+
+
+def _not_looked_up(findings: list[dependencies.Finding], registry: Registry) -> str:
+    assert registry.asked == []
+    [finding] = findings
+    assert finding.severity == "low" and "its own registry" in finding.explanation and "not looked up" in finding.explanation
+    for secret in ("made-up", "s3cret", "acme.example"):
+        assert secret not in finding.explanation  # where it is set is named; the address and any token are not
+    return finding.explanation
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["registry=https://npm.acme.example/", "@acme:registry = https://deploy:s3cret@npm.acme.example/", "registry=https://deploy:s3cret@npm.acme.example/"],
+)
+def test_a_registry_in_the_users_npmrc_means_nothing_is_looked_up_on_npm(tmp_path: Path, _a_home_of_its_own: Path, line: str) -> None:
+    (_a_home_of_its_own / ".npmrc").write_text(f"//npm.acme.example/:_authToken=made-up-token-123\n{line}\n", encoding="utf-8")
+    registry = Registry()
+    text = _not_looked_up(dependency_findings([_npm_change(tmp_path)], tmp_path, registry, now=NOW), registry)
+    assert "~/.npmrc" in text
+
+
+def test_a_registry_in_the_environment_or_in_a_named_npmrc_counts_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("npm_config_registry", "https://deploy:s3cret@npm.acme.example/")
+    registry = Registry()
+    assert "npm_config_registry" in _not_looked_up(dependency_findings([_npm_change(tmp_path)], tmp_path, registry, now=NOW), registry)
+
+    monkeypatch.delenv("npm_config_registry")
+    elsewhere = tmp_path / "ci.npmrc"
+    elsewhere.write_text("registry=https://npm.acme.example/\n", encoding="utf-8")
+    monkeypatch.setenv("NPM_CONFIG_USERCONFIG", str(elsewhere))
+    _not_looked_up(dependency_findings([_npm_change(tmp_path)], tmp_path, registry, now=NOW), registry)
+
+
+@pytest.mark.parametrize("where", ["appdata", "xdg", "dot-pip", "legacy-windows", "PIP_CONFIG_FILE"])
+@pytest.mark.parametrize("key", ["index-url", "extra-index-url"])
+def test_an_index_in_the_users_pip_configuration_means_nothing_is_looked_up_on_pypi(
+    tmp_path: Path, _a_home_of_its_own: Path, monkeypatch: pytest.MonkeyPatch, where: str, key: str
+) -> None:
+    home = _a_home_of_its_own
+    path = {
+        "appdata": home / "AppData" / "Roaming" / "pip" / "pip.ini",
+        "xdg": home / ".config" / "pip" / "pip.conf",
+        "dot-pip": home / ".pip" / "pip.conf",
+        "legacy-windows": home / "pip" / "pip.ini",
+        "PIP_CONFIG_FILE": tmp_path / "ci-pip.conf",
+    }[where]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"[global]\n{key} = https://deploy:s3cret@pypi.acme.example/simple\n", encoding="utf-8")
+    if where == "PIP_CONFIG_FILE":
+        monkeypatch.setenv("PIP_CONFIG_FILE", str(path))
+    registry = Registry()
+    assert "pip configuration" in _not_looked_up(dependency_findings([_pip_change(tmp_path)], tmp_path, registry, now=NOW), registry)
+
+
+@pytest.mark.parametrize("name", ["PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"])
+def test_an_index_in_the_environment_counts_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.setenv(name, "https://deploy:s3cret@pypi.acme.example/simple")
+    registry = Registry()
+    assert name in _not_looked_up(dependency_findings([_pip_change(tmp_path)], tmp_path, registry, now=NOW), registry)
+
+
+def test_the_public_registry_named_in_a_configuration_is_not_a_registry_of_ones_own(
+    tmp_path: Path, _a_home_of_its_own: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _a_home_of_its_own
+    (home / ".npmrc").write_text("//registry.npmjs.org/:_authToken=made-up-token-123\nregistry=https://registry.npmjs.org/\nsave-exact=true\n", encoding="utf-8")
+    (home / ".pip").mkdir()
+    (home / ".pip" / "pip.conf").write_text("[global]\nindex-url = https://pypi.org/simple\ntimeout = 60\n", encoding="utf-8")
+    (tmp_path / ".npmrc").write_text("registry=https://registry.npmjs.org/\n", encoding="utf-8")
+    monkeypatch.setenv("PIP_INDEX_URL", "https://pypi.org/simple/")
+    registry = Registry()
+    findings = dependency_findings([_npm_change(tmp_path), _pip_change(tmp_path)], tmp_path, registry, now=NOW)
+
+    assert registry.asked == [("npm", "acme-billing-core"), ("pypi", "acme-billing")]
+    assert [f.severity for f in findings] == ["high", "high"]  # looked up, and not there
+
+
+def test_the_lookup_is_a_setting_in_contexer_toml_and_is_on_by_default(tmp_path: Path) -> None:
+    from contexer.config.project import ProjectConfigError, dependency_lookup, load_project_config
+
+    assert load_project_config(tmp_path).review.dependency_lookup is True and dependency_lookup(tmp_path)
+    (tmp_path / "contexer.toml").write_text("[review]\ndependency_lookup = false\n", encoding="utf-8")
+    assert load_project_config(tmp_path).review.dependency_lookup is False and not dependency_lookup(tmp_path)
+    (tmp_path / "contexer.toml").write_text("[review]\ndependency_lookups = false\n", encoding="utf-8")
+    with pytest.raises(ProjectConfigError):  # a misspelt privacy setting must not pass for one that is set
+        load_project_config(tmp_path)
+    assert not dependency_lookup(tmp_path)  # and with a file that cannot be read, nothing is sent
+
+
+async def test_with_the_lookup_off_no_request_is_made_and_nothing_is_noted(tmp_path: Path) -> None:
+    _package(tmp_path, {"react-smart-table-pro": "^1.0.0"})
+    diff = _diff("package.json", ['    "react-smart-table-pro": "^1.0.0"'])
+    registry = Registry()
+    result = await review(diff, tmp_path, None, run_project_commands=False, lookup=registry, dependency_lookup=False)
+
+    assert registry.asked == [] and result.notes == []
+
+
+@pytest.mark.parametrize("setting", ["", "[review]\ndependency_lookup = false\n"])
+async def test_in_a_run_the_setting_decides_whether_a_registry_is_asked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setting: str) -> None:
+    from tests.loop_helpers import GOOD_JS, RecordingAgent, contract, copy_todo
+    from tests.test_graph_review import _graph
+
+    project = copy_todo(tmp_path)
+    if setting:
+        (project / "contexer.toml").write_text(setting, encoding="utf-8")
+    asked: list[bool] = []
+
+    def no_network(**_kwargs: object) -> httpx.Client:
+        asked.append(True)
+        raise httpx.ConnectError("no network in tests")
+
+    monkeypatch.setattr(dependencies.httpx, "Client", no_network)
+    agent = RecordingAgent([{"app.js": GOOD_JS + "// tidied\n", "requirements.txt": "made-up-one\n"}])
+    outcome = await _graph(project, agent).run(contract(project))
+
+    assert outcome.terminal == "succeeded"
+    about = [note for note in outcome.review if "made-up-one" in note.explanation]
+    if setting:
+        assert asked == [] and about == []
+    else:
+        assert asked == [True] and len(about) == 1 and "could not be checked" in about[0].explanation
