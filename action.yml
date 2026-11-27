@@ -33,7 +33,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v7.1.0
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -46,7 +46,7 @@ runs:
         echo "Contexer installed in $((SECONDS - start))s"
 
     - name: Cache Chromium
-      uses: actions/cache@v6.1.0
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/ms-playwright
         key: contexer-chromium-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
@@ -69,10 +69,13 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        # Inputs reach the script as variables: written into it, a quote in one would end the string.
+        CONTEXER_URL: ${{ inputs.url }}
+        POST_STATUS: ${{ inputs.post-status }}
       run: |
         args=(replay --dir . --json)
-        if [ -n "${{ inputs.url }}" ]; then args+=(--url "${{ inputs.url }}"); fi
-        if [ "${{ inputs.post-status }}" = "true" ]; then args+=(--github); fi
+        if [ -n "$CONTEXER_URL" ]; then args+=(--url "$CONTEXER_URL"); fi
+        if [ "$POST_STATUS" = "true" ]; then args+=(--github); fi
         set +e
         contexer "${args[@]}" > "$RUNNER_TEMP/contexer-result.json"
         code=$?
@@ -83,7 +86,7 @@ runs:
 
     - name: Upload evidence report
       if: always()
-      uses: actions/upload-artifact@v7.0.2
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: contexer-report
         path: ${{ inputs.working-directory }}/.contexer/runs/

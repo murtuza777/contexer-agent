@@ -75,6 +75,7 @@ The same groups as `contexer --help`:
 | **CI and GitHub** | |
 | `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
 | `contexer issue draft N` / `build N --by LOGIN` / `event` | Post an issue's checks for approval; build them once approved; in Actions, act on the triggering event |
+| `contexer issue event --hand-over DIR` / `issue publish DIR` | The issue workflow in two jobs: the first builds with a token that cannot write and leaves the change as a patch in DIR; the second checks the patch, pushes it and opens the pull request, and runs nothing of the project |
 | **More** | |
 | `contexer models [--provider P] [--free] [--search S]` | A provider's models; `--providers` lists every provider and the keys you have |
 | `contexer bench [--live]` | Seeded-bug benchmark: catch rate and false-failure rate |
