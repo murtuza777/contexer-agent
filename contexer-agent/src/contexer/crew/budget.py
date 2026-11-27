@@ -63,37 +63,52 @@ class Budget:
     def tokens(self) -> int:
         return self.tokens_in + self.tokens_out
 
-    def _rates(self, model: Any) -> tuple[float, float] | None:
-        """US dollars per million tokens in and out for a call to ``model``, or None when nobody says.
+    def _rates(self, model: Any) -> tuple[float, float, float] | None:
+        """US dollars per million tokens of input, output and cached input for a call to ``model``; None when nobody says.
 
         The project's rates are an override and apply to every model. Without them the model's own
         record is asked, and only a record that states both prices counts: half a price is no price.
+        Cached input costs what the record says. Where nobody says (the project's pair has no cached
+        rate), it is priced as input, so an estimate errs upward.
         """
         if self.input_usd_per_mtok is not None or self.output_usd_per_mtok is not None:
-            return self.input_usd_per_mtok or 0.0, self.output_usd_per_mtok or 0.0
+            rate_in = self.input_usd_per_mtok or 0.0
+            return rate_in, self.output_usd_per_mtok or 0.0, rate_in
         if model is None:
             return None
         record = capabilities_of(model)
         listed_in, listed_out = record.input_usd_per_mtok.value, record.output_usd_per_mtok.value
-        return None if listed_in is None or listed_out is None else (listed_in, listed_out)
+        if listed_in is None or listed_out is None:
+            return None
+        cached = record.cached_input_usd_per_mtok.value
+        return listed_in, listed_out, listed_in if cached is None else cached
 
-    def price(self, tokens_in: int, tokens_out: int, model: Any = None) -> float | None:
-        """What these tokens cost at the project's rates, else at the prices of ``model``; None when neither is known."""
+    def price(self, tokens_in: int, tokens_out: int, model: Any = None, cached_in: int = 0) -> float | None:
+        """What these tokens cost at the project's rates, else at the prices of ``model``; None when neither is known.
+
+        ``cached_in`` is the part of ``tokens_in`` the provider read from its cache.
+        """
         rates = self._rates(model)
         if rates is None:
             return None
-        return (max(0, tokens_in) * rates[0] + max(0, tokens_out) * rates[1]) / 1_000_000
+        tokens_in, tokens_out = max(0, tokens_in), max(0, tokens_out)
+        cached_in = min(max(0, cached_in), tokens_in)
+        return ((tokens_in - cached_in) * rates[0] + tokens_out * rates[1] + cached_in * rates[2]) / 1_000_000
 
-    def cost_of(self, tokens_in: int, tokens_out: int, reported: float | None, model: Any = None) -> float | None:
+    def cost_of(
+        self, tokens_in: int, tokens_out: int, reported: float | None, model: Any = None, cached_in: int = 0
+    ) -> float | None:
         """The cost to record for a call: what the provider reported, else its price (``price``)."""
-        return reported if reported is not None else self.price(tokens_in, tokens_out, model)
+        return reported if reported is not None else self.price(tokens_in, tokens_out, model, cached_in)
 
-    def spend(self, tokens_in: int, tokens_out: int, cost_usd: float | None = None, *, model: Any = None) -> float | None:
+    def spend(
+        self, tokens_in: int, tokens_out: int, cost_usd: float | None = None, *, model: Any = None, cached_in: int = 0
+    ) -> float | None:
         """Count one call to ``model``; returns the cost that was recorded for it, or None when it is not known."""
         self.tokens_in += max(0, tokens_in)
         self.tokens_out += max(0, tokens_out)
         if cost_usd is None:
-            cost_usd = self.price(tokens_in, tokens_out, model)
+            cost_usd = self.price(tokens_in, tokens_out, model, cached_in)
             if cost_usd is not None:
                 self.estimated = True
         if cost_usd is not None:

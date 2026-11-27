@@ -261,6 +261,8 @@ class _Run:
                 seconds=_elapsed(called),
                 tokens_in=int(usage.get("input_tokens") or 0),
                 tokens_out=int(usage.get("output_tokens") or 0),
+                # The part of tokens_in the provider read from its cache; None when it did not say.
+                tokens_cached=cached_tokens(reply),
                 cost_usd=reported_cost(reply),
                 text=str(reply.text),
                 tool_calls=[{"name": call["name"], "args": call["args"]} for call in reply.tool_calls],
@@ -478,9 +480,10 @@ class _Run:
         usage: dict[str, Any] = dict((reply.usage_metadata if reply is not None else None) or {})
         tokens_in, tokens_out = int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
         reported = reported_cost(reply) if reply is not None else None
+        cached = cached_tokens(reply) if reply is not None else None
         cost = reported
         if self.budget is not None and reply is not None:
-            cost = self.budget.cost_of(tokens_in, tokens_out, reported, self.model)
+            cost = self.budget.cost_of(tokens_in, tokens_out, reported, self.model, cached or 0)
         metadata = (reply.response_metadata if reply is not None else None) or {}
         answered = metadata.get("model_name") or metadata.get("model")
         finish = _finish_reason(reply) if reply is not None else ""
@@ -493,7 +496,7 @@ class _Run:
             "gen_ai.usage.input_tokens": tokens_in,
             "gen_ai.usage.output_tokens": tokens_out,
             # None: the provider did not say. That is not the same as nothing cached.
-            "gen_ai.usage.cache_read.input_tokens": (usage.get("input_token_details") or {}).get("cache_read"),
+            "gen_ai.usage.cache_read.input_tokens": cached,
             "gen_ai.response.finish_reasons": [finish] if finish else [],
             "contexer.step": self.result.steps,
             "contexer.seconds": _elapsed(called),
@@ -526,10 +529,25 @@ class _Run:
         if self.budget is not None:
             # The budget knows the prices: a call the provider did not price comes back priced for this model.
             cost = self.budget.spend(
-                int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), cost, model=self.model
+                int(usage.get("input_tokens") or 0),
+                int(usage.get("output_tokens") or 0),
+                cost,
+                model=self.model,
+                cached_in=cached_tokens(reply) or 0,
             )
         if cost is not None:
             self.result.cost_usd = (self.result.cost_usd or 0.0) + cost
+
+
+def cached_tokens(reply: AIMessage) -> int | None:
+    """How many of the reply's input tokens the provider read from its cache; None when it did not say.
+
+    They are part of ``input_tokens``, not on top of it. LangChain puts them in one place for every
+    provider (an OpenAI-compatible ``prompt_tokens_details.cached_tokens``, Anthropic's ``cache_read_input_tokens``).
+    """
+    details: Any = (reply.usage_metadata or {}).get("input_token_details") or {}
+    cached = details.get("cache_read")
+    return cached if isinstance(cached, int) and not isinstance(cached, bool) else None
 
 
 def reported_cost(reply: AIMessage) -> float | None:

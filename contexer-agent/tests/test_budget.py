@@ -15,7 +15,7 @@ from contexer.crew.estimate import estimate_run
 from contexer.graph import GraphController
 from contexer.llm import capabilities
 from contexer.llm.capabilities import Fact, ModelCapabilities
-from tests.fakes import AgentScript, ScriptedChatModel, submit
+from tests.fakes import AgentScript, ScriptedChatModel, calls, submit
 from tests.loop_helpers import BROKEN_JS, COUNT_BUG_JS, GOOD_JS, RecordingAgent, contract, copy_todo, fast_runner
 
 pytestmark = pytest.mark.anyio
@@ -140,6 +140,47 @@ async def test_a_run_with_two_models_bills_each_agent_at_its_own_models_price(pr
         input_usd, output_usd = prices[usage.agent]
         assert usage.cost_usd == pytest.approx((usage.tokens_in * input_usd + usage.tokens_out * output_usd) / 1_000_000)
     assert outcome.crew_cost_usd == pytest.approx(budget.cost_usd) and outcome.crew_cost_estimated
+
+
+# -- COST-2: cached input ----------------------------------------------------------------------------
+
+
+def test_the_cached_part_of_the_input_is_priced_at_the_cached_price(monkeypatch: pytest.MonkeyPatch) -> None:
+    caching = _listed(monkeypatch, ScriptedChatModel(), "caching-model", 10.0, 20.0, 1.0)
+    budget = Budget()
+    assert budget.spend(1_000_000, 0, model=caching, cached_in=800_000) == pytest.approx(0.2 * 10.0 + 0.8 * 1.0)
+    assert budget.tokens_in == 1_000_000  # cached tokens are part of the input, not on top of it
+
+    plain = _listed(monkeypatch, ScriptedChatModel(), "plain-model", 10.0, 20.0)
+    assert Budget().spend(1_000_000, 0, model=plain, cached_in=800_000) == pytest.approx(10.0)  # no cached price known: the full one
+    rated = Budget(input_usd_per_mtok=2.0, output_usd_per_mtok=10.0)  # the project's pair has no cached rate
+    assert rated.spend(1_000_000, 0, model=caching, cached_in=800_000) == pytest.approx(2.0)
+
+
+async def test_cached_tokens_reach_the_transcript_the_trace_and_the_bill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import BaseModel
+
+    from contexer.crew import AgentSpec, run_agent
+    from contexer.crew.transcript import read_transcript
+    from contexer.evidence.rundir import TRACE_FILE
+
+    class Report(BaseModel):
+        summary: str
+
+    reply = calls(("submit", {"summary": "fine"}), tokens=(1000, 10))
+    reply.usage_metadata["input_token_details"] = {"cache_read": 800}  # type: ignore[index]
+    model = _listed(monkeypatch, ScriptedChatModel(reply), "caching-model", 10.0, 20.0, 1.0)
+    budget = Budget()
+    spec = AgentSpec(name="tester", system_prompt="You test web apps.", output_schema=Report)
+    result = await run_agent(spec, model, [], "Test the shop.", run_dir=tmp_path, budget=budget)
+
+    cost = (200 * 10.0 + 800 * 1.0 + 10 * 20.0) / 1_000_000
+    assert result.cost_usd == pytest.approx(cost) and budget.cost_usd == pytest.approx(cost)
+    [said] = [line for line in read_transcript(tmp_path / "agents" / "tester.jsonl") if line["event"] == "model"]
+    assert (said["tokens_in"], said["tokens_cached"]) == (1000, 800)
+    [traced] = [line for line in read_transcript(tmp_path / TRACE_FILE) if line["event"] == "model"]
+    assert traced["gen_ai.usage.cache_read.input_tokens"] == 800
+    assert traced["contexer.cost_usd"] == pytest.approx(cost) and traced["contexer.cost_estimated"] is True
 
 
 # -- configuration ---------------------------------------------------------------------------------
