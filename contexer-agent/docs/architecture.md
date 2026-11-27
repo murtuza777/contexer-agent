@@ -661,9 +661,16 @@ Checks approved again after work began go from `approve` straight to
     package first published in the last 30 days is a medium one, or a
     high one when its name is one edit from a much used package; an older
     package with such a name is a low one. About sixty much used names
-    per registry are not looked up. A project that sets its own registry
-    (`.npmrc`, `pip.conf`, an index option in the requirements file, a uv
-    or Poetry source) is not looked up: a low note says so. A lookup that
+    per registry are not looked up. Where a registry other than the public
+    one is set, nothing is looked up for that ecosystem and a low note
+    says so. It is looked for in the project (`.npmrc`, `pip.conf`, an
+    index option in the requirements file, a uv or Poetry source) and for
+    the person (`~/.npmrc` or the file `NPM_CONFIG_USERCONFIG` names,
+    pip's user and system configuration files, and `npm_config_registry`,
+    `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`). Only the lines that set a
+    registry are read, and the note names the place, never the address.
+    `[review] dependency_lookup = false` in `contexer.toml` turns the
+    lookup off: no request, no note. A lookup that
     fails is a low note that says nothing was checked, and the registry
     is not asked again in that review. Packages from a path, a git
     address or a URL are not looked up.
@@ -1683,6 +1690,7 @@ and prints the fix under each problem.
 | `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins. Read by `run` and `test`. Refused at the start when part of the spend cannot be known |
 | `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens for every model, used when the provider reports no cost. Without them a call is priced from its model's own record, when that states a price |
 | `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer`. Read by `run` and `test`. `provider` needs `model`; a model that cannot be built stops the command |
+| `[review] dependency_lookup` | `true` | Whether the review asks npm or PyPI about each package a change adds. `false`: no request, no note. A misspelt key in `[review]` is an error |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
 | `[limits] cost_usd` | none | Cost limit for the same. Refused at the start when a model that will be called has no known price |
 

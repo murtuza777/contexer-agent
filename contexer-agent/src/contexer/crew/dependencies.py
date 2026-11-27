@@ -7,7 +7,9 @@ PyPI) three things: is there a package by that name, when was it first published
 
 No model takes part. The only thing sent is the package's name, in the address of one GET request, and
 only to ``registry.npmjs.org`` or ``pypi.org``. A project that sets its own registry is not looked up
-at all: its packages may be private, and their names are not the public registry's business.
+at all: its packages may be private, and their names are not the public registry's business. That
+registry may be set in the project or for the person (``~/.npmrc``, pip's configuration, the
+environment). ``[review] dependency_lookup = false`` in ``contexer.toml`` turns the lookup off.
 
 A lookup that fails says so and proves nothing: it is never read as "the package is fine" and never as
 "the package is missing".
@@ -16,6 +18,7 @@ A lookup that fails says so and proves nothing: it is never read as "the package
 from __future__ import annotations
 
 import json
+import os
 import re
 import tomllib
 from collections.abc import Callable, Iterable, Sequence
@@ -285,7 +288,7 @@ def dependency_findings(
             continue
         own = _own_registry(package, project_dir)
         if own:
-            unchecked.setdefault((package.file, f"not looked up on {label}: the project sets its own registry ({own})"), []).append(package)
+            unchecked.setdefault((package.file, f"not looked up on {label}: this project is installed from its own registry (set in {own})"), []).append(package)
             continue
         if package.registry in down:
             unchecked.setdefault((package.file, down[package.registry]), []).append(package)
@@ -364,16 +367,71 @@ def _one_edit(a: str, b: str) -> bool:
     return longer[start + 1 :] == shorter[start:]
 
 
-def _own_registry(package: AddedPackage, project_dir: Path) -> str:
-    """Where the project says its packages come from, when that is not the public registry; '' otherwise.
+_NPM_REGISTRY = re.compile(r"^\s*(?:@[^:\s=]+:)?registry\s*=\s*(\S+)")
+_PIP_INDEX = re.compile(r"^\s*(?:extra-)?index-url\s*[=:]\s*(\S+)")
+_PUBLIC_HOST = {"npm": "registry.npmjs.org", "pypi": "pypi.org"}
+# pip's configuration for every user of the machine. A tuple so that a test can empty it.
+_SYSTEM_PIP_CONFIG: tuple[Path, ...] = (Path("/etc/pip.conf"), Path("/etc/xdg/pip/pip.conf"))
 
-    Only files in the project are read: a registry set in the person's home directory is not seen.
+
+def _elsewhere(registry: Registry, address: str) -> bool:
+    """True when ``address`` is a registry other than the public one. The address is compared and never kept."""
+    return bool(address.strip()) and _PUBLIC_HOST[registry] not in address.lower()
+
+
+def _sets_registry(registry: Registry, path: Path) -> bool:
+    """True when the configuration file at ``path`` sends installs somewhere other than the public registry.
+
+    Only the lines that set a registry are looked at. The rest of such a file can hold tokens; nothing
+    of it is kept, logged or put in a note.
     """
+    pattern = _NPM_REGISTRY if registry == "npm" else _PIP_INDEX
+    try:
+        if not path.is_file() or path.stat().st_size > _MAX_MANIFEST_BYTES:
+            return False
+        with path.open(encoding="utf-8", errors="replace") as lines:
+            return any(_elsewhere(registry, match.group(1)) for match in map(pattern.match, lines) if match)
+    except OSError:
+        return False
+
+
+def _user_registry(registry: Registry) -> str:
+    """Where the person (not the project) set a registry of their own: an environment variable or a file in their home; '' when nowhere."""
+    env = os.environ
+    home = Path.home()
+    if registry == "npm":
+        for name in ("npm_config_registry", "NPM_CONFIG_REGISTRY"):
+            if _elsewhere("npm", env.get(name, "")):
+                return "the environment variable npm_config_registry"
+        named = env.get("npm_config_userconfig") or env.get("NPM_CONFIG_USERCONFIG")
+        return "~/.npmrc" if _sets_registry("npm", Path(named) if named else home / ".npmrc") else ""
+    for name in ("PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL"):
+        if _elsewhere("pypi", env.get(name, "")):
+            return f"the environment variable {name}"
+    files = [
+        Path(env["PIP_CONFIG_FILE"]) if env.get("PIP_CONFIG_FILE") else None,
+        Path(env["APPDATA"]) / "pip" / "pip.ini" if env.get("APPDATA") else None,
+        Path(env.get("XDG_CONFIG_HOME") or home / ".config") / "pip" / "pip.conf",
+        home / ".pip" / "pip.conf",
+        home / "pip" / "pip.ini",
+        home / "Library" / "Application Support" / "pip" / "pip.conf",
+        *_SYSTEM_PIP_CONFIG,
+    ]
+    return "the user's pip configuration" if any(_sets_registry("pypi", path) for path in files if path) else ""
+
+
+def _own_registry(package: AddedPackage, project_dir: Path) -> str:
+    """Where it is said that packages come from somewhere other than the public registry; '' when nowhere.
+
+    Looked for in the project (``.npmrc``, ``pip.conf``, the manifest itself) and then for the person:
+    ``~/.npmrc``, pip's configuration files, and the environment variables npm and pip read. What is
+    returned names the place, never the address: an address can carry a password.
+    """
+    root = Path(project_dir)
     if package.registry == "npm":
-        text = _read(project_dir, ".npmrc") or ""
-        return ".npmrc" if re.search(r"(?m)^\s*(?:@[^:\s]+:)?registry\s*=", text) else ""
+        return ".npmrc" if _sets_registry("npm", root / ".npmrc") else _user_registry("npm")
     for name in ("pip.conf", "pip.ini"):
-        if _read(project_dir, name) is not None:
+        if _sets_registry("pypi", root / name):
             return name
     text = _read(project_dir, package.file) or ""
     if package.file.endswith(".toml"):
@@ -382,5 +440,8 @@ def _own_registry(package: AddedPackage, project_dir: Path) -> str:
         except tomllib.TOMLDecodeError:
             return ""
         uv, poetry = tool.get("uv", {}), tool.get("poetry", {})
-        return package.file if (isinstance(uv, dict) and uv.get("index")) or (isinstance(poetry, dict) and poetry.get("source")) else ""
-    return package.file if any(_OWN_INDEX.match(line) for line in text.splitlines()) else ""
+        if (isinstance(uv, dict) and uv.get("index")) or (isinstance(poetry, dict) and poetry.get("source")):
+            return package.file
+    elif any(_OWN_INDEX.match(line) for line in text.splitlines()):
+        return package.file
+    return _user_registry("pypi")

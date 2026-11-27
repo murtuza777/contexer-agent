@@ -563,6 +563,7 @@ async def review(
     sources: Sequence[ContextSource] = (),
     plan: str = "",
     lookup: Lookup | None = registry_lookup,
+    dependency_lookup: bool = True,
     run_project_commands: bool = True,
     command_timeout: float = DEFAULT_COMMAND_TIMEOUT,
     run_dir: Path | None = None,
@@ -577,12 +578,13 @@ async def review(
     ``plan`` is the Planner's brief and the Diagnoser's leads as text: the files they name are the ones
     the change was expected to touch (``scope_notes``).
     ``lookup`` asks a package registry about a name (``crew/dependencies.py``); None looks nothing up.
+    ``dependency_lookup`` is the project's ``[review] dependency_lookup``: False makes no request and no note.
     """
     result = ReviewResult()
     if not diff.strip():
         return result
     result.notes = prescan(diff) + scope_notes(diff, project_dir, intent, checks, plan)
-    if lookup is not None:
+    if lookup is not None and dependency_lookup:
         result.notes += dependency_notes(diff, project_dir, lookup)
     if run_project_commands:
         result.commands = run_commands(project_dir, project_commands(project_dir), command_timeout)
