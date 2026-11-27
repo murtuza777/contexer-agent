@@ -14,6 +14,8 @@ from contexer.contract.store import ensure_contexer_dir
 RUNS_DIR = "runs"
 # One line per run event, model call and tool call of a run (crew/transcript.py: Trace).
 TRACE_FILE = "trace.jsonl"
+# What the coding agent was sent for an attempt, masked, in that attempt's folder (graph/nodes.py: coder_turn).
+PROMPT_FILE = "prompt.md"
 
 
 @dataclass(frozen=True)

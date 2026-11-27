@@ -13,7 +13,7 @@ import html
 import json
 from pathlib import Path
 
-from contexer.evidence.rundir import RunDir, write_whole
+from contexer.evidence.rundir import PROMPT_FILE, RunDir, write_whole
 from contexer.evidence.screenshots import image_in_run
 from contexer.gate.models import AgentRunSummary, ContractOutcome, RunResult
 from contexer.verification.models import CriterionResult
@@ -250,7 +250,7 @@ def _agent_run_section(result: RunResult) -> str:
             else ""
         )
         rows.append(
-            f"<tr><td>{a.n}{best}</td><td>{_e(a.kind)}{_e(session)}</td>"
+            f"<tr><td>{a.n}{best}</td><td>{_e(a.kind)}{_e(session)}{_prompt(result.run_dir, a.n)}</td>"
             f"<td>{_e(status)}<div class='muted'>{a.duration_seconds:.0f}s{_e(cost)}</div></td>"
             f"<td>{_e(files) or '<span class=muted>none</span>'}</td>"
             f"<td><span class='{_OUTCOME_CLASS.get(a.outcome, 'muted')}'>{_e(_OUTCOME_LABELS.get(a.outcome, a.outcome))}</span>"
@@ -274,6 +274,39 @@ def _agent_run_section(result: RunResult) -> str:
   {_loop_details(run)}
   {diff}
 </section>"""
+
+
+# A prompt longer than this is cut in the report; the file in the attempt's folder is whole.
+_PROMPT_CHARS = 60_000
+
+
+def _prompt(run_dir: str, n: int) -> str:
+    """What the coding agent was sent for attempt ``n``, from the file the run kept. Empty when there is none.
+
+    The file was masked when it was written. It is read only as a plain file inside the run's folder:
+    in Actions the report is uploaded, so a link out of the folder is not followed.
+    """
+    if not run_dir:
+        return ""
+    name = f"attempt-{n}/{PROMPT_FILE}"
+    try:
+        folder = Path(run_dir).resolve()
+        file = (folder / name).resolve()
+        if not file.is_relative_to(folder) or not file.is_file():
+            return ""
+        with file.open(encoding="utf-8", errors="replace") as handle:
+            text = handle.read(_PROMPT_CHARS + 1)
+    except OSError:
+        return ""
+    cut = ""
+    if len(text) > _PROMPT_CHARS:
+        text = text[:_PROMPT_CHARS]
+        cut = f"<p class='muted'>Cut here; the whole text is in <code>{_e(name)}</code>.</p>"
+    return (
+        "<details><summary class='muted'>What the coding agent was asked</summary>"
+        f"<p class='muted'><code>{_e(name)}</code> in the run folder, with secrets masked. It can quote text from the app.</p>"
+        f"<pre>{_e(text)}</pre>{cut}</details>"
+    )
 
 
 _MOVE_LABELS = {

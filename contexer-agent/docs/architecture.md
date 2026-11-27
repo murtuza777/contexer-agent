@@ -1292,7 +1292,8 @@ result.json            the RunResult, without the page's HTML, text and base64 s
 run.json               contexer run only: the whole RunOutcome (attempts, agent turns, diff, cost)
 server.log             the dev server's output
 checks/<contract>/     per-check screenshots (and traces when kept)
-attempt-<n>/           contexer run: the same, per attempt (plus run-result.json)
+attempt-<n>/           contexer run: the same, per attempt (plus run-result.json, and prompt.md:
+                       what the coding agent was sent, secrets masked; it can quote the app's pages)
 checkpoint.sqlite      contexer run: the state after every node; what --resume reads
 agents/<name>.jsonl    one transcript per Contexer agent (crew/), secrets masked
 trace.jsonl            every run event, model call and tool call in order; no prompts or page content
