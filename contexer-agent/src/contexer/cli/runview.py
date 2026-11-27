@@ -177,6 +177,9 @@ class RunView:
             mark = term.mark(_STATE_MARK.get(str(row.get("verdict")), "open"))
             why = str(row.get("evidence") or "").strip()
             name = escape(described.get(str(row.get("id")), str(row.get("id"))))
+            if term.is_plain(self.console):  # --plain: a check and what the browser saw are one line
+                self._line(f"      {mark} {name}" + (f": {escape(' '.join(why.split()))}" if why else ""))
+                continue
             table.add_row(mark, name + (f"\n[dim]{escape(why)}[/]" if why else ""))
         if table.row_count:
             self.console.print(Padding(table, (0, 0, 0, 6), expand=False), highlight=False)

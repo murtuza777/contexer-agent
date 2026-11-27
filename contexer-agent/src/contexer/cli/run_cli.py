@@ -109,24 +109,58 @@ def run(
     correct: str | None = typer.Option(
         None, "--correct", help="With --resume: a correction to what done means, applied first."
     ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="No colour, nothing redrawn, marks as words (ok:, not ok:): one line per event, for a CI log, a pipe or a screen reader.",
+    ),
 ) -> None:
     """Turn a goal into approved checks, have a coding agent build it, prove it, and repair until it passes."""
+    # With --json nothing is printed but events; an error then goes to stderr (term.error).
+    console = Console(quiet=True) if json_output else term.plain_console() if plain else Console()
+
+    def refuse(why: str, next_step: str) -> NoReturn:
+        """Nothing ran and nothing was spent. Every error of this command has one form (term.error)."""
+        _fail(console, "Not started", why, next_step, code=2)
+
     if sum((bool(goal), bool(contract_id), issue is not None, bool(resume))) != 1:
-        raise typer.BadParameter("give a GOAL, --contract ID, --issue N or --resume RUN")
-    one_engine(engine)
+        refuse(
+            "give a GOAL, --contract ID, --issue N or --resume RUN: exactly one of them says what to run",
+            '`contexer run "what should be true when the work is done"`, or `contexer run --help` for the others.',
+        )
+    try:
+        one_engine(engine)
+    except typer.BadParameter as exc:
+        refuse(exc.message, "drop --engine, or unset CONTEXER_ENGINE, and run again.")
     if correct and not resume:
-        raise typer.BadParameter("--correct goes with --resume RUN: it corrects a run that was stopped")
+        refuse(
+            "--correct goes with --resume RUN: it corrects a run that was stopped",
+            '`contexer run --resume RUN --correct "..."`; `contexer runs` lists the runs.',
+        )
     if screenshots and not (pr or issue is not None):
-        raise typer.BadParameter("--screenshots goes with --pr or --issue N: the pull request is where they are shown")
+        refuse(
+            "--screenshots goes with --pr or --issue N: the pull request is where they are shown",
+            "add --pr, or drop --screenshots.",
+        )
+    if json_output and plain:
+        refuse(
+            "--plain and --json are two forms of output",
+            "choose one: --json for a tool that reads events, --plain for a log a person reads.",
+        )
     if json_output and not (yes or resume):
-        raise typer.BadParameter("--json cannot stop to ask for an approval: add --yes, or approve the contract first")
-    console = Console(quiet=True) if json_output else Console()
+        refuse(
+            "--json cannot stop to ask for an approval",
+            "add --yes, or approve the checks first (`contexer contract approve ID`) and pass --contract ID.",
+        )
     project = project_dir.resolve()
     if shutil.which("git") is None:
-        raise typer.BadParameter("git is not installed. Contexer snapshots your project with git before an agent touches it.")
+        refuse(
+            "git is not installed, and Contexer snapshots your project with git before an agent touches it",
+            "install git, then run again.",
+        )
     unsafe = unsafe_work_tree(project)
     if unsafe:
-        raise typer.BadParameter(f"{unsafe}; run Contexer in your app's folder, or pass --dir")
+        refuse(unsafe, "run Contexer in your app's folder, or pass --dir PATH.")
     for risk in scan_project(project):  # before anything is spent; a warning, never a refusal
         term.note(console, "warn", escape(risk.message))
     pr = pr or issue is not None  # work on an issue ends in a pull request that closes it
@@ -135,18 +169,23 @@ def run(
         try:
             handoff_plan = plan_handoff(project)  # before anything is spent
         except HandoffError as exc:
-            console.print(f"[red]Cannot open a pull request:[/] {escape(str(exc))}")
-            raise typer.Exit(code=3) from exc
+            _fail(
+                console,
+                "Cannot open a pull request",
+                str(exc),
+                "set that right and run again, or run without --pr: the result then stays in the project folder.",
+                code=3,
+            )
     load_project_env(project)  # model keys for the drafting model and the coding agent
     try:
         config = load_project_config(project)
     except ProjectConfigError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        refuse(str(exc), "correct contexer.toml, then run again.")
     store = ContractStore(project)
     try:
         agent = create_agent(*choose_agent(config.agent, agent_name, model))
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        refuse(str(exc), "--agent takes claude-code, codex or opencode; `contexer doctor` shows which are installed.")
     settings = RunSettings(
         max_repair_rounds=rounds if rounds is not None else config.agent.max_repair_rounds,
         budget_usd=budget if budget is not None else config.agent.budget_usd,
@@ -171,13 +210,13 @@ def run(
             else {}
         )
     except AgentSettingError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        refuse(str(exc), "correct the model under [agents] in contexer.toml, or remove the line to use the default model.")
     # Before anything is spent: a dollar limit that would count unknown spend as 0 is refused, not ignored.
     called = [models_for_crew.get(name) or model_for_crew for name in RUN_AGENTS] if model_for_crew is not None else []
     cannot_keep = unenforceable(crew_budget, models=called, coding_agent="" if agent.reports_cost else agent.name)
     if cannot_keep:
-        term.note(console, "fail", escape(cannot_keep))
-        raise typer.Exit(code=2)
+        why, _, remedy = cannot_keep.partition(". ")  # the sentence that says what, then the one that says what to do
+        refuse(why, remedy or "remove the limit, or set what it needs, and run again.")
     draft_id: str | None = None
     contract: Contract | None = None
     graph_preview: RunResult | None = None
@@ -188,7 +227,7 @@ def run(
         try:
             contract = store.load(contract_id)
         except ContractError as exc:
-            raise typer.BadParameter(str(exc)) from exc
+            refuse(str(exc), "`contexer contract list` shows the contracts of this project.")
     elif goal and model_for_crew is None:
         # No model for the Intent agent: the checks are drafted the 0.4 way, and approved before the run.
         drafting = compiler_llm(project)
@@ -318,18 +357,16 @@ def _take_lock(console: Console, activity: Any, agent: CodingAgentAdapter, proje
     except RunLocked as exc:
         activity.stop()
         agent.close()
-        term.note(console, "fail", f"[red]Not started:[/] {escape(str(exc))}")
-        raise typer.Exit(code=2) from None
+        why, _, wait = str(exc).partition(". ")  # the lock's message says who holds it, then what to do
+        _fail(console, "Not started", why, wait or "run again when that run has ended.", code=2)
     return stack
 
 
 def _snapshot_failed(console: Console, activity: Any, exc: Exception) -> NoReturn:
     """Contexer snapshots the project with git. When that fails there is nothing safe to go on with."""
     activity.stop()
-    hint = "Install git and run again." if shutil.which("git") is None else "Your files are as the last step left them; `contexer runs` lists what was saved."
-    term.note(console, "fail", f"[red]Could not snapshot the project:[/] {escape(str(exc))}")
-    console.print(f"  {escape(hint)}")
-    raise typer.Exit(code=3) from None
+    hint = "install git and run again." if shutil.which("git") is None else "your files are as the last step left them; `contexer runs` lists what was saved."
+    _fail(console, "Could not snapshot the project", str(exc), hint, code=3)
 
 
 def _fail(console: Console, what: str, why: str, next_step: str, code: int) -> NoReturn:
@@ -815,13 +852,17 @@ def execute_graph(
         _snapshot_failed(console, activity, exc)
     except ResumeError as exc:
         activity.stop()
-        term.note(console, "fail", f"[red]Cannot resume:[/] {escape(str(exc))}")
-        raise typer.Exit(code=2) from None
+        _fail(console, "Cannot resume", str(exc), "`contexer runs` lists the runs of this project and how each ended.", code=2)
     except (KeyboardInterrupt, typer.Abort, asyncio.CancelledError):
         activity.stop()
         if controller.last_outcome is None:  # stopped before the first snapshot
-            term.note(console, "warn", "Stopped. Nothing was changed.")
-            raise typer.Exit(code=130) from None
+            _fail(
+                console,
+                "Stopped",
+                "the run was stopped before its first snapshot, so nothing was changed",
+                "run the same command to start again.",
+                code=130,
+            )
         outcome = controller.last_outcome
     finally:
         activity.stop()
@@ -839,15 +880,23 @@ def issue_goal(console: Console, plan: HandoffPlan | None, number: int, store: C
     """The goal an issue describes (its title and text), and a contract id that names the issue."""
     token = github_token()
     if plan is None or plan.repo is None or token is None:
-        missing = "a GitHub token (GITHUB_TOKEN, or `gh auth login`)" if token is None else "a GitHub remote"
-        console.print(f"[red]Cannot read issue #{number}:[/] the project needs {missing}.")
-        raise typer.Exit(code=3)
+        missing, get_it = (
+            ("a GitHub token", "`gh auth login`, or set GITHUB_TOKEN, then run again.")
+            if token is None
+            else ("a GitHub remote", "`git remote add origin URL` with the repository the issue is in, then run again.")
+        )
+        _fail(console, f"Cannot read issue #{number}", f"the project needs {missing}", get_it, code=3)
     try:
         with GitHubClient(plan.repo, token) as client:
             found = client.issue(number)
     except GitHubError as exc:
-        console.print(f"[red]Cannot read issue #{number}:[/] {escape(str(exc))}")
-        raise typer.Exit(code=3) from exc
+        _fail(
+            console,
+            f"Cannot read issue #{number}",
+            str(exc),
+            f"check that the issue is in {plan.repo} and that the token can read it, then run again.",
+            code=3,
+        )
     if found.get("state") == "closed":
         console.print(f"[yellow]Issue #{number} is closed;[/] working on it anyway.")
     # The same reading as the Actions path: without what GitHub does not show (HTML comments, invisible
@@ -904,13 +953,13 @@ def _approve(
     warn_if_weak_draft(console, contract, analyzer.last_error if analyzer else None)
     if yes and contract.source == "rules":
         # Building against a rule-based fallback wastes the agent's budget on a contract nobody chose.
-        term.note(
+        _fail(
             console,
-            "warn",
-            f"Not approved: --yes never approves a weak draft. Review {escape(str(store.path_for(contract.id)))}, "
-            f"then `contexer contract approve {escape(contract.id)}`.",
+            "Not approved",
+            "--yes never approves a weak draft, and these checks came from fixed rules, not from a model",
+            f"review {store.path_for(contract.id)}, then `contexer contract approve {contract.id}`.",
+            code=2,
         )
-        raise typer.Exit(code=2)
     console.print()
     store.save(contract)
     if not yes and not is_interactive():
@@ -982,14 +1031,12 @@ def check_free_quota(
     )
     console.print()
     if quota.remaining <= 0:
-        term.note(console, "fail", "[bold red]No free requests left today[/]")
-        console.print(f"  {escape(detail)}\n  {escape(remedy)}")
-        raise typer.Exit(code=3)
+        _fail(console, "No free requests left today", detail, remedy, code=3)
     low = quota.remaining < discovery.LOW_FREE_REQUESTS
     term.note(console, "warn", "[bold yellow]Few free requests left[/]" if low else "[yellow]This run can use more free requests than are left[/]")
     console.print(f"  {escape(detail)}\n  If they run out, the run stops and keeps its best attempt. {escape(remedy)}")
     if low and not yes and not typer.confirm("Start anyway?", default=False):
-        raise typer.Exit(code=2)
+        _fail(console, "Not started", "you answered no with few free requests left", remedy, code=2)
 
 
 def choose_agent(project: AgentSettings, flag_name: str | None, flag_model: str | None) -> tuple[str, str | None]:
