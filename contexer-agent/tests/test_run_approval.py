@@ -178,9 +178,12 @@ def test_e_opens_the_contract_in_the_editor_and_what_comes_back_is_shown_and_ask
 def test_an_edit_alone_approves_nothing(project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal: None) -> None:
     _editor(tmp_path, monkeypatch, DROP_LAST)
     result = _goal_run(project, tmp_path, monkeypatch, input="e\nn\n")
+    out = _plain(result.output)
     assert result.exit_code == 2, result.output
     stored = _only(project)
-    assert stored.status == "draft" and len(stored.criteria) == len(contract_checks()) - 1  # the edit is kept, as a draft
+    # Nobody approved the edit, so the contract is as it was drafted, and the run says that and nothing else about it.
+    assert stored.status == "draft" and len(stored.criteria) == len(contract_checks())
+    assert "back as it was drafted" in out and "changed while the app ran" not in out
 
 
 @pytest.mark.parametrize(
@@ -224,9 +227,13 @@ def test_the_editor_is_started_as_a_program_with_arguments_never_through_a_shell
     project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal: None
 ) -> None:
     started: list[Any] = []
+    real_run = run_cli.subprocess.run
 
-    def fake_run(argv: Any, **kwargs: Any) -> Any:
+    def fake_run(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(argv, list) or argv[0] != "my-editor":
+            return real_run(argv, *args, **kwargs)  # git, and whatever else the run starts
         started.append((argv, kwargs))
+        return None
 
     monkeypatch.setenv("VISUAL", "my-editor --wait")
     monkeypatch.setenv("EDITOR", "another-editor")

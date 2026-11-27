@@ -114,6 +114,22 @@ def note(console: Console, kind: str, text: str) -> None:
     console.print(f"{mark(kind)} {text}")
 
 
+def error(console: Console, what: str, why: str, next_step: str, code: int) -> None:
+    """One form for an error: what happened and why, what to do next, and the exit code.
+
+    ``✗ Cannot resume: no run '20260101-000000-abcd' in this project.``
+    ``  Next: `contexer runs` lists the runs that can be continued.``
+    ``  Exit code 2.``
+
+    All three texts are plain, not markup. On a console that prints nothing (``--json``) the error goes to
+    stderr, so it is still said and stdout stays one JSON object per line.
+    """
+    out = Console(stderr=True) if console.quiet else console
+    out.print(f"{mark('fail')} [red]{escape(what)}:[/] {escape(why)}", highlight=False)
+    out.print(f"  Next: {escape(next_step)}", highlight=False)
+    out.print(f"  [dim]Exit code {code}.[/]", highlight=False)
+
+
 def duration(seconds: float) -> str:
     if seconds < 10:
         return f"{seconds:.1f}s"
