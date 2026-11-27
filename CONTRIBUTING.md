@@ -26,8 +26,9 @@ python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integrati
 contexer bench --repeats 2
 ```
 
-The tests take about 8 minutes: they drive real Chromium, real Node process
-trees and real git. CI runs both commands on Linux for every push and pull
+The tests take about half an hour on one process and about 11 minutes with
+`-n auto` (pytest-xdist, in the `dev` extra): they drive real Chromium, real
+Node process trees and real git. CI runs both commands on Linux for every push and pull
 request.
 
 ## How work is tracked

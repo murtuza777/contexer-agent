@@ -74,8 +74,12 @@ package below is imported by a live command; none is dead.
 Not in the code, though a document or setting suggests it:
 
 - `[agents.tester]` and `[agents.challenger]` in `contexer.toml` are read
-  and never used: `contexer test` runs every agent on one model.
+  and never used: `contexer test` runs every agent on one model. **Fixed
+  2026-11-26** (`MOD-5`).
 - `max_steps` under `[agents]` reaches the Diagnoser and the Reviewer only.
+  **Partly fixed 2026-11-26** (`MOD-5`): it reaches every agent of
+  `contexer test`; inside `contexer run` it still does not reach Intent
+  and Triage.
 - `workflow/criteria.py` was to "fold into the Intent agent"; it is still
   the drafting path when no tool-calling model is configured.
 - The `classic` engine name and the `app_error` end state remain in types
@@ -180,12 +184,12 @@ results are data. Ordered by severity and by how easily it is used.
 | S2 | ~~The CLI loaded the nearest `.env` unfiltered at start~~ | Repository content; the coding agent | Medium | **Fixed 2026-11-24** (`test_no_command_takes_a_steering_name_from_the_nearest_env_file`) |
 | S3 | ~~The tamper guard ran once per turn and the hand-off committed the contract from disk~~ | The coding agent | Medium | **Fixed 2026-11-24** (`test_a_contract_rewritten_after_the_run_is_not_what_gets_committed`) |
 | S4 | ~~The secret scan read the first 200,000 characters of the diff~~ | An accident | Medium | **Fixed 2026-11-24**; reproduced first: a key after a 300 KB lockfile change was pushed (`test_a_secret_after_a_large_lockfile_change_is_still_seen_and_not_pushed`) |
-| S5 | The `grep` pattern guard misses `(a\|a)*$` and relatives. One pattern holds the interpreter lock: no timeout, no budget check, until the process is killed | A steered Diagnoser or Reviewer | Low to medium | Open; reproduced by the auditor |
-| S6 | Issue text keeps Unicode tag characters and bidi isolates, which GitHub renders as nothing. `/contexer draft` checks nobody's role in code | An issue author; any commenter | Low to medium | Open; reproduced |
-| S7 | The dev server, the install and the reset get every model key, including keys `contexer setup` saved | A dependency's install script | Low to medium | Open; partly a design choice |
-| S8 | Pull request text still live: the commit subject can say "closes #12"; bare URLs autolink | An issue author, app text | Low | Open |
-| S9 | The draft marker is accepted anywhere in any comment by Contexer's account | Whoever can get text into a status comment | Low | Plausible only |
-| S10 | Smaller: the credentials file is written before its mode is set; skills are capped on save and not on load; `.contexer/runs` and snapshot objects are never pruned; workflow templates reference `@main`; third-party Actions pinned by tag; no upper bound on five dependencies | Various | Low | Open |
+| S5 | The `grep` pattern guard misses `(a\|a)*$` and relatives. One pattern holds the interpreter lock: no timeout, no budget check, until the process is killed | A steered Diagnoser or Reviewer | Low to medium | **Fixed 2026-11-26** (`SEC-5`): literal search by default, a regular expression in a process stopped at the two-second limit |
+| S6 | Issue text keeps Unicode tag characters and bidi isolates, which GitHub renders as nothing. `/contexer draft` checks nobody's role in code | An issue author; any commenter | Low to medium | **Fixed 2026-11-26** (`SEC-6`): characters of category Cf, Co and Cn and variation selectors are removed; a draft asked for in a comment needs write access. `contexer issue draft N` typed at a terminal is not checked |
+| S7 | The dev server, the install and the reset get every model key, including keys `contexer setup` saved | A dependency's install script | Low to medium | **Partly fixed 2026-11-26** (`SEC-7`): they no longer get what `contexer setup` saved, or `LANGFUSE_*`. Left, by the ticket's rule: a key that is exported or set in the project's `.env` still reaches them |
+| S8 | Pull request text still live: the commit subject can say "closes #12"; bare URLs autolink | An issue author, app text | Low | **Fixed 2026-11-26** (`SEC-8`); not checked against GitHub's own renderer |
+| S9 | The draft marker is accepted anywhere in any comment by Contexer's account | Whoever can get text into a status comment | Low | **Fixed 2026-11-26** (`SEC-9`): a comment is a draft only when it begins with the marker |
+| S10 | Smaller: the credentials file is written before its mode is set; skills are capped on save and not on load; `.contexer/runs` and snapshot objects are never pruned; workflow templates reference `@main`; third-party Actions pinned by tag; no upper bound on five dependencies | Various | Low | **Partly fixed 2026-11-26.** `SEC-9`: the credentials file is created with mode 600 (its folder with 700 when saving the key or the settings creates it; `llm/capabilities.py: save_measurement` can create it first with the default mode), and skills are capped on load and covered by the tamper guard. `DX-5`: `contexer runs prune` removes old runs and their snapshots when asked. Open: the workflow templates reference `@main`, Actions are pinned by tag, no upper bound on five dependencies |
 
 Controls read and found to hold: `read_file` confinement on Windows
 (alternate data streams, 8.3 names, UNC paths, junctions, executed by the
@@ -200,7 +204,10 @@ separate jobs.
 
 - The catalog knows, per provider, an endpoint, a key variable and a
   default model. It knows nothing per model: not the context window, not
-  whether tools work, not a price.
+  whether tools work, not a price. **Fixed 2026-11-26** (`MOD-1`): a
+  record per model with the source of each fact, shown by `doctor` and
+  `setup`. No agent reads it yet, and only OpenRouter's catalogue fills
+  the window and the prices.
 - Every agent assumes native tool calling. Whether a model has it is known
   from OpenRouter's metadata or assumed; elsewhere the first call finds
   out by matching error text.
@@ -235,7 +242,9 @@ result at 20,000, a page snapshot at 4,000. Nothing orders a diff by the
 files a failure points at. A conversation only grows: a long Tester run
 that passes the model's window ends as a provider error. The Diagnoser is
 not shown earlier attempts or its own earlier leads, so round three can
-repeat round one. The project summary is rebuilt on every run.
+repeat round one (**fixed 2026-11-26**, `CTX-1`: it is shown its earlier
+leads and what each following attempt changed; no code detects a repeat).
+The project summary is rebuilt on every run.
 
 ### 5.6 Observability
 
@@ -248,11 +257,17 @@ Missing to answer "why did it fail, where did the tokens go, which model
 was better":
 
 - the model id is not in `run.json`, so runs cannot be compared by model;
-- the events of a run exist only on stdout with `--json`;
+- the events of a run exist only on stdout with `--json` (**fixed
+  2026-11-26**, `OBS-1`: `trace.jsonl` in the run folder);
 - the prompt sent to the coding agent on each attempt, and the Diagnoser's
   lead, are not in the run folder;
-- no finish reason, retry count, cached tokens or context size per call;
-- no count of tool errors or of repaired tool calls per model;
+- no finish reason, retry count, cached tokens or context size per call
+  (**partly fixed 2026-11-26**, `OBS-1`: the trace has the finish reason
+  and the cached tokens of each model call; not the retry count or the
+  context size);
+- no count of tool errors or of repaired tool calls per model (**partly
+  fixed 2026-11-26**, `MOD-2` and `OBS-1`: repaired and failed tool calls
+  are recorded per agent; nothing groups them by model yet, `OBS-3`);
 - a Diagnoser that fails says nothing.
 
 ### 5.7 Evaluations
@@ -265,7 +280,9 @@ What is missing for the claims the product wants to make:
 - no baseline of the coding agent alone against the coding agent with
   Contexer on the same tasks;
 - every suite is one run per case, and the research says that is noise
-  ([research.md](research.md) §3);
+  ([research.md](research.md) §3). **Partly fixed 2026-11-26** (`EVAL-3`):
+  every suite takes `--repeats` and reports intervals; no suite has been
+  re-run with repeats, so the published numbers are still one run;
 - one real project.
 
 ---
