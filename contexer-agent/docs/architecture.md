@@ -1493,11 +1493,25 @@ the values a view needs). Two things come from the same events:
   review are one line each. They are printed once, so a terminal, a CI
   log and a pasted issue show the same thing. The coding agent's tool
   calls are not printed unless `--verbose`.
-- *A block redrawn in place*, in a terminal only: the attempt, every check
-  with its state (the ones that failed first, with the short reason, at
-  most 12 lines), a status line (`Agent working · 0:41 · 2 tool calls ·
-  Edit src/app.js`), and a footer with the time and the money so far. It
-  is taken away for a question to the person and at the end.
+- *A block redrawn in place*, in a terminal only: the plan of the run
+  (`✓ draft  ✓ approve  › build  · prove  · review  · hand off`, the step
+  it is at marked), the attempt and the most attempts the run may make,
+  every check with its state (the ones that failed first, with the short
+  reason, at most 12 lines), a status line (`Agent working · 0:41 · 2 tool
+  calls · Edit src/app.js`), and a footer with the time and what the
+  coding agent has spent, next to its budget when one is set. It is drawn
+  from the first drafting or planning step, and taken away for a question
+  to the person and at the end. The step is worked out from the kinds of
+  events, so a redraft after a correction in the middle of a run still
+  shows `build`. The events hold no token counts and nothing about how
+  full a model's context is, so the footer shows neither.
+
+`contexer runs show RUN` lists the attempts of a run. With `--diff` it
+prints the change of the whole run (kept in `run.json`), or with
+`--attempt N` the change of one attempt, from the snapshot of the files
+it began with to its own; that needs the run's snapshots, which
+`runs prune` removes. In a terminal the diff is coloured and goes through
+the system pager; into a pipe it is the plain diff, unwrapped.
 
 The summary at the end of a graph run does not repeat the attempts.
 

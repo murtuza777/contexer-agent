@@ -516,7 +516,14 @@ def execute_graph(
     )
     # The run is drawn from its events: lines that stay, and in a terminal a block that is redrawn (cli/runview.py).
     # With --json the same events are printed, one object per line, and nothing is drawn.
-    activity = RunView(console, verbose=verbose, project=project)
+    activity = RunView(
+        console,
+        verbose=verbose,
+        project=project,
+        drafts=contract is None and not resume,
+        max_attempts=settings.max_repair_rounds + 1,
+        budget_usd=settings.budget_usd,
+    )
 
     def on_detail(event: RunEvent) -> None:
         if not json_output:

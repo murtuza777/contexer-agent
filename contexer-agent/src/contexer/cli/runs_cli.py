@@ -23,7 +23,9 @@ from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.markup import escape
 from rich.padding import Padding
+from rich.pager import Pager, SystemPager
 from rich.table import Table
+from rich.text import Text
 
 from contexer.checkpoint import ShadowRepo, SnapshotError
 from contexer.checkpoint.lock import RunLocked, run_lock
@@ -353,6 +355,120 @@ def _load(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+# -- show: the attempts of one run, and what they changed ---------------------------------------------
+
+
+@runs_app.command("show")
+def show(
+    ctx: typer.Context,
+    run: str = typer.Argument(..., help="The run, as `contexer runs` lists it."),
+    diff: bool = typer.Option(False, "--diff", help="Print what the run changed, as a diff."),
+    attempt: int | None = typer.Option(None, "--attempt", "-a", min=1, help="With --diff: the change of this attempt alone."),
+    project_dir: Path | None = typer.Option(None, "--dir", "-d", help="Project directory.", file_okay=False),
+) -> None:
+    """The attempts of one agent run. With --diff, the change of the run or of one attempt, paged in a terminal."""
+    console = Console()
+    given = project_dir or (ctx.parent.params.get("project_dir") if ctx.parent else None) or Path(".")
+    project = Path(given).resolve()
+    # The name is checked before it is joined to a path: a run is never named by a path.
+    data = _load(project / CONTEXER_DIR / RUNS_DIR / run / "run.json") if _RUN_ID.fullmatch(run) else None
+    if data is None:
+        _stop(console, f"No agent run named {escape(run)} in this project. `contexer runs` lists them.")
+    assert data is not None
+    attempts = [row for row in data.get("attempts") or [] if isinstance(row, dict)]
+    if not diff:
+        if attempt is not None:
+            _stop(console, f"`--attempt` goes with `--diff`: `contexer runs show {run} --diff --attempt {attempt}`.")
+        term.header(console, "runs show", f"{run} · {data.get('terminal', '')}")
+        if not attempts:
+            console.print("  [dim]The run made no attempt.[/]")
+            return
+        term.fields(console, [(str(row.get("n", "")), escape(_attempt_line(row))) for row in attempts])
+        console.print(f"[dim]`contexer runs show {run} --diff` prints the change of the run; add `--attempt N` for one attempt.[/]")
+        return
+    if attempt is None:
+        text = str(data.get("diff") or "")
+    else:
+        text = _attempt_diff(console, project, run, attempts, attempt)
+    if not text.strip():
+        console.print("[dim]" + ("This attempt changed no file." if attempt is not None else "This run changed no file.") + "[/]")
+        return
+    _print_diff(console, text)
+
+
+def _stop(console: Console, sentence: str) -> None:
+    term.note(console, "fail", sentence)
+    raise typer.Exit(code=2)
+
+
+def _attempt_line(row: dict[str, Any]) -> str:
+    """``repair · 2 of 3 checks proven · 1 file changed``, and where the files went when the attempt was undone."""
+    counts = [int(row.get(key) or 0) for key in ("verified", "refuted", "unverified")]
+    parts = [str(row.get("kind") or ""), f"{counts[0]} of {sum(counts)} checks proven", _count(len(row.get("changed_files") or []), "file") + " changed"]
+    back = row.get("reverted_to")
+    if back is not None:
+        parts.append(f"undone, back to {'attempt ' + str(back) if back else 'the files as they were found'}")
+    return " · ".join(part for part in parts if part)
+
+
+def _attempt_diff(console: Console, project: Path, run: str, attempts: list[dict[str, Any]], n: int) -> str:
+    """What attempt ``n`` changed: from the files it began with (the attempt before, or the one that was put back) to its snapshot."""
+    numbers = [int(row.get("n") or 0) for row in attempts]
+    if n not in numbers:
+        had = f"attempts 1 to {max(numbers)}" if len(numbers) > 1 else "one attempt" if numbers else "no attempt"
+        _stop(console, f"Run {run} has {had}. `contexer runs show {run}` lists them.")
+    before = attempts[numbers.index(n) - 1] if numbers.index(n) else None
+    began = 0 if before is None else before.get("reverted_to") if before.get("reverted_to") is not None else before.get("n")
+    shadow = ShadowRepo(project)
+    try:
+        old, new = shadow.resolve(f"{run}/{began}"), shadow.resolve(f"{run}/{n}")
+        if old and new:
+            return shadow.diff(old, new)
+    except SnapshotError:
+        pass
+    _stop(
+        console,
+        f"The snapshots of run {run} are not in this project any more, so the change of one attempt cannot be shown. "
+        f"`contexer runs show {run} --diff` prints the change of the whole run.",
+    )
+    return ""
+
+
+def _print_diff(console: Console, text: str, pager: Pager | None = None, colour: bool | None = None) -> None:
+    """A diff: as it is into a pipe or a file, coloured and through the system pager in a terminal.
+
+    Lines are never wrapped or cut, so what is printed can be applied as a patch.
+    """
+    if not console.is_terminal:
+        console.out(text.rstrip("\n"), highlight=False)
+        return
+    if colour is None:
+        # git's own default for `less`: quit when it fits a screen, show colour, leave the text on the screen.
+        os.environ.setdefault("LESS", "FRX")
+        # Without a PAGER, Windows pages with `more`, which prints colour codes as text.
+        colour = os.name != "nt" or bool(os.environ.get("PAGER"))
+    if not colour:
+        (pager or SystemPager()).show(text)
+        return
+    shown = Text(no_wrap=True)
+    for line in text.splitlines():
+        shown.append(line + "\n", style=_diff_style(line))
+    with console.pager(pager, styles=True):
+        console.print(shown, soft_wrap=True, highlight=False, end="")
+
+
+def _diff_style(line: str) -> str:
+    if line.startswith(("diff --git", "--- ", "+++ ", "index ")):
+        return "bold"
+    if line.startswith("@@"):
+        return "cyan"
+    if line.startswith("+"):
+        return "green"
+    if line.startswith("-"):
+        return "red"
+    return ""
 
 
 # -- prune -------------------------------------------------------------------------------------------
