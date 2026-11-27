@@ -23,6 +23,7 @@ pytestmark = pytest.mark.anyio
 NOW = datetime(2026, 11, 27, tzinfo=UTC)
 OLD = Published(exists=True, first=NOW - timedelta(days=900), releases=40)
 MISSING = Published(exists=False)
+_REAL_CLIENT = httpx.Client
 
 
 def _diff(path: str, added: list[str], removed: list[str] | None = None, start: int = 5) -> str:
@@ -213,11 +214,9 @@ def _answers(monkeypatch: pytest.MonkeyPatch, status: int, body: object, seen: l
         seen.append(request)
         return httpx.Response(status, json=body)
 
-    real = httpx.Client
-
     def client(**kwargs: object) -> httpx.Client:
         assert kwargs.get("timeout") == dependencies.LOOKUP_TIMEOUT and not kwargs.get("follow_redirects")
-        return real(transport=httpx.MockTransport(handler))
+        return _REAL_CLIENT(transport=httpx.MockTransport(handler))
 
     monkeypatch.setattr(dependencies.httpx, "Client", client)
 

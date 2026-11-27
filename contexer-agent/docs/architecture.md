@@ -631,6 +631,20 @@ Checks approved again after work began go from `approve` straight to
     change, `.only` or `skip` added in a test file, a deleted test file,
     more assertions removed than added in a test file, and `console.log`,
     `debugger` or `breakpoint()` added outside tests.
+  - `dependency_notes` (`crew/dependencies.py`), code only: each package
+    the change adds to `package.json`, a `requirements*.txt` or
+    `pyproject.toml` is looked up on npm or PyPI with one GET request
+    that carries the package's name and nothing else (5 s each, at most
+    20 in a review). A name the registry does not have is a high note; a
+    package first published in the last 30 days is a medium one, or a
+    high one when its name is one edit from a much used package; an older
+    package with such a name is a low one. About sixty much used names
+    per registry are not looked up. A project that sets its own registry
+    (`.npmrc`, `pip.conf`, an index option in the requirements file, a uv
+    or Poetry source) is not looked up: a low note says so. A lookup that
+    fails is a low note that says nothing was checked, and the registry
+    is not asked again in that review. Packages from a path, a git
+    address or a URL are not looked up.
   - `run_commands`, code only: the `test`, `lint`, `typecheck` and
     `type-check` scripts of the project's `package.json`, each once, with
     a time limit (180 s), `CI=1`, and an environment without any variable

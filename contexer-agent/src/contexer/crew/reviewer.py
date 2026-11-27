@@ -7,7 +7,8 @@ kept apart:
 
 * ``prescan``: code reads the diff for a short list of patterns (a secret, a
   focused or skipped test, a deleted test file, removed assertions, leftover
-  debug code). No model.
+  debug code). No model. ``dependency_notes`` adds what a package registry
+  says about each package the change adds to a manifest.
 * ``run_commands``: code runs the project's own ``test``, ``lint`` and
   ``typecheck`` scripts, with a time limit, and notes the ones that fail.
 * the Reviewer agent: a model reads the diff and the code around it with
@@ -39,6 +40,7 @@ from contexer.checkpoint.shadow import cut_diff
 from contexer.crew.base import AgentSpec, run_agent
 from contexer.crew.budget import Budget
 from contexer.crew.context_sources import ContextSource, context_section, stated_line
+from contexer.crew.dependencies import Lookup, dependency_findings, registry_lookup
 from contexer.crew.diagnoser import project_tools
 from contexer.crew.untrusted import untrusted
 from contexer.procutil import spawn_tree, without_agent_session
@@ -278,6 +280,27 @@ def prescan(diff: str) -> list[ReviewNote]:
     return notes
 
 
+def dependency_notes(diff: str, project_dir: Path, lookup: Lookup = registry_lookup) -> list[ReviewNote]:
+    """What a registry says about the packages the change adds to a manifest. Asked by code, so ``backed``.
+
+    A package that does not exist, or is days old, is a supply-chain matter: ``security``. A lookup that
+    could not be made is a low note that says so, and decides nothing.
+    """
+    changes = [(f.path, f.added, f.removed) for f in _parse(diff) if f.path and not f.deleted]
+    return [
+        ReviewNote(
+            file=found.file,
+            line=found.line,
+            severity=found.severity,
+            category="other" if found.kind == "unchecked" else "security",
+            explanation=found.explanation,
+            source="scan",
+            backed=True,
+        )
+        for found in dependency_findings(changes, project_dir, lookup)
+    ]
+
+
 # -- the project's own commands ----------------------------------------------------------------------
 
 _NO_TESTS = "no test specified"
@@ -404,6 +427,7 @@ async def review(
     intent: str = "",
     checks: Sequence[str] = (),
     sources: Sequence[ContextSource] = (),
+    lookup: Lookup | None = registry_lookup,
     run_project_commands: bool = True,
     command_timeout: float = DEFAULT_COMMAND_TIMEOUT,
     run_dir: Path | None = None,
@@ -415,11 +439,14 @@ async def review(
 
     ``sources`` is what else was written about the task (``crew/context_sources.py``): with the
     project's instruction files among them, the Reviewer may note a convention the change breaks.
+    ``lookup`` asks a package registry about a name (``crew/dependencies.py``); None looks nothing up.
     """
     result = ReviewResult()
     if not diff.strip():
         return result
     result.notes = prescan(diff)
+    if lookup is not None:
+        result.notes += dependency_notes(diff, project_dir, lookup)
     if run_project_commands:
         result.commands = run_commands(project_dir, project_commands(project_dir), command_timeout)
         result.notes += _command_notes(result.commands)
