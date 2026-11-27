@@ -52,7 +52,7 @@ Seven of the eleven items first listed here were fixed on 2026-11-20:
 | Hidden issue text reached the agents | HTML comments and invisible characters are removed, and the draft comment shows the goal exactly as the agents read it |
 | Pull request bodies carried live Markdown from the app and from models | Mentions, issue references, links and images in that text are made inert |
 | The token budget restarted on `--resume` | It starts from what the run had already spent |
-| The model's `grep` took any pattern and walked `node_modules` | Closed folders are never entered; a nested quantifier and an over-long pattern are refused |
+| The model's `grep` took any pattern and walked `node_modules` | Closed folders are never entered; the search is for literal text unless the model asks for a regular expression, which runs in a separate process; a search stops after two seconds; an over-long pattern is refused, and so is a regular expression with a nested quantifier |
 
 Tests: `test_issue_hardening.py`, `test_graph_resume.py`, `test_diagnoser.py`.
 
