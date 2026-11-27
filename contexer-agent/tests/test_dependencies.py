@@ -521,7 +521,9 @@ async def test_in_a_run_the_setting_decides_whether_a_registry_is_asked(tmp_path
         raise httpx.ConnectError("no network in tests")
 
     monkeypatch.setattr(dependencies.httpx, "Client", no_network)
-    agent = RecordingAgent([{"app.js": GOOD_JS + "// tidied\n", "requirements.txt": "made-up-one\n"}])
+    # Not at the root: a requirements.txt there makes the fixture a Python project, which is started
+    # another way than the static site the checks were written for.
+    agent = RecordingAgent([{"app.js": GOOD_JS + "// tidied\n", "tools/requirements.txt": "made-up-one\n"}])
     outcome = await _graph(project, agent).run(contract(project))
 
     assert outcome.terminal == "succeeded"
