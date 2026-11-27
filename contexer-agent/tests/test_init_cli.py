@@ -50,7 +50,7 @@ def test_init_writes_the_issue_workflow(tmp_path: Path) -> None:
     result = CliRunner().invoke(app, ["init", "--dir", str(project), "--repo-root", str(tmp_path), "--issues"])
     assert result.exit_code == 0, result.output
     workflow = yaml.safe_load((tmp_path / ".github" / "workflows" / "contexer-issues.yml").read_text(encoding="utf-8"))
-    job = workflow["jobs"]["contexer"]
+    job = workflow["jobs"]["build"]  # the job in which the agent runs; "publish" is the other (SEC-10)
     assert "author_association" in job["if"]  # strangers' comments never start a job
     assert job["steps"][0]["with"]["persist-credentials"] is False  # the agent finds no token in .git/config
     assert job["steps"][1]["with"]["working-directory"] == "apps/web"

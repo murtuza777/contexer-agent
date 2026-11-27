@@ -338,14 +338,23 @@ async def test_a_diagnoser_that_fails_does_not_stop_the_repair(project: Path) ->
     assert "complete-decrements" in agent.prompts[1] and "Likely cause" not in agent.prompts[1]
 
 
-async def test_a_spent_budget_runs_the_loop_on_rules_alone(project: Path) -> None:
+async def test_a_spent_budget_stops_the_coding_turns_too(project: Path) -> None:
+    # Until COST-1 a spent budget only silenced Contexer's agents, and the coding agent went on under rules.
     budget = Budget(max_tokens=10)
     budget.spend(10, 0, None)
     model = AgentScript()
     agent = RecordingAgent([{"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS}])
     outcome = await _graph(project, agent, model=model, budget=budget).run(contract(project))
-    assert outcome.terminal == "succeeded" and model.total_calls == 0  # no Planner, no Triage, no Diagnoser
-    assert outcome.triage[0].source == "rules"
+    assert outcome.terminal == "budget_exhausted" and "token budget of 10" in outcome.reason
+    assert agent.prompts == [] and model.total_calls == 0  # no Planner, and no coding turn was paid for
+
+
+async def test_a_token_budget_reached_during_a_run_stops_before_the_next_coding_turn(project: Path) -> None:
+    budget = Budget(max_tokens=20)  # the Planner's one call uses 15, Triage's the next 15
+    agent = RecordingAgent([{"app.js": COUNT_BUG_JS + "// a\n"}, {"app.js": GOOD_JS}])
+    outcome = await _graph(project, agent, model=AgentScript(), budget=budget).run(contract(project))
+    assert outcome.terminal == "budget_exhausted" and "token budget" in outcome.reason
+    assert len(agent.prompts) == 1 and outcome.best_attempt == 1  # the repair turn was never started
 
 
 # -- the Planner before the first turn ----------------------------------------------------------------
@@ -543,3 +552,29 @@ async def test_a_goal_for_an_app_that_does_not_start_yet_is_drafted_from_the_goa
     outcome = await controller.run_goal(GOAL)
     assert outcome.terminal == "needs_human"  # not approved; the point is that drafting did not need a running app
     assert len(model.seen["intent"]) == 1
+
+
+async def test_the_step_caps_the_project_sets_for_intent_and_triage_reach_them(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.graph import nodes
+
+    (project / ".contexer" / "contracts" / f"{CONTRACT_ID}.json").unlink()
+    caps: dict[str, Any] = {}
+
+    def recording(name: str, real: Any) -> Any:
+        async def call(*args: Any, **kwargs: Any) -> Any:
+            caps[name] = kwargs.get("max_steps")
+            return await real(*args, **kwargs)
+
+        return call
+
+    monkeypatch.setattr(nodes, "run_intent", recording("intent", nodes.run_intent))
+    monkeypatch.setattr(nodes, "triage", recording("triage", nodes.triage))
+    settings = RunSettings(max_repair_rounds=2, agent_steps={"intent": 7, "triage": 2})
+    agent = RecordingAgent([{"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS}])
+    model = AgentScript(intent=[_intent_reply()])
+    outcome = await GraphController(
+        project, agent, settings, runner=fast_runner(), model=model, ask=lambda _r: {"approve": True}
+    ).run_goal(GOAL)
+
+    assert outcome.terminal == "succeeded", outcome.reason
+    assert caps == {"intent": 7, "triage": 2}

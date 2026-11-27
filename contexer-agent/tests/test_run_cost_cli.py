@@ -120,6 +120,88 @@ def test_a_run_says_what_it_can_use_at_most_before_it_starts(project: Path, tmp_
     assert "one budget of $3.00" in shown
 
 
+# -- COST-1: unknown is a word, and a budget that cannot be kept is refused ---------------------------
+
+
+def _scripted_run(project: Path, tmp_path: Path, *extra: str) -> Any:
+    turns = tmp_path / "turns.json"
+    turns.write_text(json.dumps([{"app.js": GOOD_JS + "// x\n"}]), encoding="utf-8")
+    return CliRunner().invoke(app, ["run", "--contract", "todo-basics", "--dir", str(project), "--yes", *extra, "--model", str(turns)])
+
+
+def test_a_dollar_budget_with_a_coding_agent_that_reports_no_cost_stops_at_the_start(
+    project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("contexer.cli.run_cli.crew_model", lambda *_a, **_k: None)
+    result = CliRunner().invoke(app, ["run", "--contract", "todo-basics", "--dir", str(project), "--yes", "--agent", "codex", "--max-usd", "2"])
+    shown = " ".join(result.output.split())
+    assert result.exit_code == 2, result.output
+    assert "$2.00" in shown and "codex reports no cost" in shown and "claude-code" in shown
+    assert not (project / ".contexer" / "runs").exists()  # nothing was started
+
+
+def test_a_dollar_budget_with_a_model_that_has_no_price_stops_at_the_start(project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.fakes import AgentScript
+
+    (project / "contexer.toml").write_text("", encoding="utf-8")  # no rates
+    monkeypatch.setattr("contexer.cli.run_cli.crew_model", lambda *_a, **_k: AgentScript())
+    result = _scripted_run(project, tmp_path, "--agent", "scripted", "--max-usd", "2")
+    shown = " ".join(result.output.split())
+    assert result.exit_code == 2, result.output
+    assert "$2.00" in shown and "scripted-model" in shown and "input_usd_per_mtok" in shown and "[limits] tokens" in shown
+    assert not (project / ".contexer" / "runs").exists()
+
+    # Without a dollar budget the same run starts: tokens are still counted and limited.
+    monkeypatch.setattr("contexer.cli.run_cli.crew_model", lambda *_a, **_k: None)
+    assert _scripted_run(project, tmp_path, "--agent", "scripted").exit_code == 0
+
+
+def test_an_agent_whose_cost_is_not_known_is_said_in_the_bill_never_left_out() -> None:
+    outcome = RunOutcome(
+        run_id="r", contract_id="c", agent="scripted", terminal="succeeded",
+        agents=[
+            AgentUsage(agent="triage", steps=1, tokens_in=2000, tokens_out=100, cost_usd=0.01),
+            AgentUsage(agent="reviewer", steps=2, tokens_in=5250, tokens_out=121),
+        ],
+        crew_cost_usd=0.01,
+    )  # fmt: skip
+    line = bill_line(outcome)
+    assert "$0.01" in line and "reviewer's cost is unknown" in line
+    assert "$0.00" not in bill_line(outcome.model_copy(update={"crew_cost_usd": None}))
+
+
+def test_the_summary_says_the_coding_agents_cost_is_unknown_instead_of_nothing() -> None:
+    from rich.console import Console
+
+    from contexer.agents import AgentTurn
+    from contexer.cli.run_cli import _render
+    from contexer.controller.models import Attempt
+
+    def attempt(n: int, cost: float | None) -> Attempt:
+        return Attempt(n=n, kind="implement", fresh_session=True, agent=AgentTurn(status="completed", cost_usd=cost), snapshot="s", outcome="pass", score=1)
+
+    def shown(attempts: list[Attempt], total: float) -> str:
+        outcome = RunOutcome(run_id="r", contract_id="c", agent="codex", terminal="succeeded", engine="graph", attempts=attempts, cost_usd=total, run_dir=".")
+        console = Console(record=True, width=160, force_terminal=False, color_system=None)
+        _render(console, outcome)
+        return " ".join(console.export_text().split())
+
+    from contexer.cli.run_cli import coding_cost
+
+    def outcome_of(attempts: list[Attempt], total: float) -> RunOutcome:
+        return RunOutcome(run_id="r", contract_id="c", agent="codex", terminal="succeeded", attempts=attempts, cost_usd=total)
+
+    # What --json prints as cost_usd: null when a turn's cost is not known, never a partial sum.
+    assert coding_cost(outcome_of([attempt(1, 0.4), attempt(2, None)], 0.4)) is None
+    assert coding_cost(outcome_of([attempt(1, 0.4), attempt(2, 0.1)], 0.5)) == 0.5
+
+    assert "coding agent cost unknown (no turn reported one)" in shown([attempt(1, None)], 0.0)
+    assert "$0.00" not in shown([attempt(1, None)], 0.0)
+    assert "$0.40 agent spend" in shown([attempt(1, 0.4)], 0.4)
+    mixed = shown([attempt(1, 0.4), attempt(2, None)], 0.4)
+    assert "$0.40 agent spend" in mixed and "1 turn with no cost reported" in mixed
+
+
 def test_the_summary_says_what_the_review_found_not_only_how_many() -> None:
     from rich.console import Console
 

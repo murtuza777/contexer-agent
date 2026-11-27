@@ -10,10 +10,12 @@ import pytest
 
 from contexer.config.project import ProjectConfigError, load_project_config
 from contexer.controller import RunSettings
-from contexer.crew.budget import Budget
+from contexer.crew.budget import Budget, unenforceable
 from contexer.crew.estimate import estimate_run
 from contexer.graph import GraphController
-from tests.fakes import AgentScript, submit
+from contexer.llm import capabilities
+from contexer.llm.capabilities import Fact, ModelCapabilities
+from tests.fakes import AgentScript, ScriptedChatModel, calls, submit
 from tests.loop_helpers import BROKEN_JS, COUNT_BUG_JS, GOOD_JS, RecordingAgent, contract, copy_todo, fast_runner
 
 pytestmark = pytest.mark.anyio
@@ -66,6 +68,119 @@ def test_one_budget_covers_the_coding_agent_and_contexers_agents_together() -> N
     assert "run budget of $1.00" in budget.exhausted()
     assert budget.total_left() == 0.0
     assert Budget().total_left() is None  # no total, nothing to run out of
+
+
+def test_a_dollar_limit_that_cannot_be_kept_is_named_with_what_to_set() -> None:
+    model = ScriptedChatModel()  # a model nothing is known about: no price
+    rates: dict[str, Any] = {"input_usd_per_mtok": 2.0, "output_usd_per_mtok": 10.0}
+    assert unenforceable(Budget(max_tokens=10), models=[model], coding_agent="codex") == ""  # no dollar limit, nothing to keep
+    assert unenforceable(Budget(max_total_usd=2.0, **rates), models=[model]) == ""
+
+    crew = unenforceable(Budget(max_tokens=1_500_000, max_total_usd=2.0), models=[model])
+    assert "run budget of $2.00" in crew and "scripted-model" in crew
+    assert "input_usd_per_mtok" in crew and "output_usd_per_mtok" in crew and "[limits] tokens" in crew
+    assert "[limits] cost_usd" in unenforceable(Budget(max_cost_usd=2.5), models=[model])
+
+    coding = unenforceable(Budget(max_total_usd=2.0, **rates), coding_agent="codex")
+    assert "run budget of $2.00" in coding and "codex reports no cost" in coding and "claude-code" in coding
+    # [limits] cost_usd is a limit on Contexer's own agents: the coding agent is not part of it.
+    assert unenforceable(Budget(max_cost_usd=2.5, **rates), models=[model], coding_agent="codex") == ""
+
+
+# -- COST-3: a price per model ---------------------------------------------------------------------
+
+
+def _listed(monkeypatch: pytest.MonkeyPatch, model: Any, name: str, input_usd: float, output_usd: float, cached_usd: float | None = None) -> Any:
+    """``model`` under ``name``, with a record that says what its provider's model list charges."""
+    model.model_name = name
+    record = ModelCapabilities(
+        provider="somewhere",
+        model=name,
+        input_usd_per_mtok=Fact(input_usd, "catalogue"),
+        output_usd_per_mtok=Fact(output_usd, "catalogue"),
+        cached_input_usd_per_mtok=Fact(cached_usd, "catalogue" if cached_usd is not None else "assumed"),
+    )
+    monkeypatch.setitem(capabilities._BUILT, (name, ""), record)
+    return model
+
+
+def test_a_call_is_priced_from_its_own_models_record_and_the_projects_rates_override_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    small = _listed(monkeypatch, ScriptedChatModel(), "small-model", 1.0, 2.0)
+    large = _listed(monkeypatch, ScriptedChatModel(), "large-model", 10.0, 20.0)
+    budget = Budget()
+    assert budget.spend(1_000_000, 100_000, model=small) == pytest.approx(1.2)
+    assert budget.spend(1_000_000, 100_000, model=large) == pytest.approx(12.0)
+    assert budget.cost_usd == pytest.approx(13.2) and budget.estimated
+
+    override = Budget(input_usd_per_mtok=2.0, output_usd_per_mtok=10.0)
+    assert override.spend(1_000_000, 0, model=large) == pytest.approx(2.0)
+
+    unknown = Budget()
+    assert unknown.spend(1_000_000, 0, model=ScriptedChatModel()) is None and unknown.cost_usd is None  # no price, no guess
+
+    # A dollar limit can be kept when every model that will be called has a price of its own.
+    assert unenforceable(Budget(max_total_usd=2.0), models=[small, large]) == ""
+    refused = unenforceable(Budget(max_total_usd=2.0), models=[small, ScriptedChatModel()])
+    assert "scripted-model" in refused and "small-model" not in refused
+
+
+async def test_a_run_with_two_models_bills_each_agent_at_its_own_models_price(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    default = _listed(monkeypatch, AgentScript(reviewer=[submit(notes=[])]), "large-model", 10.0, 20.0)
+    cheap = _listed(monkeypatch, AgentScript(reviewer=[submit(notes=[])]), "small-model", 1.0, 2.0)
+    budget = Budget()  # no rates in the project
+    agent = RecordingAgent([{"app.js": COUNT_BUG_JS + "// a\n"}, {"app.js": GOOD_JS + "// done\n"}])
+    outcome = await GraphController(
+        project, agent, RunSettings(max_repair_rounds=2), runner=fast_runner(), model=default,
+        models={"triage": cheap, "reviewer": cheap}, budget=budget,
+    ).run(contract(project))  # fmt: skip
+
+    prices = {"planner": (10.0, 20.0), "diagnoser": (10.0, 20.0), "triage": (1.0, 2.0), "reviewer": (1.0, 2.0)}
+    assert {a.agent for a in outcome.agents} == set(prices)
+    for usage in outcome.agents:
+        input_usd, output_usd = prices[usage.agent]
+        assert usage.cost_usd == pytest.approx((usage.tokens_in * input_usd + usage.tokens_out * output_usd) / 1_000_000)
+    assert outcome.crew_cost_usd == pytest.approx(budget.cost_usd) and outcome.crew_cost_estimated
+
+
+# -- COST-2: cached input ----------------------------------------------------------------------------
+
+
+def test_the_cached_part_of_the_input_is_priced_at_the_cached_price(monkeypatch: pytest.MonkeyPatch) -> None:
+    caching = _listed(monkeypatch, ScriptedChatModel(), "caching-model", 10.0, 20.0, 1.0)
+    budget = Budget()
+    assert budget.spend(1_000_000, 0, model=caching, cached_in=800_000) == pytest.approx(0.2 * 10.0 + 0.8 * 1.0)
+    assert budget.tokens_in == 1_000_000  # cached tokens are part of the input, not on top of it
+
+    plain = _listed(monkeypatch, ScriptedChatModel(), "plain-model", 10.0, 20.0)
+    assert Budget().spend(1_000_000, 0, model=plain, cached_in=800_000) == pytest.approx(10.0)  # no cached price known: the full one
+    rated = Budget(input_usd_per_mtok=2.0, output_usd_per_mtok=10.0)  # the project's pair has no cached rate
+    assert rated.spend(1_000_000, 0, model=caching, cached_in=800_000) == pytest.approx(2.0)
+
+
+async def test_cached_tokens_reach_the_transcript_the_trace_and_the_bill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import BaseModel
+
+    from contexer.crew import AgentSpec, run_agent
+    from contexer.crew.transcript import read_transcript
+    from contexer.evidence.rundir import TRACE_FILE
+
+    class Report(BaseModel):
+        summary: str
+
+    reply = calls(("submit", {"summary": "fine"}), tokens=(1000, 10))
+    reply.usage_metadata["input_token_details"] = {"cache_read": 800}  # type: ignore[index]
+    model = _listed(monkeypatch, ScriptedChatModel(reply), "caching-model", 10.0, 20.0, 1.0)
+    budget = Budget()
+    spec = AgentSpec(name="tester", system_prompt="You test web apps.", output_schema=Report)
+    result = await run_agent(spec, model, [], "Test the shop.", run_dir=tmp_path, budget=budget)
+
+    cost = (200 * 10.0 + 800 * 1.0 + 10 * 20.0) / 1_000_000
+    assert result.cost_usd == pytest.approx(cost) and budget.cost_usd == pytest.approx(cost)
+    [said] = [line for line in read_transcript(tmp_path / "agents" / "tester.jsonl") if line["event"] == "model"]
+    assert (said["tokens_in"], said["tokens_cached"]) == (1000, 800)
+    [traced] = [line for line in read_transcript(tmp_path / TRACE_FILE) if line["event"] == "model"]
+    assert traced["gen_ai.usage.cache_read.input_tokens"] == 800
+    assert traced["contexer.cost_usd"] == pytest.approx(cost) and traced["contexer.cost_estimated"] is True
 
 
 # -- configuration ---------------------------------------------------------------------------------
@@ -206,3 +321,16 @@ def test_the_estimate_says_what_a_run_can_use_at_most_and_grows_with_the_rounds(
     assert small.model_calls - unplanned.model_calls == 12 and small.tokens > unplanned.tokens
     capped = estimate_run(rounds=0, has_model=True, drafts_checks=False, review=True, planner_steps=4)
     assert capped.model_calls - unplanned.model_calls == 4
+
+    # Each agent's share is priced by whoever knows its model's price; one agent without a price leaves the total unknown.
+    asked: list[str] = []
+
+    def by_agent(agent: str, tokens_in: int, tokens_out: int) -> float | None:
+        asked.append(agent)
+        return None if agent == "nobody" else tokens_in * (1.0 if agent == "triage" else 10.0) / 1_000_000
+
+    per_model = estimate_run(rounds=1, has_model=True, drafts_checks=False, review=False, plan=False, price=by_agent)
+    assert asked == ["triage", "diagnoser"]
+    assert per_model.cost_usd == pytest.approx((2_500 * 1.0 + 15 * 6_000 * 10.0) / 1_000_000)
+    no_price = estimate_run(rounds=1, has_model=True, drafts_checks=False, review=False, plan=False, price=lambda *_: None)
+    assert no_price.cost_usd is None

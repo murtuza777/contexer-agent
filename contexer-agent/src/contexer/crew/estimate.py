@@ -8,6 +8,8 @@ per call. A run that passes at the first attempt uses a small part of it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from pydantic import BaseModel
 
 # Model calls one use of each agent may make (its step cap), and the tokens one call typically carries.
@@ -49,26 +51,38 @@ def estimate_run(
     reviewer_steps: int = _REVIEWER_CALLS,
     input_usd_per_mtok: float | None = None,
     output_usd_per_mtok: float | None = None,
+    price: Callable[[str, int, int], float | None] | None = None,
 ) -> RunEstimate:
-    """The ceiling for a run on the graph engine with ``rounds`` repair rounds."""
+    """The ceiling for a run on the graph engine with ``rounds`` repair rounds.
+
+    ``price(agent, tokens_in, tokens_out)`` says what an agent's share costs on the model it runs on, or
+    None when that is not known; one agent without a price leaves the whole cost unknown. Without it
+    the one rate pair prices everything.
+    """
     estimate = RunEstimate(coding_turns=rounds + 1)  # a repair the review asks for uses one of the rounds
     if not has_model:
         return estimate
-    uses: list[tuple[int, tuple[int, int]]] = []
+    uses: list[tuple[str, int, tuple[int, int]]] = []
     if drafts_checks:
-        uses.append((_INTENT_CALLS, _INTENT_TOKENS))
+        uses.append(("intent", _INTENT_CALLS, _INTENT_TOKENS))
     if plan:
-        uses.append((planner_steps, _PLANNER_TOKENS))
+        uses.append(("planner", planner_steps, _PLANNER_TOKENS))
     for _ in range(rounds):  # after each attempt that does not pass
-        uses.append((_TRIAGE_CALLS, _TRIAGE_TOKENS))
-        uses.append((diagnoser_steps, _DIAGNOSER_TOKENS))
+        uses.append(("triage", _TRIAGE_CALLS, _TRIAGE_TOKENS))
+        uses.append(("diagnoser", diagnoser_steps, _DIAGNOSER_TOKENS))
     if review:
         for _ in range(2 if rounds else 1):  # the pass, and the pass after the one repair a review may ask for
-            uses.append((reviewer_steps, _REVIEWER_TOKENS))
-    for calls, (tokens_in, tokens_out) in uses:
+            uses.append(("reviewer", reviewer_steps, _REVIEWER_TOKENS))
+    if price is None and (input_usd_per_mtok is not None or output_usd_per_mtok is not None):
+        rate_in, rate_out = input_usd_per_mtok or 0.0, output_usd_per_mtok or 0.0
+        price = lambda _agent, tokens_in, tokens_out: (tokens_in * rate_in + tokens_out * rate_out) / 1_000_000  # noqa: E731
+    costs: list[float | None] = []
+    for agent, calls, (tokens_in, tokens_out) in uses:
         estimate.model_calls += calls
         estimate.tokens_in += calls * tokens_in
         estimate.tokens_out += calls * tokens_out
-    if input_usd_per_mtok is not None or output_usd_per_mtok is not None:
-        estimate.cost_usd = (estimate.tokens_in * (input_usd_per_mtok or 0.0) + estimate.tokens_out * (output_usd_per_mtok or 0.0)) / 1_000_000
+        if price is not None:
+            costs.append(price(agent, calls * tokens_in, calls * tokens_out))
+    if costs and all(cost is not None for cost in costs):
+        estimate.cost_usd = sum(cost or 0.0 for cost in costs)
     return estimate

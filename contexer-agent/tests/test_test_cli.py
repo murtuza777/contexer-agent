@@ -657,6 +657,42 @@ def test_the_budget_can_be_set_in_contexer_toml(demo: Path, scripted: Any) -> No
     assert len(model.seen["tester"]) == 1
 
 
+def test_the_dollar_budget_and_the_rates_under_agents_apply_to_contexer_test_too(demo: Path, scripted: Any) -> None:
+    # Each scripted call is 10 tokens in and 5 out; at these rates one call costs $0.15.
+    (demo / "contexer.toml").write_text(
+        "[agents]\nmax_usd = 0.2\ninput_usd_per_mtok = 10000\noutput_usd_per_mtok = 10000\n", encoding="utf-8"
+    )
+    model = scripted(EXPLORE, REPORT_BOTH, BROKEN)
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    out = _plain(result.output)
+    assert len(model.seen["intent"]) == 1 and len(model.seen["tester"]) == 1  # $0.30 after the second call: over $0.20
+    assert "stopped at the dollar budget" in out and "token budget" not in out
+    assert "$0.3000" in out and "estimated" in out
+    data = json.loads((_run_folder(demo) / "result.json").read_text(encoding="utf-8"))
+    assert data["tester_status"] == "budget_exhausted" and data["cost_usd"] == pytest.approx(0.30)
+    assert "coding agent" not in data["tester_error"]  # `contexer test` runs none
+
+
+def test_a_dollar_budget_contexer_test_could_not_keep_is_refused_before_any_call(demo: Path, scripted: Any) -> None:
+    (demo / "contexer.toml").write_text("[agents]\nmax_usd = 2\n", encoding="utf-8")  # no rates, and the model has no price
+    model = scripted(EXPLORE, REPORT_BOTH, BROKEN)
+
+    result = _run(INTENT, "--dir", str(demo))
+
+    out = _plain(result.output)
+    assert result.exit_code == 2, result.output
+    assert "$2.00" in out and "cannot be enforced" in out and "input_usd_per_mtok" in out
+    assert model.total_calls == 0 and not (demo / ".contexer" / "runs").exists()
+
+
+def test_a_cost_nobody_knows_is_called_unknown_in_the_summary(demo: Path, scripted: Any) -> None:
+    scripted(EXPLORE, REPORT_BOTH, BROKEN)
+    out = _plain(_run(INTENT, "--dir", str(demo)).output)
+    assert "Cost unknown" in out and "$0.00" not in out
+
+
 def test_no_skills_neither_loads_nor_saves_any(demo: Path, scripted: Any) -> None:
     (demo / "app.js").write_text(fixed_app_js(), encoding="utf-8")
     learned = {"name": "add-a-task", "description": "How to add tasks to the list", "body": "Fill the field, click Add."}

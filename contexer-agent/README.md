@@ -38,8 +38,8 @@ never calls a model.
 | Agent | Requirement |
 | --- | --- |
 | [Claude Code](https://code.claude.com) (`claude`) | Logged in, or `ANTHROPIC_API_KEY` set |
-| [Codex](https://github.com/openai/codex) (`codex`) | `codex login`, or `CODEX_API_KEY` set. Runs in the `workspace-write` sandbox with network on. Codex reports no cost, so `--budget` doesn't apply; rounds and the time limit still do |
-| [OpenCode](https://opencode.ai) (`opencode`, `npm i -g opencode-ai`) | With `OPENROUTER_API_KEY` set and no model chosen, it uses the free `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`; otherwise `--model provider/model` or `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID`. OpenCode's own free models refuse headless use. Tested with 1.4.3 and 1.19.4 |
+| [Codex](https://github.com/openai/codex) (`codex`) | `codex login`, or `CODEX_API_KEY` set. Runs in the `workspace-write` sandbox with network on. Codex reports no cost, so `--budget` doesn't apply and `--max-usd` is refused at the start; rounds and the time limit still do |
+| [OpenCode](https://opencode.ai) (`opencode`, `npm i -g opencode-ai`) | With `OPENROUTER_API_KEY` set and no model chosen, it uses the free `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`; otherwise `--model provider/model` or `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID`. OpenCode's own free models refuse headless use. No cost is reported for its turns, so `--max-usd` is refused at the start. Tested with 1.4.3 and 1.19.4 |
 
 ## Commands
 
@@ -75,6 +75,7 @@ The same groups as `contexer --help`:
 | **CI and GitHub** | |
 | `contexer replay [--github]` | `verify --all` for CI. `--github` posts a `contexer/acceptance` commit status |
 | `contexer issue draft N` / `build N --by LOGIN` / `event` | Post an issue's checks for approval; build them once approved; in Actions, act on the triggering event |
+| `contexer issue event --hand-over DIR` / `issue publish DIR` | The issue workflow in two jobs: the first builds with a token that cannot write and leaves the change as a patch in DIR; the second checks the patch, pushes it and opens the pull request, and runs nothing of the project |
 | **More** | |
 | `contexer models [--provider P] [--free] [--search S]` | A provider's models; `--providers` lists every provider and the keys you have |
 | `contexer bench [--live]` | Seeded-bug benchmark: catch rate and false-failure rate |

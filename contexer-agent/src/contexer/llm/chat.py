@@ -14,6 +14,7 @@ an agent do not pay for it.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -116,10 +117,8 @@ def chat_model_from(
     """A chat model for exactly this provider, model, key and endpoint (``contexer setup`` has them before they are saved)."""
     config = config or load_config()
     if choice.spec.protocol == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-
         # `model` and `max_tokens` are the documented names; the class declares them as aliases.
-        return ChatAnthropic(
+        return _anthropic_class()(
             model=choice.model,  # pyright: ignore[reportCallIssue]
             api_key=choice.api_key,  # type: ignore[arg-type]
             max_tokens=max_tokens or 8192,  # pyright: ignore[reportCallIssue]
@@ -138,6 +137,9 @@ def chat_model_from(
         if choice.model == DEFAULT_OPENROUTER_MODEL:
             # Same fallback as the drafting client: free models come and go.
             body["models"] = [choice.model, OPENROUTER_FREE_ROUTER]
+        # One id for every call this model object makes (an agent's run): OpenRouter keeps the calls of a
+        # session on the provider that holds their cached prompt.
+        body["session_id"] = uuid.uuid4().hex
         extras["extra_body"] = body
     if http_async_client is not None:
         extras["http_async_client"] = http_async_client
@@ -156,6 +158,37 @@ def chat_model_from(
         use_responses_api=False,
         **extras,
     )
+
+
+# Anthropic caches a request up to a marker, and only where one is set.
+_CACHE_MARKER = {"type": "ephemeral"}
+
+
+@cache
+def _anthropic_class() -> Any:
+    from langchain_anthropic import ChatAnthropic
+
+    class CachingChatAnthropic(ChatAnthropic):
+        """ChatAnthropic that asks for the tools and the system prompt to be cached.
+
+        An agent sends the same tools and system prompt with every call of its run. Marked, the
+        second call on reads them from the cache at the cached price. The conversation after them
+        is not marked.
+        """
+
+        def _get_request_payload(self, input_: Any, *, stop: list[str] | None = None, **kwargs: Any) -> dict:
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            tools = payload.get("tools")
+            if isinstance(tools, list) and tools and isinstance(tools[-1], dict):
+                payload["tools"] = [*tools[:-1], {**tools[-1], "cache_control": _CACHE_MARKER}]
+            system = payload.get("system")
+            if isinstance(system, str) and system:
+                payload["system"] = [{"type": "text", "text": system, "cache_control": _CACHE_MARKER}]
+            elif isinstance(system, list) and system and isinstance(system[-1], dict):
+                payload["system"] = [*system[:-1], {**system[-1], "cache_control": _CACHE_MARKER}]
+            return payload
+
+    return CachingChatAnthropic
 
 
 @cache

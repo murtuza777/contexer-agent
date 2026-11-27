@@ -34,6 +34,7 @@ from pydantic import ValidationError
 
 from contexer.contract import Contract
 from contexer.gate.models import RunResult
+from contexer.github.handoff import _plain
 
 if TYPE_CHECKING:
     from contexer.crew.intent import Question
@@ -235,9 +236,14 @@ def find_draft(comments: list[dict[str, Any]], own: str = "") -> tuple[dict[str,
 
 
 def status_comment(headline: str, lines: list[str], footer: str = "") -> str:
-    body = [STATUS_MARKER, f"### {headline}", ""]
+    """The comment that follows a run. The headline and the progress lines are shown and do nothing.
+
+    Both carry text from the run (a reason, a model's words, what the app printed): the headline is one plain
+    line, and no progress line can close the fence it is shown in. The footer is the caller's own markdown.
+    """
+    body = [STATUS_MARKER, f"### {_plain(' '.join(headline.split()))}", ""]
     if lines:
-        body += ["```text", *lines[-15:], "```", ""]
+        body += ["```text", *[_plain(" ".join(line.split())) for line in lines[-15:]], "```", ""]
     if footer:
         body.append(footer)
     return "\n".join(body) + "\n"

@@ -47,6 +47,8 @@ class CodingAgentAdapter(ABC):
     """Runs one turn of a coding agent in a project directory."""
 
     name: str = "agent"
+    # Whether a turn says what it cost. Where it does not, a dollar budget cannot be enforced and is refused.
+    reports_cost: bool = True
     _in_flight: set[ProcessTree] | None = None
 
     @abstractmethod

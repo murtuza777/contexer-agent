@@ -1,0 +1,54 @@
+name: Contexer issue agent, publish
+description: >-
+  The second job of the Contexer issue workflow. It holds the write token and runs nothing of the
+  project: it posts the checks a first job drafted, or checks the change a first job built, pushes it
+  and opens the pull request. Use it after the issue action with hand-over set to "true".
+author: murtuza777
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  working-directory:
+    description: The app's directory inside the repository; the same as in the job that built.
+    default: "."
+  label:
+    description: The label that asks Contexer to draft checks for an issue; the same as in the job that built.
+    default: contexer
+  github-token:
+    description: >-
+      Token that comments, pushes the branch and opens the pull request. Pull requests opened with
+      the default token do not start other workflows; pass a personal or app token for that.
+    default: ${{ github.token }}
+  python-version:
+    description: Python used to run Contexer.
+    default: "3.12"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    # Contexer comes from this action's own repository, never from the project's checkout.
+    - name: Install Contexer
+      shell: bash
+      run: python -m pip install --quiet "${{ github.action_path }}/../../contexer-agent"
+
+    # Outside the checkout. The first job may have failed before it left anything: Contexer then says so on the issue.
+    - name: Download what the first job left
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      continue-on-error: true
+      with:
+        name: contexer-hand-over-${{ github.event.issue.number }}
+        path: ${{ runner.temp }}/contexer-hand-over
+
+    - name: Publish
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        CONTEXER_LABEL: ${{ inputs.label }}
+        CONTEXER_LEFT: ${{ runner.temp }}/contexer-hand-over
+      run: contexer issue publish "$CONTEXER_LEFT" --label "$CONTEXER_LABEL"

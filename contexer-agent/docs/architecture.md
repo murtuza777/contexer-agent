@@ -545,10 +545,20 @@ prompts; `tests/test_controller.py` pins what those produce.
   covers the coding agent and Contexer's agents together. The engine tells
   the budget what the coding agent has spent; each turn is told what is
   left; a run that runs out ends `budget_exhausted` on its best attempt.
-  A provider that reports no price is priced from `[agents]
-  input_usd_per_mtok` and `output_usd_per_mtok`, and the total is marked
-  as an estimate. With neither, cost is unknown and only tokens are
-  limited. A coding agent can overshoot within one turn: Claude Code
+  Any limit that is reached, the token limit too, ends the run before the
+  next coding turn. A call the provider did not price is priced from its
+  tokens and the total is marked as an estimate: at `[agents]
+  input_usd_per_mtok` and `output_usd_per_mtok` when the project sets
+  them (for every model), else at the prices in the called model's own
+  record, cached input at its cached price. With neither, cost is unknown
+  and is said as "unknown", never as $0.00. `contexer run` and `contexer
+  test` refuse a dollar limit they could not keep before anything is
+  spent (`budget.unenforceable`): a model with no known price, or a coding
+  agent that reports no cost (Codex, OpenCode) under `max_usd`. `contexer
+  test` reads the same `[agents] max_usd` and rates. Cached input: the
+  Anthropic model marks the tools and the system prompt for caching, and
+  OpenRouter is sent one `session_id` per model object (`llm/chat.py`).
+  A coding agent can overshoot within one turn: Claude Code
   checks its budget between its own steps, and one turn went from $2.42
   to $6.26 against a $5 limit.
 - **A model per agent.** `[agents.<name>] model`, `provider` and
@@ -558,10 +568,8 @@ prompts; `tests/test_controller.py` pins what those produce.
   for its four (intent, tester, challenger, diagnoser); a model named on
   `contexer test --model` is for every agent of that run. A model that
   cannot be built, an unknown provider, and a provider with no model stop
-  the command before it starts. Not wired yet: `max_steps` for Intent and
-  Triage inside `contexer run` (both take the argument; `graph/nodes.py`
-  does not pass it), and the issue flow, which runs every agent on the
-  default model.
+  the command before it starts. Not wired yet: the issue flow, which runs
+  every agent on the default model.
 - **The estimate** (`crew/estimate.py`) is printed before a run: the most
   coding-agent turns and model calls it can make, from the caps in code.
   It is a ceiling, not a prediction.
@@ -1488,6 +1496,26 @@ sequenceDiagram
   status comment (`<!-- contexer:status -->`), edited on each phase and
   verdict (at most every 5 s, verdicts immediately); the hand-off closes the
   issue.
+- **Two jobs** (the workflow `contexer init --issues` writes; not yet run on
+  GitHub, see REL-8). The job in which the app and the coding agent run has
+  `contents: read` and `issues: read` and runs `contexer issue event
+  --hand-over DIR`: it posts and pushes nothing, refuses to build when the
+  API reports that its token can push, and leaves `handover.json` (the
+  draft's parts, or the run's outcome and status lines, or why it stopped)
+  and `change.patch` (`handoff.make_patch`) as an artifact. The second job
+  has the write token and no model key and runs `contexer issue publish
+  DIR`. It takes the issue, the approver and the time of the approval from
+  the event, asks GitHub again whether the approver has write access and
+  which checks are in the draft, and gives the patch to
+  `handoff.publish_patch`: applied to a temporary index, read back with
+  `git diff-index --raw`, refused when a path is under `.github/`, is a
+  contract other than the approved one, is a symbolic link or a submodule,
+  when the contract in it does not hold the approved checks and approval,
+  when it is over 5 MB or adds a secret; then committed with `commit-tree`
+  and pushed by id. No file of the change is written to that job's checkout
+  and no hook runs. What the first job says about the checks (passed or
+  not) is shown as reported: the second job cannot replay them. There is no
+  status comment while the build runs, one when it has ended.
 
 ## 15. The command line
 
@@ -1572,11 +1600,11 @@ and prints the fix under each problem.
 | `[agent] max_repair_rounds` | 2 | Repair rounds after the first attempt |
 | `[agent] budget_usd` | none | Stop when the agent has spent this much |
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
-| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins |
-| `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens, used when the provider reports no cost |
+| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins. Read by `run` and `test`. Refused at the start when part of the spend cannot be known |
+| `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens for every model, used when the provider reports no cost. Without them a call is priced from its model's own record, when that states a price |
 | `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer`. Read by `run` and `test`. `provider` needs `model`; a model that cannot be built stops the command |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
-| `[limits] cost_usd` | none | Cost limit for the same, where the provider reports prices |
+| `[limits] cost_usd` | none | Cost limit for the same. Refused at the start when a model that will be called has no known price |
 
 ### Environment variables
 
@@ -1707,10 +1735,21 @@ replay --dir . --json [--url] [--github]`, exposes `outcome`, uploads
 
 **Issue action** (`issue/action.yml`): inputs `agent`, `model`,
 `working-directory`, `label`, `github-token`, `python-version`,
-`node-version`; reads the event (`contexer issue event --plan`), installs
-Node, Chromium and (for builds) the coding agent, runs `contexer issue
-event`, uploads the evidence. `contexer init --issues` writes a workflow
-using it.
+`node-version`, `hand-over`; reads the event (`contexer issue event
+--plan`), installs Node, Chromium and (for builds) the coding agent, runs
+`contexer issue event`, uploads the evidence. With `hand-over: true` it
+posts and pushes nothing and uploads `contexer-hand-over-<issue>`.
+
+**Issue publish action** (`issue/publish/action.yml`): inputs
+`working-directory`, `label`, `github-token`, `python-version`; installs
+Contexer from the action's own checkout, downloads
+`contexer-hand-over-<issue>` outside the checkout and runs `contexer issue
+publish`. No Node, no browser, no command of the project. `contexer init
+--issues` writes a workflow with one job for each action. A workflow
+written before the split (one job, `hand-over` unset) works as it did.
+
+Third-party actions are named by commit with the version in a comment, and
+no input or event value is written into a script: each goes through `env`.
 
 **Publishing**: the distribution is `contexer-agent` (`contexer` on PyPI is a
 different project); the command and import package are `contexer`. The wheel
