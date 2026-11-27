@@ -72,6 +72,12 @@ The three gaps that matter most before a launch:
    to install, Chromium fetched, a model key asked for once, and a sample
    app that passes in five minutes.
 
+Since this was written: the first gap is built (`contexer mcp`, the stop
+hook and `contexer init --agent`, in version 0.6.0; run in Claude Code only
+so far), and so is the second (`--json` events, and in version 0.7.0
+`trace.jsonl` and screenshots in the pull request with `--pr --screenshots`;
+a trace is never pushed).
+
 ---
 
 ## 3. The terminal

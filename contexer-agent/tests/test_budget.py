@@ -87,6 +87,15 @@ def test_a_dollar_limit_that_cannot_be_kept_is_named_with_what_to_set() -> None:
     assert unenforceable(Budget(max_cost_usd=2.5, **rates), models=[model], coding_agent="codex") == ""
 
 
+def test_a_command_with_no_budget_flag_is_not_told_to_use_one() -> None:
+    # `contexer issue build` has no --max-usd: its limit can only come from contexer.toml.
+    told = unenforceable(Budget(max_total_usd=2.0), models=[ScriptedChatModel()], flag="")
+    assert "--max-usd" not in told and "max_usd under [agents]" in told
+    coding = unenforceable(Budget(max_total_usd=2.0), coding_agent="codex", flag="")
+    assert "--max-usd" not in coding and "max_usd under [agents]" in coding
+    assert "--max-usd" in unenforceable(Budget(max_total_usd=2.0), coding_agent="codex")  # the default names it
+
+
 # -- COST-3: a price per model ---------------------------------------------------------------------
 
 

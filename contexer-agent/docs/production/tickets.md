@@ -841,6 +841,12 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Type.** Context. **Priority.** P3. **Effort.** S.
 - **Do.** Store the inspector's summary keyed by the snapshot's tree hash
   and reuse it while the tree is unchanged.
+- **Closed without building, 2026-11-28.** Measured on the todo fixture:
+  the inspector's summary takes 0.005 s, and the tree hash it would be
+  keyed by (`ShadowRepo.tree`) takes 0.3 s. The cache would cost sixty
+  times what it saves. A run also inspects the project once and keeps the
+  result (`graph/context.py: RunContext.repo`). Reopen only if a project is
+  found where the inspection itself is slow.
 
 ---
 

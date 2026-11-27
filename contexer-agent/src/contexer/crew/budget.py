@@ -139,15 +139,17 @@ class Budget:
         return self._rates(model) is not None or capabilities_of(model).provider in _REPORTS_COST
 
 
-def unenforceable(budget: Budget, *, models: Iterable[Any] = (), coding_agent: str = "") -> str:
+def unenforceable(budget: Budget, *, models: Iterable[Any] = (), coding_agent: str = "", flag: str = "--max-usd") -> str:
     """Why a dollar limit of ``budget`` cannot be kept, and what to set; '' when it can be, or there is none.
 
     ``models`` are the chat models Contexer's agents will call. ``coding_agent`` is the name of the
     coding agent when it reports no cost for its turns. A limit that would count unknown spend as 0
-    is not a limit, so the commands refuse it before anything is spent.
+    is not a limit, so the commands refuse it before anything is spent. ``flag`` is the option that sets
+    the run budget on the calling command, '' when it has none (``contexer issue build``).
     """
     if budget.max_total_usd is not None:
-        limit = f"The run budget of ${budget.max_total_usd:.2f} (--max-usd, or max_usd under [agents])"
+        where = f"{flag}, or max_usd under [agents]" if flag else "max_usd under [agents] in contexer.toml"
+        limit = f"The run budget of ${budget.max_total_usd:.2f} ({where})"
         if coding_agent:
             return (
                 f"{limit} cannot be enforced: {coding_agent} reports no cost for its turns. "

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- `contexer issue build` refusing a dollar limit it cannot keep no longer tells you to use
+  `--max-usd`, an option that command does not have. It names `max_usd` under `[agents]` in
+  `contexer.toml`.
+
 ## 0.7.0 — 2026-11-28
 
 ### Added
