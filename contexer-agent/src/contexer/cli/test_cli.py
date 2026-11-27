@@ -47,7 +47,7 @@ from contexer.contract.models import utc_now
 from contexer.crew import challenger as challenger_agent
 from contexer.crew import diagnoser as diagnoser_agent
 from contexer.crew import intent as intent_agent
-from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
+from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget, unenforceable
 from contexer.crew.challenger import challenge
 from contexer.crew.diagnoser import Failure, diagnose, fix_prompt
 from contexer.crew.intent import Question, run_intent
@@ -232,8 +232,12 @@ def test(
     except ProjectConfigError as exc:
         term.note(console, "fail", f"[red]Could not test:[/] {escape(str(exc))}")
         raise typer.Exit(code=2) from None
-    limits = config.limits
-    budget = Budget(max_tokens=max_tokens or limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=limits.cost_usd)
+    from contexer.cli.run_cli import run_budget
+
+    # The same budget `contexer run` builds: the token limit, [agents] max_usd and the rates. The flag wins.
+    budget = run_budget(config)
+    if max_tokens:
+        budget.max_tokens = max_tokens
     agent_steps = {name: cap for name in TEST_AGENTS if (cap := config.agents.for_agent(name).max_steps)}
     if steps is not None:
         agent_steps["tester"] = steps  # the flag wins
@@ -268,13 +272,21 @@ def test(
             named.append({} if flagged else crew_models(project, config, default_provider=config.compiler.provider, agents=TEST_AGENTS))
         return named[0]
 
-    if not again:  # --again needs no model unless the saved checks pass
+    dollar_limit = budget.max_total_usd is not None or budget.max_cost_usd is not None
+    if not again or dollar_limit:  # --again needs no model unless the saved checks pass; a dollar limit is checked either way
+        called: list[Any] = []
         try:
-            model_factory()
-            agent_models()
+            default, chosen = model_factory(), agent_models()
+            called = [chosen.get(name) or default for name in TEST_AGENTS]
         except (LLMError, ValueError) as exc:
-            term.note(console, "fail", f"[red]Could not test:[/] {escape(str(exc))}")
-            raise typer.Exit(code=2) from None
+            if not again:  # with --again a model that cannot be built is an error only once it is needed
+                term.note(console, "fail", f"[red]Could not test:[/] {escape(str(exc))}")
+                raise typer.Exit(code=2) from None
+        # Before anything is spent: a dollar limit that would count unknown spend as 0 is refused, not ignored.
+        cannot_keep = unenforceable(budget, models=called)
+        if cannot_keep:
+            term.note(console, "fail", escape(cannot_keep))
+            raise typer.Exit(code=2)
 
     try:
         # The tester starts the app and may reset it; a run doing the same in this folder would trip over it.
@@ -306,7 +318,7 @@ def test(
         term.note(console, "warn", "Stopped. The browser and the app were closed; nothing in the project was changed.")
         raise typer.Exit(code=130) from None
 
-    render_test_result(console, result)
+    render_test_result(console, result, cost_estimated=budget.estimated)
     if copy and result.fix_prompt:
         if copy_to_clipboard(Path(result.fix_prompt).read_text(encoding="utf-8")):
             term.note(console, "pass", "The fix prompt was copied to the clipboard.")
@@ -805,7 +817,7 @@ def _confirmed(item: Confirmed) -> ConfirmedFinding:
     )
 
 
-def render_test_result(console: Console, result: ExplorationResult) -> None:
+def render_test_result(console: Console, result: ExplorationResult, *, cost_estimated: bool = False) -> None:
     if result.outcome == "error":
         console.print()
         term.note(console, "fail", f"[red]Error:[/] {escape(result.error or 'the app could not be tested')}")
@@ -880,7 +892,12 @@ def render_test_result(console: Console, result: ExplorationResult) -> None:
     stopped = _STOPPED_EARLY.get(result.tester_status)
     if result.outcome == "bugs" and result.tester_status == "model_error":
         stopped = f"stopped on a model error ({result.tester_error})"
-    cost = f"${result.cost_usd:.4f}" if result.cost_usd is not None else "not reported by the provider"
+    if result.tester_status == "budget_exhausted" and "token budget" not in result.tester_error:
+        stopped = "stopped at the dollar budget"  # [agents] max_usd or [limits] cost_usd, not the token limit
+    if result.cost_usd is None:
+        cost = "unknown (the provider reports none, and no price is known for the model)"
+    else:
+        cost = f"${result.cost_usd:.4f}" + (" estimated from token counts and prices per token" if cost_estimated else "")
     rows = []
     if not result.still_failing:
         unconfirmed = f"{result.unconfirmed} unconfirmed" + (" [dim](did not reproduce; not shown)[/]" if result.unconfirmed else "")

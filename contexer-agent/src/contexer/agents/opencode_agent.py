@@ -26,6 +26,8 @@ from contexer.procutil import ProcessTree, spawn_tree
 
 class OpenCodeAgent(CodingAgentAdapter):
     name = "opencode"
+    # The turn's result (opencode/adapter.py) carries no cost, so a turn's cost is recorded as unknown.
+    reports_cost = False
 
     def __init__(
         self,
