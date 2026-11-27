@@ -28,6 +28,7 @@ import hashlib
 import os
 import re
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -126,21 +127,7 @@ def hand_off(
     """
     if not outcome.changed_files:
         return None
-    if outcome.approved_hash and contract.content_hash() != outcome.approved_hash:
-        # The run proved the checks it remembers. A contract file that now says something else was written
-        # after they were approved, by something other than an approval: it is not committed as "approved".
-        raise HandoffError(
-            f"the contract {contract.id} changed after its checks were approved in this run, so nothing was committed. "
-            f"Look at {CONTEXER_DIR}/{CONTRACTS_DIR}/{contract.id}.json, approve it again if the change is yours, and hand the work off yourself."
-        )
-    # The coding agent ran in this checkout with a shell. What it could have left for git to run is looked at before
-    # git is asked to do anything: a changed setting stops the hand-off, a changed hook is not run.
-    now = _git_state(plan.root)
-    if plan.git_state and now.get(_CONFIG) != plan.git_state.get(_CONFIG):
-        raise HandoffError(
-            "the repository's git settings (.git/config) changed while the agent worked, so nothing was committed: a setting "
-            "there can name a program for git to run. Look at the file, put it right, and hand the work off yourself."
-        )
+    now = _unchanged_or_fail(plan, outcome, contract)
     hooks_changed = bool(plan.git_state) and {k: v for k, v in now.items() if k != _CONFIG} != {
         k: v for k, v in plan.git_state.items() if k != _CONFIG
     }
@@ -237,6 +224,202 @@ def hand_off(
     finally:
         client.close()
     return Handoff(branch, commit, True, str(pull.get("html_url") or compare), True, bool(pull.get("draft", not succeeded)), note)
+
+
+def _unchanged_or_fail(plan: HandoffPlan, outcome: RunOutcome, contract: Contract) -> dict[str, str]:
+    """Stop when the contract or the repository's git settings changed during the run. The git state as it is now."""
+    if outcome.approved_hash and contract.content_hash() != outcome.approved_hash:
+        # The run proved the checks it remembers. A contract file that now says something else was written
+        # after they were approved, by something other than an approval: it is not committed as "approved".
+        raise HandoffError(
+            f"the contract {contract.id} changed after its checks were approved in this run, so nothing was committed. "
+            f"Look at {CONTEXER_DIR}/{CONTRACTS_DIR}/{contract.id}.json, approve it again if the change is yours, and hand the work off yourself."
+        )
+    # The coding agent ran in this checkout with a shell. What it could have left for git to run is looked at before
+    # git is asked to do anything: a changed setting stops the hand-off, a changed hook is not run.
+    now = _git_state(plan.root)
+    if plan.git_state and now.get(_CONFIG) != plan.git_state.get(_CONFIG):
+        raise HandoffError(
+            "the repository's git settings (.git/config) changed while the agent worked, so nothing was committed: a setting "
+            "there can name a program for git to run. Look at the file, put it right, and hand the work off yourself."
+        )
+    return now
+
+
+# -- a build with no write token: the change leaves as a patch, another job pushes it -----------------
+
+# A patch larger than this is not published. A lockfile is well under it; a change this large is read by nobody.
+MAX_PATCH_BYTES = 5_000_000
+# What a published change may hold: files, and files that can be run. A deletion has no mode. Not a
+# symbolic link (120000) and not a submodule (160000): each makes a path mean something other than its content.
+_FILE_MODES = frozenset({"100644", "100755", "000000"})
+# The index refuses the names Windows and macOS read as ``.git``, whatever system applies the patch.
+_STRICT_NAMES = ("-c", "core.protectNTFS=true", "-c", "core.protectHFS=true")
+
+
+def make_patch(plan: HandoffPlan, outcome: RunOutcome, contract: Contract) -> bytes | None:
+    """The run's change as a patch: the files the run changed and the approved contract. None if nothing changed.
+
+    For a job that holds no token to push with (the issue workflow's first job). The checkout's own index and
+    branch are left as they are: the files are staged in an index of their own.
+    """
+    if not outcome.changed_files:
+        return None
+    _unchanged_or_fail(plan, outcome, contract)
+    prefix = plan.project.relative_to(plan.root)
+    paths = [(prefix / p).as_posix() for p in outcome.changed_files]
+    contract_file = (prefix / CONTEXER_DIR / CONTRACTS_DIR / f"{contract.id}.json").as_posix()
+    if (plan.root / contract_file).is_file() and _git(plan.root, "check-ignore", "--quiet", contract_file) is None:
+        paths.append(contract_file)
+    with tempfile.TemporaryDirectory() as scratch:
+        index = Path(scratch) / "index"
+        _raw_or_fail(plan.root, "read-tree", "HEAD", index=index)
+        _raw_or_fail(plan.root, "add", "--all", "--", *paths, index=index)
+        patch = _raw_or_fail(
+            plan.root, "diff", "--cached", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv",
+            "--no-color", "HEAD", "--", *paths, index=index,
+        )  # fmt: skip
+    return patch or None
+
+
+def patch_problems(entries: list[tuple[str, str]], contract_file: str) -> list[str]:
+    """Why a change may not be published, one sentence per entry at fault. ``entries`` are (new mode, path).
+
+    Nothing under ``.github/``: a workflow there runs with the repository's secrets. No contract except the
+    approved one, added, changed or deleted: the contracts are what later pull requests are held to. Only files.
+    """
+    problems: list[str] = []
+    for mode, path in entries:
+        parts =[part.casefold() for part in path.split("/")]
+        shown = _code(path)[:200]
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in path) or "\\" in path:
+            problems.append(f"a file name has a control character or a backslash ({shown})")
+        elif ".git" in parts or ".." in parts:
+            problems.append(f"{shown} is not a path inside the repository's files")
+        elif parts[0] == ".github":
+            problems.append(f"{shown} is under .github/")
+        elif path != contract_file and any(pair == (CONTEXER_DIR, CONTRACTS_DIR) for pair in zip(parts, parts[1:], strict=False)):
+            problems.append(f"{shown} is a contract other than the approved one")
+        elif mode not in _FILE_MODES:
+            problems.append(f"{shown} is a symbolic link or a submodule (mode {_code(mode)})")
+    return problems
+
+
+def publish_patch(
+    plan: HandoffPlan,
+    patch: bytes,
+    outcome: RunOutcome,
+    contract: Contract,
+    *,
+    approved_by: str,
+    issue: int | None = None,
+    intent: IntentSpec | None = None,
+    client_factory: Callable[[str, str], GitHubClient] | None = None,
+) -> Handoff:
+    """Commit a patch that another job made, push it and open the pull request.
+
+    The patch and ``outcome`` come from a job in which a coding agent had a shell, so neither is believed.
+    ``contract`` and ``approved_by`` are what this job read on the issue itself. The patch is applied to an
+    index of its own and the commit is made from that index: no file of it is written to the checkout, and
+    nothing of the project is run. What it would commit is then read back from the index (not from the
+    patch's text) and refused when ``patch_problems`` finds anything, when the contract in it is not the one
+    approved on the issue, or when the secret scan finds a secret. What ``outcome`` says about the checks is
+    shown as it was reported; this job cannot replay them.
+    """
+    if len(patch) > MAX_PATCH_BYTES:
+        raise HandoffError(f"the change is {len(patch):,} bytes as a patch, over the {MAX_PATCH_BYTES:,} this job publishes; nothing was pushed")
+    if plan.remote is None or plan.repo is None:
+        raise HandoffError("the checkout has no GitHub remote to push to")
+    prefix = plan.project.relative_to(plan.root)
+    contract_file = (prefix / CONTEXER_DIR / CONTRACTS_DIR / f"{contract.id}.json").as_posix()
+    shown = contract.model_copy(update={"approval": None})
+    with tempfile.TemporaryDirectory() as scratch:
+        index = Path(scratch) / "index"
+        _raw_or_fail(plan.root, "read-tree", "HEAD", index=index)
+        applied = _git_raw(plan.root, *_STRICT_NAMES, "apply", "--cached", "--whitespace=nowarn", "-", data=patch, index=index)
+        if applied is None or applied.returncode != 0:
+            said = applied.stderr.decode("utf-8", errors="replace").strip()[-400:] if applied is not None else "git could not be run"
+            raise HandoffError(f"the change does not apply to {plan.base} as this job checked it out, so nothing was pushed: {said}")
+        raw = _raw_or_fail(plan.root, "diff-index", "--cached", "--raw", "-z", "--no-renames", "--no-abbrev", "HEAD", index=index)
+        entries = _raw_entries(raw)
+        if not entries:
+            raise HandoffError("the change is empty once applied; nothing was pushed")
+        problems = patch_problems([(mode, path) for mode, _blob, path in entries], contract_file)
+        for _mode, blob, path in entries:
+            if path == contract_file and not problems:
+                held = _approved_contract(plan.root, blob)
+                if held is None or held.content_hash() != contract.content_hash():
+                    problems.append(f"{_code(path)} does not hold the checks that were approved on the issue")
+                elif held.approval is None or held.approval.by != approved_by or held.approval.sha256 != contract.content_hash():
+                    problems.append(f"{_code(path)} does not record the approval that was given on the issue")
+                else:
+                    shown = held
+        if problems:
+            more = f" and {len(problems) - 3} more" if len(problems) > 3 else ""
+            raise HandoffError(f"the change was not pushed: {'; '.join(problems[:3])}{more}")
+        staged = _raw_or_fail(plan.root, "diff-index", "--cached", "-p", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD", index=index)
+        leaked = [n for n in prescan(staged.decode("utf-8", errors="replace")) if n.category == "security" and n.severity == "high"]
+        if leaked:
+            where = ", ".join(f"{_in_project(n.file, prefix)}:{n.line}" if n.line else _in_project(n.file, prefix) for n in leaked[:3])
+            raise HandoffError(
+                f"the change was not pushed: it adds what looks like a secret ({where}). Revoke it if it is real; the change is in "
+                "this workflow run's artifact for whoever takes it from here."
+            )
+        tree = _raw_or_fail(plan.root, "write-tree", index=index).decode().strip()
+
+    # Text for a commit message: the run's id is the other job's word, and a line break in it would add a trailer.
+    outcome = outcome.model_copy(update={"run_id": outcome.run_id if re.fullmatch(r"[\w.-]{1,80}", outcome.run_id) else "unknown"})
+    who = ("-c", f"user.name={_BOT[0]}", "-c", f"user.email={_BOT[1]}")
+    message = _commit_message(outcome, shown)
+    commit = _raw_or_fail(plan.root, *who, "commit-tree", "--no-gpg-sign", "-p", "HEAD", "-m", message, tree).decode().strip()
+    automatic = shown.approval is not None and shown.approval.by == AUTOMATIC_APPROVAL
+    succeeded = outcome.terminal == "succeeded" and not (holds_pull_request(outcome.review) or automatic or flaky_checks(outcome))
+    branch = _free_branch(plan, f"contexer/{contract.id}")
+    # Pushed by its id: no local branch, no checkout, and no hook of the repository.
+    ref = f"{commit}:refs/heads/{branch}"
+    if _git(plan.root, *_NO_HOOKS, *_push_auth(plan), "push", "--quiet", plan.remote, ref, timeout=180, tokens=True) is None:
+        raise HandoffError(f"`git push {plan.remote} {branch}` failed, so there is no pull request")
+    compare = f"https://github.com/{plan.repo}/compare/{plan.base}...{branch}?expand=1"
+    token = github_token()
+    if token is None:
+        return Handoff(branch, commit, True, compare, False, not succeeded, "No GitHub token; open the pull request from the link.")
+    factory = client_factory or (lambda repo, tok: GitHubClient(repo, tok))
+    client = factory(plan.repo, token)
+    try:
+        pull = client.open_pull(
+            title=_title(outcome, shown),
+            head=branch,
+            base=plan.base,
+            body=pull_request_body(outcome, shown, issue=issue, intent=intent),
+            draft=not succeeded,
+        )
+    except GitHubError as exc:
+        return Handoff(branch, commit, True, compare, False, not succeeded, f"Opening the pull request failed: {exc}")
+    finally:
+        client.close()
+    return Handoff(branch, commit, True, str(pull.get("html_url") or compare), True, bool(pull.get("draft", not succeeded)))
+
+
+def _raw_entries(raw: bytes) -> list[tuple[str, str, str]]:
+    """``git diff-index --raw -z`` as (new mode, new blob, path), one per changed path."""
+    fields = raw.decode("utf-8", errors="surrogateescape").split("\0")
+    entries: list[tuple[str, str, str]] = []
+    for meta, path in zip(fields[0::2], fields[1::2], strict=False):
+        parts = meta.lstrip(":").split()  # old mode, new mode, old blob, new blob, status
+        if len(parts) >= 5:
+            entries.append((parts[1], parts[3], path.encode("utf-8", errors="surrogateescape").decode("utf-8", errors="replace")))
+    return entries
+
+
+def _approved_contract(root: Path, blob: str) -> Contract | None:
+    """The contract a blob holds, or None when it is not one."""
+    found = _git_raw(root, "cat-file", "blob", blob)
+    if found is None or found.returncode != 0:
+        return None
+    try:
+        return Contract.model_validate_json(found.stdout)
+    except ValueError:
+        return None
 
 
 @dataclass
@@ -610,6 +793,34 @@ def _git_in(cwd: Path, data: bytes, *args: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.decode("utf-8", errors="replace").strip() if out.returncode == 0 else None
+
+
+def _git_raw(
+    cwd: Path, *args: str, data: bytes | None = None, index: Path | None = None, timeout: float = 120
+) -> subprocess.CompletedProcess[bytes] | None:
+    """Run git and keep what it printed as bytes (a patch is not always text). None if it could not be run.
+
+    With ``index``, git works on that index file and leaves the checkout's own alone. No repository token.
+    """
+    env = _git_env(False)
+    if index is not None:
+        env["GIT_INDEX_FILE"] = str(index)
+    try:
+        return subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", *args], cwd=str(cwd), env=env, input=data, capture_output=True, timeout=timeout
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _raw_or_fail(cwd: Path, *args: str, index: Path | None = None) -> bytes:
+    out = _git_raw(cwd, *args, index=index)
+    verb = next((a for a in args if not a.startswith("-") and "=" not in a), args[0])
+    if out is None:
+        raise HandoffError(f"git {verb} could not be run")
+    if out.returncode != 0:
+        raise HandoffError(f"git {verb} failed: {(out.stderr or out.stdout).decode('utf-8', errors='replace').strip()[-600:]}")
+    return out.stdout
 
 
 def _git_or_fail(cwd: Path, *args: str) -> str:
