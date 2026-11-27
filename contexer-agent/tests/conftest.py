@@ -109,6 +109,8 @@ def _isolated_user_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatc
     monkeypatch.setenv("CONTEXER_HOME", str(tmp_path_factory.mktemp("contexer-home")))
     # A developer's own .env may hold an OpenRouter key; asking OpenRouter about it is not hermetic.
     monkeypatch.setattr("contexer.llm.discovery.openrouter_free_quota", lambda *_a, **_k: None)
+    # A run whose goal came from an issue reads that issue's comments, with the developer's own GitHub token.
+    monkeypatch.setattr("contexer.github.issues.read_discussion", lambda *_a, **_k: None)
     # The same for asking a provider's model list what a model can do (`contexer doctor`, and before agents
     # start). A test that passes its own transport is still answered by it.
     from contexer.llm import capabilities

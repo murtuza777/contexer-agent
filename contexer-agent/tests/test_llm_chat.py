@@ -270,6 +270,17 @@ async def test_the_cached_part_of_the_input_is_read_from_an_openai_compatible_re
     model = chat_model("custom", "some-model", config=_config(monkeypatch, **_custom("custom")), http_async_client=client)
     assert cached_tokens(await model.ainvoke("hello")) == 64
     assert cached_tokens(await model.ainvoke("hello")) is None  # the provider did not say: not the same as none cached
+async def test_openrouter_is_asked_for_a_provider_that_takes_every_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(monkeypatch)
+    for model in (None, "vendor/model"):  # the default model with its fallback list, and one the user picked
+        client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY))
+        await chat_model("openrouter", model, config=config, http_async_client=client).ainvoke("hello")
+        # Without it OpenRouter may route a request with tools to a provider that drops them.
+        assert json.loads(requests[0].content)["provider"] == {"require_parameters": True}
+
+    client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY))
+    await chat_model("groq", "llama", config=config, http_async_client=client).ainvoke("hello")
+    assert "provider" not in json.loads(requests[0].content)  # OpenRouter's own field: nobody else is sent it
 
 
 # -- Azure AI Foundry ------------------------------------------------------------

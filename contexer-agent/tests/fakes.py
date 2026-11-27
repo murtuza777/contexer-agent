@@ -51,6 +51,7 @@ class ScriptedChatModel(BaseChatModel):
     seen: list[list[BaseMessage]] = Field(default_factory=list)
     options: list[dict[str, Any]] = Field(default_factory=list)
     bound_tools: list[str] = Field(default_factory=list)
+    bound_schemas: list[dict[str, Any]] = Field(default_factory=list)
     # How many callback handlers (tracers) each call carried.
     callbacks_seen: list[int] = Field(default_factory=list)
 
@@ -62,7 +63,11 @@ class ScriptedChatModel(BaseChatModel):
         return "scripted"
 
     def bind_tools(self, tools: Sequence[Any], **kwargs: Any) -> Any:
-        self.bound_tools = [getattr(tool, "name", str(tool)) for tool in tools]
+        # A tool arrives as the loop sends it: an OpenAI-style function description, or a tool object.
+        self.bound_schemas = [tool for tool in tools if isinstance(tool, dict)]
+        self.bound_tools = [
+            tool["function"]["name"] if isinstance(tool, dict) else getattr(tool, "name", str(tool)) for tool in tools
+        ]
         return self.bind(**kwargs)
 
     def _next(self, messages: list[BaseMessage], kwargs: dict[str, Any], run_manager: Any = None) -> ChatResult:
