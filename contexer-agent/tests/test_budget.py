@@ -10,10 +10,10 @@ import pytest
 
 from contexer.config.project import ProjectConfigError, load_project_config
 from contexer.controller import RunSettings
-from contexer.crew.budget import Budget
+from contexer.crew.budget import Budget, unenforceable
 from contexer.crew.estimate import estimate_run
 from contexer.graph import GraphController
-from tests.fakes import AgentScript, submit
+from tests.fakes import AgentScript, ScriptedChatModel, submit
 from tests.loop_helpers import BROKEN_JS, COUNT_BUG_JS, GOOD_JS, RecordingAgent, contract, copy_todo, fast_runner
 
 pytestmark = pytest.mark.anyio
@@ -66,6 +66,23 @@ def test_one_budget_covers_the_coding_agent_and_contexers_agents_together() -> N
     assert "run budget of $1.00" in budget.exhausted()
     assert budget.total_left() == 0.0
     assert Budget().total_left() is None  # no total, nothing to run out of
+
+
+def test_a_dollar_limit_that_cannot_be_kept_is_named_with_what_to_set() -> None:
+    model = ScriptedChatModel()  # a model nothing is known about: no price
+    rates: dict[str, Any] = {"input_usd_per_mtok": 2.0, "output_usd_per_mtok": 10.0}
+    assert unenforceable(Budget(max_tokens=10), models=[model], coding_agent="codex") == ""  # no dollar limit, nothing to keep
+    assert unenforceable(Budget(max_total_usd=2.0, **rates), models=[model]) == ""
+
+    crew = unenforceable(Budget(max_tokens=1_500_000, max_total_usd=2.0), models=[model])
+    assert "run budget of $2.00" in crew and "scripted-model" in crew
+    assert "input_usd_per_mtok" in crew and "output_usd_per_mtok" in crew and "[limits] tokens" in crew
+    assert "[limits] cost_usd" in unenforceable(Budget(max_cost_usd=2.5), models=[model])
+
+    coding = unenforceable(Budget(max_total_usd=2.0, **rates), coding_agent="codex")
+    assert "run budget of $2.00" in coding and "codex reports no cost" in coding and "claude-code" in coding
+    # [limits] cost_usd is a limit on Contexer's own agents: the coding agent is not part of it.
+    assert unenforceable(Budget(max_cost_usd=2.5, **rates), models=[model], coding_agent="codex") == ""
 
 
 # -- configuration ---------------------------------------------------------------------------------

@@ -10,7 +10,8 @@ per call, or when the project gives the rates (``[agents]
 input_usd_per_mtok`` / ``output_usd_per_mtok``): then a call the provider
 did not price is priced from its tokens, and the total is marked as an
 estimate. With neither, cost stays unknown and a cost limit never triggers,
-which is why the token limit is the one with a default.
+which is why the token limit is the one with a default, and why a command
+refuses a dollar limit it could not keep (``unenforceable``) before it starts.
 
 ``max_total_usd`` is one budget for everything: Contexer's agents and the
 coding agent. The engine tells the budget what the coding agent has spent
@@ -19,9 +20,16 @@ coding agent. The engine tells the budget what the coding agent has spent
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any
+
+from contexer.llm.capabilities import capabilities_of
+
 # Tokens (in and out together) one run may use unless the project or the command says otherwise.
 # A 40-step Tester run on a small app uses about 230,000.
 DEFAULT_MAX_TOKENS = 1_500_000
+# Providers that say what each call cost in its reply (``crew/base.py: reported_cost``).
+_REPORTS_COST = frozenset({"openrouter"})
 
 
 class Budget:
@@ -89,3 +97,42 @@ class Budget:
             spent = (self.cost_usd or 0.0) + self.other_usd
             return f"the run budget of ${self.max_total_usd:.2f} is used up (${spent:.2f} spent by the coding agent and Contexer's agents)"
         return ""
+
+    def priced(self, model: Any) -> bool:
+        """Whether a call to ``model`` will have a known cost: the project gives rates, or the provider reports one per call."""
+        return self.price(0, 0) is not None or capabilities_of(model).provider in _REPORTS_COST
+
+
+def unenforceable(budget: Budget, *, models: Iterable[Any] = (), coding_agent: str = "") -> str:
+    """Why a dollar limit of ``budget`` cannot be kept, and what to set; '' when it can be, or there is none.
+
+    ``models`` are the chat models Contexer's agents will call. ``coding_agent`` is the name of the
+    coding agent when it reports no cost for its turns. A limit that would count unknown spend as 0
+    is not a limit, so the commands refuse it before anything is spent.
+    """
+    if budget.max_total_usd is not None:
+        limit = f"The run budget of ${budget.max_total_usd:.2f} (--max-usd, or max_usd under [agents])"
+        if coding_agent:
+            return (
+                f"{limit} cannot be enforced: {coding_agent} reports no cost for its turns. "
+                "Use a coding agent that reports cost (claude-code), or remove the budget: "
+                "--rounds and the time limits still bound the run."
+            )
+    elif budget.max_cost_usd is not None:
+        limit = f"The cost limit of ${budget.max_cost_usd:.2f} ([limits] cost_usd)"
+    else:
+        return ""
+    unknown = sorted({_named(model) for model in models if not budget.priced(model)})
+    if not unknown:
+        return ""
+    tokens = f"{budget.max_tokens:,}" if budget.max_tokens is not None else "not set"
+    return (
+        f"{limit} cannot be enforced: no price is known for {', '.join(unknown)}, which Contexer's agents will call. "
+        "Set input_usd_per_mtok and output_usd_per_mtok under [agents] in contexer.toml (US dollars per million tokens), "
+        f"or remove the dollar limit: the token limit ([limits] tokens, {tokens} for this run) still applies."
+    )
+
+
+def _named(model: Any) -> str:
+    record = capabilities_of(model)
+    return f"{record.model} ({record.provider})" if record.provider else record.model

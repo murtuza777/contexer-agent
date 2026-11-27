@@ -338,14 +338,23 @@ async def test_a_diagnoser_that_fails_does_not_stop_the_repair(project: Path) ->
     assert "complete-decrements" in agent.prompts[1] and "Likely cause" not in agent.prompts[1]
 
 
-async def test_a_spent_budget_runs_the_loop_on_rules_alone(project: Path) -> None:
+async def test_a_spent_budget_stops_the_coding_turns_too(project: Path) -> None:
+    # Until COST-1 a spent budget only silenced Contexer's agents, and the coding agent went on under rules.
     budget = Budget(max_tokens=10)
     budget.spend(10, 0, None)
     model = AgentScript()
     agent = RecordingAgent([{"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS}])
     outcome = await _graph(project, agent, model=model, budget=budget).run(contract(project))
-    assert outcome.terminal == "succeeded" and model.total_calls == 0  # no Planner, no Triage, no Diagnoser
-    assert outcome.triage[0].source == "rules"
+    assert outcome.terminal == "budget_exhausted" and "token budget of 10" in outcome.reason
+    assert agent.prompts == [] and model.total_calls == 0  # no Planner, and no coding turn was paid for
+
+
+async def test_a_token_budget_reached_during_a_run_stops_before_the_next_coding_turn(project: Path) -> None:
+    budget = Budget(max_tokens=20)  # the Planner's one call uses 15, Triage's the next 15
+    agent = RecordingAgent([{"app.js": COUNT_BUG_JS + "// a\n"}, {"app.js": GOOD_JS}])
+    outcome = await _graph(project, agent, model=AgentScript(), budget=budget).run(contract(project))
+    assert outcome.terminal == "budget_exhausted" and "token budget" in outcome.reason
+    assert len(agent.prompts) == 1 and outcome.best_attempt == 1  # the repair turn was never started
 
 
 # -- the Planner before the first turn ----------------------------------------------------------------

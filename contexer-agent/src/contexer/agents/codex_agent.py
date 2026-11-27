@@ -37,6 +37,8 @@ _CHANGE_VERBS = {"add": "Created", "delete": "Deleted", "update": "Edited"}
 
 class CodexAgent(CodingAgentAdapter):
     name = "codex"
+    # Codex reports tokens, not cost: a turn's cost is recorded as unknown, never as 0.
+    reports_cost = False
 
     def __init__(
         self,

@@ -42,7 +42,7 @@ from contexer.config.project import (
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.contract.store import AUTOMATIC_APPROVAL
 from contexer.controller import RunOutcome, RunSettings
-from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
+from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget, unenforceable
 from contexer.crew.estimate import RunEstimate, estimate_run
 from contexer.evidence import RunDir
 from contexer.gate import RunResult
@@ -168,6 +168,12 @@ def run(
         )
     except AgentSettingError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    # Before anything is spent: a dollar limit that would count unknown spend as 0 is refused, not ignored.
+    called = [models_for_crew.get(name) or model_for_crew for name in RUN_AGENTS] if model_for_crew is not None else []
+    cannot_keep = unenforceable(crew_budget, models=called, coding_agent="" if agent.reports_cost else agent.name)
+    if cannot_keep:
+        term.note(console, "fail", escape(cannot_keep))
+        raise typer.Exit(code=2)
     draft_id: str | None = None
     contract: Contract | None = None
     graph_preview: RunResult | None = None
@@ -248,7 +254,7 @@ def _finish(
                 "exit_code": outcome.exit_code,
                 "attempts": len(outcome.attempts),
                 "best_attempt": outcome.best_attempt,
-                "cost_usd": outcome.cost_usd,
+                "cost_usd": coding_cost(outcome),
                 "crew_cost_usd": outcome.crew_cost_usd,
                 "review_notes": len(outcome.review),
                 "report": str(Path(outcome.run_dir, "report.html")),
@@ -381,13 +387,30 @@ def bill_line(outcome: RunOutcome) -> str:
     if not outcome.agents:
         return ""
     parts = [f"{a.agent} {a.tokens_in + a.tokens_out:,} tokens" for a in outcome.agents]
+    # An agent that used tokens and has no cost: its model has no known price. It is named, never counted as 0.
+    unpriced = [a.agent for a in outcome.agents if a.cost_usd is None and a.tokens_in + a.tokens_out > 0]
     if outcome.crew_cost_usd is None:
-        cost = "cost unknown (the provider reports none; set prices under [agents] to see it)"
+        cost = "cost unknown (no price is known for the model; set prices under [agents] to see it)"
     else:
-        cost = f"${outcome.crew_cost_usd:.2f}" + (
-            " estimated from the configured rates" if outcome.crew_cost_estimated else ""
-        )
+        cost = f"${outcome.crew_cost_usd:.2f}" + (" estimated from the configured rates" if outcome.crew_cost_estimated else "")
+        if unpriced:
+            cost += f" · {', '.join(unpriced)}'s cost is unknown and not in that figure"
     return " · ".join(parts) + f" · {cost}"
+
+
+def coding_cost(outcome: RunOutcome) -> float | None:
+    """What the coding agent cost, or None when a turn reported no cost: the figure is then not known, and it is not 0."""
+    return None if any(a.agent.cost_usd is None for a in outcome.attempts) else outcome.cost_usd
+
+
+def coding_spend(outcome: RunOutcome) -> str:
+    """What the coding agent spent, for the summary. A turn that reported no cost is said, never shown as $0.00."""
+    silent = sum(1 for a in outcome.attempts if a.agent.cost_usd is None)
+    if not silent:
+        return f"${outcome.cost_usd:.2f} agent spend" if outcome.cost_usd else ""
+    if silent == len(outcome.attempts):
+        return "coding agent cost unknown (no turn reported one)"
+    return f"${outcome.cost_usd:.2f} agent spend · {silent} turn{'s' if silent != 1 else ''} with no cost reported"
 
 
 def _run_budget_note(budget: Budget | None) -> str:
@@ -414,10 +437,10 @@ def _estimate(settings: RunSettings, budget: Budget | None, has_model: bool, dra
 def _limits_line(agent: CodingAgentAdapter, settings: RunSettings) -> str:
     limits = f"up to {settings.max_repair_rounds} repair round(s)"
     if settings.budget_usd:
-        # Codex reports tokens, not cost: the round and time limits bound its runs instead.
+        # Codex and OpenCode report no cost: the round and time limits bound their runs instead.
         limits += (
-            " · no spending limit (Codex reports no cost)"
-            if agent.name == "codex"
+            f" · no spending limit ({agent.name} reports no cost)"
+            if not agent.reports_cost
             else f" · budget ${settings.budget_usd:.2f}"
         )
     return limits
@@ -830,8 +853,8 @@ def _render(
     if len(outcome.review) > 4:
         rows.append((" ", f"[dim]and {len(outcome.review) - 4} more in the report[/]"))
     rows.append(("Report", escape(term.path(Path(outcome.run_dir, "report.html")))))
-    spend = f" · ${outcome.cost_usd:.2f} agent spend" if outcome.cost_usd else ""
-    rows.append(("Took", f"{term.duration(outcome.duration_seconds)}{spend}"))
+    spend = coding_spend(outcome)
+    rows.append(("Took", term.duration(outcome.duration_seconds) + (f" · {spend}" if spend else "")))
     bill = bill_line(outcome)
     if bill:
         rows.append(("Contexer's agents", escape(bill)))
