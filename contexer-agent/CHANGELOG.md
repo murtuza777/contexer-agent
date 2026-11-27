@@ -2,6 +2,115 @@
 
 ## Unreleased
 
+### Added
+
+- **`contexer run ... --pr --screenshots`** pushes one screenshot per check to a branch
+  `contexer-evidence/<contract>-<commit>` and shows them in the pull request: checks that did not
+  pass first, passed ones folded. Off by default, because the screenshots show your app's data to
+  everyone who can read the repository. Only JPEG files inside the run's folder are pushed, never a
+  trace, and nothing is pushed when the secret scan stops the hand-off. Deleting the branch removes
+  the images from the pull request. Not checked: no real pull request was opened, so whether the
+  images render on GitHub is unverified (`DX-2`).
+- **Every run folder has a `trace.jsonl`:** each run event as `--json` prints it, and one line per
+  model call and per tool call of Contexer's agents, named after OpenTelemetry's generative-AI
+  conventions. It holds no prompt, reply, tool argument or tool result, and every line is masked.
+  (`OBS-1`)
+- Repaired tool calls are counted: per agent in its transcript (`repaired` on a tool line,
+  `repaired_calls` on the end line) and in the `agents` rows of `run.json`. (`MOD-2`)
+- `contexer doctor` shows what is known about the configured model (tool calling, parallel calls,
+  strict schemas, vision, context window, prices) and where each fact comes from: the provider's
+  catalogue, a measurement, or an assumption. (`MOD-1`)
+- `contexer setup` makes one real tool call when nothing says whether the chosen model can call
+  tools, saves the answer in `~/.contexer/models.json`, and prints the record. `--no-test` skips it.
+  (`MOD-1`)
+- `contexer bench`: every suite prints its rates with a 95% Wilson interval, and
+  `--compare REPORT.json` says whether each rate is higher or lower than in an earlier report or
+  cannot be told apart from it. The intervals treat every run as an independent trial of one rate,
+  and `--compare` changes no exit code. (`EVAL-3`)
+
+### Changed
+
+- `contexer bench --repeats N` now works on the repair and reviewer suites, and on the tester suite
+  it repeats the seeded bugs as well as correct and benign code. On the gate suite it is unchanged.
+  No suite has been re-run with repeats, so every published number is still one run. (`EVAL-3`)
+- Releases: a version tag publishes only if the gate benchmark catches every seeded bug with no
+  false failure on the tagged commit and CI passed on it. The GitHub release carries the benchmark
+  report. **The release workflow has not been run yet.** The repair, reviewer and tester gates need
+  a model key and stay a person's step before tagging. (`REL-11`)
+- `[agents.<name>]` in `contexer.toml` now applies to `contexer test`: Intent, the Tester, the
+  Challenger and the Diagnoser each run on the model and step cap named for them. `--model` is for
+  every agent of that run; `--steps` wins for the Tester. Not yet: in `contexer run`,
+  `[agents.intent] max_steps` and `[agents.triage] max_steps` still do nothing. (`MOD-5`)
+- A model under `[agents.<name>]` that cannot be built stops `contexer run` and `contexer test` at
+  the start. It used to print a warning and use the default model. `provider` with no `model`, and
+  an unknown provider, are errors in `contexer.toml`. (`MOD-5`)
+- `contexer run` says why Contexer's agents are off when the configured model cannot call tools. It
+  used to go on under fixed rules without saying so. (`MOD-1`)
+- A tool call from one of Contexer's agents is checked against the tool's schema before the tool
+  runs. A call that does not fit gets the problem and the tool's required fields back, and an error
+  from inside a tool is no longer reported as bad arguments. (`MOD-2`)
+- The Diagnoser is shown the leads it already gave in the run, with the files the next attempt
+  changed and which checks then passed, broke or kept failing, and is told to say when its new lead
+  repeats one. No code compares leads: whether a repeat is named depends on the model. (`CTX-1`)
+- CI runs the test suite on one worker process per core (`pytest -n auto`, pytest-xdist, now in the
+  `dev` extra). The Ubuntu `Tests` job takes 11 to 12 minutes where it took 33 to 36, and its limit
+  is 30 minutes. The same tests run and the same tests are skipped on each system.
+
+### Fixed
+
+- **A `no_errors` check no longer passes on an app that throws just after it loads.** Errors were
+  counted after a fixed 250 ms; a slow machine could outlast that, and the macOS benchmark run of
+  2026-11-26 missed `shop/load-crash` this way. The check now waits until the page's own short
+  timers (2 seconds or less) have finished, for at most 3 seconds. Still outside the wait: an error
+  from a longer timer, from `setInterval`, or from a network response that arrives after the timers
+  are done. Not run on macOS yet.
+- In Actions, the pull request said the evidence is in the `contexer-report` artifact; the issue
+  workflow uploads it as `contexer-report-issue-<n>-<attempt>`. It now says the artifact's name
+  starts with `contexer-report`.
+- The tamper guard no longer fails when the whole `.contexer/contracts` folder was deleted; it puts
+  the folder back.
+- `contexer test --again` and `--correct` could pick the wrong feature when two were saved within
+  the same instant.
+
+### Security
+
+- **The `grep` tool of Contexer's agents (Diagnoser, Planner, Reviewer) can no longer hang a run.**
+  A pattern such as `(a|a)*$` used to hold the process on one 60-character line with no timeout
+  able to fire. The tool now searches for the literal text; a regular expression runs only when the
+  model asks for one, in a separate process that is stopped at the limit. Any search, literal or
+  not, stops after two seconds and says so. (`SEC-5`)
+- **Pull request text is inert everywhere.** The title and the commit message used the goal as
+  written, so a goal ending "closes #12" closed issue 12 when the pull request was merged. Titles,
+  commit messages, the pull request description, and the notes and errors Contexer posts on an
+  issue now go through one escape: no mention notifies anyone, no `#12` or `GH-12` links or closes
+  an issue, and bare URLs, reference links, HTML, character references and code fences are shown as
+  text. The only issue a pull request closes is the one given with `--issue`. Not checked against
+  GitHub's own renderer. (`SEC-8`)
+- **The HTML report inlines only images from its own run folder.** A result that named another file
+  as a screenshot had that file embedded in `report.html`, which is uploaded as an artifact in
+  Actions. The `contexer test` report checks that the file is an image, not yet that it is in the
+  run folder.
+- Issue text: characters that do not render on GitHub (Unicode tag characters, bidi isolates, the
+  soft hyphen, private-use and unassigned characters, variation selectors) are removed before an
+  issue becomes a goal. Emoji and other scripts are kept. (`SEC-6`)
+- `/contexer draft` and `/contexer answer` in a comment need write access; someone without it gets
+  a sentence on the issue and nothing is drafted. Labelling an issue works as before. (`SEC-6`)
+- The drafting prompt used when no tool-calling model is configured quotes a goal from an issue as
+  data. (`SEC-6`)
+- The app's own processes (dependency install, dev server, `[app] reset`) no longer see the keys
+  and choices saved by `contexer setup`, or `LANGFUSE_*`. A variable you export, or set in the
+  project's `.env` or `[app] env`, still reaches them. **This can break an app under test** that
+  needs a key only `contexer setup` saved: export it, or put it in the project's `.env` or
+  `[app] env`. (`SEC-7`)
+- `~/.contexer/credentials.toml` is created with mode 600 (POSIX); the file is never readable by
+  others while it is written. Its folder is created with mode 700 when saving the key or the
+  settings creates it; a folder that already exists is left as it is. (`SEC-9`)
+- Skills are bounded on load (30 files, 8,000 bytes each) and a skill file that is not UTF-8 no
+  longer stops `contexer test`. (`SEC-9`)
+- During `contexer run`, a skill file the coding agent changed, added or deleted is put back and
+  the run ends as tampered. (`SEC-9`)
+- A comment counts as Contexer's draft only when it begins with the draft marker. (`SEC-9`)
+
 ## 0.6.0 — 2026-11-26
 
 The first release on PyPI: `uv tool install contexer-agent`.
