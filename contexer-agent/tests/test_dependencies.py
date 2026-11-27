@@ -6,6 +6,7 @@ No test here touches the network: the registry is a function, and the tests pass
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -383,6 +384,13 @@ def test_each_clean_manifest_is_quiet(tmp_path: Path, file: str, name: str) -> N
 def _a_home_of_its_own(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
     """No test reads the configuration of the person (or the CI machine) running it."""
     home = tmp_path_factory.mktemp("home")
+    # Playwright keeps its browsers under the real home on Linux and macOS; the one test here that runs
+    # checks in a browser must still find them once HOME points elsewhere.
+    if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ:
+        for browsers in (Path.home() / ".cache" / "ms-playwright", Path.home() / "Library" / "Caches" / "ms-playwright"):
+            if browsers.is_dir():
+                monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(browsers))
+                break
     for name in ("HOME", "USERPROFILE"):
         monkeypatch.setenv(name, str(home))
     monkeypatch.setenv("APPDATA", str(home / "AppData" / "Roaming"))
