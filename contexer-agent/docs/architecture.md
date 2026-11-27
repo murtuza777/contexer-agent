@@ -1920,7 +1920,7 @@ drive OpenCode.
 
 ## 21. Tests
 
-About 1,300 tests (`contexer-agent/tests/`), about 35 minutes on one process
+About 1,650 tests (`contexer-agent/tests/`), about 35 minutes on one process
 and 11 on four workers (timed on 2026-11-26, when there were about 1,160), no
 network and no model. They use real Chromium against fixture apps, real Node process trees
 for the dev-server tests, real git for snapshots and hand-offs (with a local

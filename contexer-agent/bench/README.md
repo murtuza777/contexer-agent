@@ -177,6 +177,10 @@ when a `v*` tag is pushed, and publishes nothing unless it holds:
 | Tester, held-out app: no more false alarms than the last release | a person | `contexer bench --suite tester --agent tester --app bookings --repeats 5 --compare LAST.json` |
 | False success: no run ends `succeeded` without a gate pass | partly the workflow | A missed bug in the gate benchmark is one. The other suites are a person's |
 
+The reviewer suite has 12 clean diffs since 2026-11-27; the threshold "at
+most 1 false high in 10" was set when it had 10 and is unchanged, for the
+owner to decide.
+
 The three gates a person runs need a model key, which the workflow does not
 have. Before tagging:
 

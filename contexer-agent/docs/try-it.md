@@ -167,9 +167,14 @@ What happens, in order:
 1. Contexer starts your app, writes down what it understood, drafts checks
    from the goal and the app as it is, and asks about anything unclear.
 2. It shows the checks and asks **Approve these checks?** Read them; this is
-   your definition of done. Answer `y`, `n`, or type what to change.
+   your definition of done. Answer `y`, `n`, `e` to edit the checks in your editor, or type a
+   sentence saying what to change. Without a terminal nothing is approved;
+   `--yes` approves without a reading and records that.
 3. Before the coding agent starts, a line says what the run can cost at
-   most. `--max-usd 5` sets one budget for everything.
+   most. `--max-usd 5` sets one budget for everything. It is refused at the
+   start when it could not be kept: with Codex or OpenCode, which report
+   no cost, or when a model Contexer's agents call has no known price and
+   `contexer.toml` sets no rates under `[agents]`.
 4. The coding agent works. A block in the terminal shows every check with
    its state, what is happening now, and the time and money so far.
 5. Contexer proves every check in Chromium. What fails goes back to the
@@ -194,7 +199,7 @@ Things worth trying deliberately:
 - **Replay later:** `contexer verify --all` re-runs every approved check with
   no model.
 - **In CI:** `contexer run ... --yes --json` prints the run as one event
-  per line.
+  per line; `--yes --plain` is the form for a log a person reads.
 
 ### 6. Guard pull requests and take issues on GitHub
 

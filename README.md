@@ -58,7 +58,9 @@ Contexer is the independent half:
     same retry.
   - The run stops after a fixed number of rounds or at a budget.
 - **Memory that is enforced.** Every approved contract is replayed on every
-  later change, as a regression suite, with no LLM calls.
+  later change, as a regression suite, with no LLM calls. A run also replays
+  them once before the first turn, so a check the change broke is told apart
+  from one that was already failing.
 - **Fail-safe gate.** Anything undecided blocks the merge; nothing reports a
   quiet pass.
 
@@ -127,6 +129,8 @@ take no time.)
 
 `--verbose` keeps every tool call of the agent in the output. `--json`
 prints the run as one event per line instead, for CI and other tools.
+`--plain` prints the lines without colour, redrawing or symbols, for a log or
+a screen reader.
 
 Each run also writes a self-contained `report.html`. It contains:
 
@@ -217,7 +221,9 @@ contexer run --contract <id> --agent claude-code
 Or do it all in one step:
 `contexer run "Users can add a task and complete it, and the count updates"`.
 Contexer shows the checklist and asks you to approve it before any code
-changes.
+changes: `y` approves, `n` does not, `e` opens the checks in your editor, and a
+sentence says what to change. Without a terminal (a pipe, CI) nothing is
+approved; `--yes` approves without a reading and records that.
 
 ### Hand it over as a pull request
 
@@ -230,7 +236,9 @@ With `--pr`, a run ends on a new branch `contexer/<contract>` with one commit,
 pushed, and a pull request whose description lists every check with its
 verdict, the regression replay, the attempts and the agent's cost. When every
 check passed the pull request is ready for review; otherwise it is a draft
-that says what still fails. The commit holds only the files the run changed
+that says what still fails. An earlier check that was already failing before
+the run does not count: it is listed in the pull request as not proven. The
+commit holds only the files the run changed
 plus the approved contract, never other work in your checkout. Contexer checks
 the checkout before it spends anything: a git repository with a commit, on a
 branch, with no uncommitted changes to tracked files. It uses `GITHUB_TOKEN` or
@@ -331,7 +339,8 @@ pull requests:
    with write access can edit the checks right in that comment.
 2. **Reply `/contexer approve`.** Contexer approves the checks in your name, the
    coding agent builds it, and Contexer proves every check in Chromium,
-   repairing if needed. One comment on the issue follows the run live.
+   repairing if needed. One comment on the issue reports the run when it has
+   ended.
 3. **Review the pull request.** It closes the issue and carries the evidence.
 
 Only an approval from someone with write access starts a build: the workflow
@@ -339,8 +348,10 @@ ignores other commenters, and Contexer checks the approver's access through
 the API. A draft comment written by a person, rather than by the workflow, is
 never treated as the checklist. The coding agent gets the model key and
 nothing else: no GitHub token in its environment or in `.git/config`, since
-the issue's text reaches its prompt. Contexer pushes and opens the pull
-request itself.
+the issue's text reaches its prompt. The job in which the agent runs has a
+token that can only read. A second job, which holds the write token and runs
+nothing from the repository, checks the change, pushes it and opens the pull
+request. This two-job workflow has not been run on GitHub yet.
 
 The workflow file explains its two settings: the model key as a repository
 secret (`OPENROUTER_API_KEY` works with free models), and allowing GitHub
@@ -396,7 +407,7 @@ Full method, per-run tables and the diagnosis of bad compiled checks are in
 
 ## Status
 
-Version 0.6.0. What works today, with about 1,300 tests and CI:
+Version 0.6.0. What works today, with about 1,650 tests and CI:
 
 - **`contexer test`**: an agent uses the running app against what you said
   it should do; every finding is replayed by code; a fix prompt names the
@@ -472,9 +483,9 @@ In order, and why, in
 
 | Next | What it is for |
 | --- | --- |
-| A plugin for Claude Code and Codex | The agent calls Contexer itself and is told what failed |
-| Evidence in the pull request | Screenshots and a trace a reviewer can see without your machine |
-| More agents, each measured before it ships | A regression guard, an access prober, a dependency checker, a scope guard |
+| The agent set-up run in Codex and OpenCode | `contexer init --agent` is built (the agent calls Contexer itself and is told what failed); it has been run in Claude Code only |
+| A trace in the pull request | Something a reviewer can open without your machine. The screenshots are built (`--pr --screenshots`); a trace is never pushed |
+| More agents, each measured before it ships | An access prober. The regression guard, the dependency checker and the scope guard are built |
 
 How 0.5.0 was built, phase by phase with tickets and results:
 [0](contexer-agent/docs/agentic/phase-0.md),

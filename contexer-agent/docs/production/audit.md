@@ -78,8 +78,8 @@ Not in the code, though a document or setting suggests it:
   2026-11-26** (`MOD-5`).
 - `max_steps` under `[agents]` reaches the Diagnoser and the Reviewer only.
   **Partly fixed 2026-11-26** (`MOD-5`): it reaches every agent of
-  `contexer test`; inside `contexer run` it still does not reach Intent
-  and Triage.
+  `contexer test`. **Fixed 2026-11-27**: inside `contexer run` it reaches
+  Intent and Triage too.
 - `workflow/criteria.py` was to "fold into the Intent agent"; it is still
   the drafting path when no tool-calling model is configured.
 - The `classic` engine name and the `app_error` end state remain in types
@@ -161,7 +161,7 @@ standard.
 | L6 | A failed check is replayed once. A flaky check sends the coding agent to repair nothing | **Fixed 2026-11-25** (`REL-6`) | Medium |
 | L7 | One failed coding-agent turn with no changes ends the run as `agent_error`; a transient failure is not tried again | Missing | Low |
 | L8 | The review's commands have no baseline: an `npm test` that failed before the change triggers a paid repair turn | Partial | Low |
-| L9 | Dependency install, app start, the review's commands and git run on the event loop; Ctrl+C waits for them | Open (in readiness.md) | Medium |
+| L9 | Dependency install, app start, the review's commands and git run on the event loop; Ctrl+C waits for them. Since 2026-11-27 the review's registry lookups do too (`AGT-2`): at worst 5 seconds per registry that is down, and 20 lookups | Open (in readiness.md) | Medium |
 | L10 | `run.json` and the per-attempt result are written in place; a kill mid-write leaves a file a resume cannot read | **Fixed 2026-11-25** (`REL-7`) | Low |
 | L11 | The run lock is check-then-write, and `contexer test` takes no lock | **Fixed 2026-11-25** (`REL-7`) | Low |
 
@@ -170,7 +170,10 @@ pass recomputed in `finalize` (with the hole closed in §4 item 1); every
 attempt replays every approved contract, so a repair that breaks an older
 behaviour is seen; step caps, 25 tool calls per reply, a refusal of the
 same call three times running, a round limit, one review repair, one
-question to the person.
+question to the person. Since 2026-11-27 (`AGT-1`) a run also replays the
+other approved contracts once before the first turn: a check that already
+failed then is left out of the gate and listed as not proven, and one the
+change broke is named as a regression.
 
 ### 5.2 Security
 
@@ -180,7 +183,7 @@ results are data. Ordered by severity and by how easily it is used.
 
 | # | Finding | Who can use it | Severity | State |
 | --- | --- | --- | --- | --- |
-| S1 | ~~The hand-off's `git add`, `commit` and `push` ran the project's hooks and git settings with the whole environment~~ | The coding agent, steered by an issue | High in the issue flow | **Fixed 2026-11-24** (`test_a_hook_planted_during_the_run_is_not_run_by_the_hand_off` and three more). Left: a hook that was there before the run still runs locally and may call project scripts the agent changed, without a token; the two-job design (`SEC-10`) is the full answer in Actions |
+| S1 | ~~The hand-off's `git add`, `commit` and `push` ran the project's hooks and git settings with the whole environment~~ | The coding agent, steered by an issue | High in the issue flow | **Fixed 2026-11-24** (`test_a_hook_planted_during_the_run_is_not_run_by_the_hand_off` and three more). Left: a hook that was there before the run still runs locally and may call project scripts the agent changed, without a token; the two-job design (`SEC-10`) is the full answer in Actions. **Built 2026-11-27** (`SEC-10`): the job in which the agent runs has a token that can only read, and a second job pushes. Not yet run on GitHub |
 | S2 | ~~The CLI loaded the nearest `.env` unfiltered at start~~ | Repository content; the coding agent | Medium | **Fixed 2026-11-24** (`test_no_command_takes_a_steering_name_from_the_nearest_env_file`) |
 | S3 | ~~The tamper guard ran once per turn and the hand-off committed the contract from disk~~ | The coding agent | Medium | **Fixed 2026-11-24** (`test_a_contract_rewritten_after_the_run_is_not_what_gets_committed`) |
 | S4 | ~~The secret scan read the first 200,000 characters of the diff~~ | An accident | Medium | **Fixed 2026-11-24**; reproduced first: a key after a 300 KB lockfile change was pushed (`test_a_secret_after_a_large_lockfile_change_is_still_seen_and_not_pushed`) |
@@ -189,7 +192,7 @@ results are data. Ordered by severity and by how easily it is used.
 | S7 | The dev server, the install and the reset get every model key, including keys `contexer setup` saved | A dependency's install script | Low to medium | **Partly fixed 2026-11-26** (`SEC-7`): they no longer get what `contexer setup` saved, or `LANGFUSE_*`. Left, by the ticket's rule: a key that is exported or set in the project's `.env` still reaches them |
 | S8 | Pull request text still live: the commit subject can say "closes #12"; bare URLs autolink | An issue author, app text | Low | **Fixed 2026-11-26** (`SEC-8`); not checked against GitHub's own renderer |
 | S9 | The draft marker is accepted anywhere in any comment by Contexer's account | Whoever can get text into a status comment | Low | **Fixed 2026-11-26** (`SEC-9`): a comment is a draft only when it begins with the marker |
-| S10 | Smaller: the credentials file is written before its mode is set; skills are capped on save and not on load; `.contexer/runs` and snapshot objects are never pruned; workflow templates reference `@main`; third-party Actions pinned by tag; no upper bound on five dependencies | Various | Low | **Partly fixed 2026-11-26.** `SEC-9`: the credentials file is created with mode 600 (its folder with 700 when saving the key or the settings creates it; `llm/capabilities.py: save_measurement` can create it first with the default mode), and skills are capped on load and covered by the tamper guard. `DX-5`: `contexer runs prune` removes old runs and their snapshots when asked. Open: the workflow templates reference `@main`, Actions are pinned by tag, no upper bound on five dependencies |
+| S10 | Smaller: the credentials file is written before its mode is set; skills are capped on save and not on load; `.contexer/runs` and snapshot objects are never pruned; workflow templates reference `@main`; third-party Actions pinned by tag; no upper bound on five dependencies | Various | Low | **Partly fixed 2026-11-26.** `SEC-9`: the credentials file is created with mode 600 (its folder with 700 when saving the key or the settings creates it; `llm/capabilities.py: save_measurement` can create it first with the default mode), and skills are capped on load and covered by the tamper guard. `DX-5`: `contexer runs prune` removes old runs and their snapshots when asked. **Fixed 2026-11-27**: third-party Actions are pinned by commit in the action files, the dogfood gate and the workflow templates, the five dependencies have an upper bound, and `~/.contexer` is created with mode 700 whichever file is saved first (`config/user.py: home_dir`; a folder that already exists is not tightened). Open: the workflow templates reference this repository's own actions at `@main`; `ci.yml` and `release.yml` are still pinned by tag |
 
 Controls read and found to hold: `read_file` confinement on Windows
 (alternate data streams, 8.3 names, UNC paths, junctions, executed by the
@@ -206,14 +209,19 @@ separate jobs.
   default model. It knows nothing per model: not the context window, not
   whether tools work, not a price. **Fixed 2026-11-26** (`MOD-1`): a
   record per model with the source of each fact, shown by `doctor` and
-  `setup`. No agent reads it yet, and only OpenRouter's catalogue fills
-  the window and the prices.
+  `setup`. Only OpenRouter's catalogue fills the window and the prices.
+  Since 2026-11-27 the agent loop reads it for whether a tool call
+  printed as text is run (`MOD-3`) and for the context window (`CTX-3`),
+  and the budget reads it for the price of a call (`COST-3`).
 - Every agent assumes native tool calling. Whether a model has it is known
   from OpenRouter's metadata or assumed; elsewhere the first call finds
   out by matching error text.
 - There is no fallback when a model prints a tool call as text, the most
   reported failure of local models ([research.md](research.md) §4), and
-  findings L1 to L3 make that failure silent.
+  findings L1 to L3 make that failure silent. **Fixed 2026-11-27**
+  (`MOD-3`): a tool call printed as text is run as a call on a model not
+  known to call tools natively; the shapes read are from documentation
+  and have not been recorded from live servers.
 - Local servers work through `ollama` or `custom` with a base URL. Never
   tried against a real one.
 - Only one model, Azure `gpt-5.4`, has ever driven the agents in a measured
@@ -223,24 +231,40 @@ separate jobs.
 
 - The coding agent's cost is known only for Claude Code. For Codex and
   OpenCode it is recorded as 0, and the one budget for the run then
-  silently leaves it out.
+  silently leaves it out. **Fixed 2026-11-27** (`COST-1`): for Codex and
+  OpenCode it is recorded as unknown, and a run with `max_usd` is refused
+  at the start.
 - A provider that reports no price and a project that sets no rates: the
   agents' cost is unknown and counts as 0 against the budget, with no
   warning. One rate pair is applied to every agent whatever model it runs.
+  **Fixed 2026-11-27** (`COST-1`, `COST-3`): a model with no known price
+  and a project that sets no rates: a dollar limit is refused at the
+  start. Without rates, each call is priced from its own model's record.
 - A token or cost limit that is reached silences Contexer's agents; the
-  coding agent's turns go on under rules.
-- `contexer test` ignores `[agents] max_usd`.
+  coding agent's turns go on under rules. **Fixed 2026-11-27** (`COST-1`):
+  a token or cost limit that is reached ends the run before the next
+  coding turn.
+- `contexer test` ignores `[agents] max_usd`. **Fixed 2026-11-27**
+  (`COST-4`): `contexer test` reads `[agents] max_usd` and the rates.
 - A budget cannot stop a coding agent in the middle of a turn (known).
 - No prompt-cache markers are set and cached tokens are not read from
   usage, so the largest saving on offer is neither taken nor measured.
+  **Partly fixed 2026-11-27** (`COST-2`): cache markers are set on the
+  tools and the system prompt for Anthropic and cached tokens are read
+  from usage; the saving is not measured live yet.
 
 ### 5.5 Context
 
 What each agent is shown is cut by fixed sizes from the top: a diff at
 12,000 characters for the Diagnoser and 30,000 for the Reviewer, a tool
 result at 20,000, a page snapshot at 4,000. Nothing orders a diff by the
-files a failure points at. A conversation only grows: a long Tester run
-that passes the model's window ends as a provider error. The Diagnoser is
+files a failure points at (**fixed 2026-11-27**, `CTX-2`: a diff over its
+limit is cut by file, the files the failures and the server log name
+first, then the smallest, and the files left out are named). A
+conversation only grows: a long Tester run that passes the model's window
+ends as a provider error (**fixed 2026-11-27**, `CTX-3`: past 60% of the
+model's window, old tool results are replaced by a note; a model whose
+window is not known is taken to have 128,000 tokens). The Diagnoser is
 not shown earlier attempts or its own earlier leads, so round three can
 repeat round one (**fixed 2026-11-26**, `CTX-1`: it is shown its earlier
 leads and what each following attempt changed; no code detects a repeat).
@@ -256,19 +280,27 @@ JSONL transcript per agent with seconds and tokens per model call,
 Missing to answer "why did it fail, where did the tokens go, which model
 was better":
 
-- the model id is not in `run.json`, so runs cannot be compared by model;
+- the model id is not in `run.json`, so runs cannot be compared by model
+  (**partly fixed 2026-11-27**, `OBS-3`: `runs --stats --by model` counts
+  from each run's `trace.jsonl`; the id is still not in `run.json`, and
+  the coding agent's model is recorded nowhere);
 - the events of a run exist only on stdout with `--json` (**fixed
   2026-11-26**, `OBS-1`: `trace.jsonl` in the run folder);
 - the prompt sent to the coding agent on each attempt, and the Diagnoser's
-  lead, are not in the run folder;
+  lead, are not in the run folder (**fixed 2026-11-27**, `OBS-2`: each
+  prompt is kept, masked, as `attempt-<n>/prompt.md`, and is sent to the
+  coding agent masked the same way; the lead is part of the repair prompt,
+  not a file of its own);
 - no finish reason, retry count, cached tokens or context size per call
   (**partly fixed 2026-11-26**, `OBS-1`: the trace has the finish reason
   and the cached tokens of each model call; not the retry count or the
   context size);
 - no count of tool errors or of repaired tool calls per model (**partly
   fixed 2026-11-26**, `MOD-2` and `OBS-1`: repaired and failed tool calls
-  are recorded per agent; nothing groups them by model yet, `OBS-3`);
-- a Diagnoser that fails says nothing.
+  are recorded per agent; **fixed 2026-11-27**, `OBS-3`: `runs --stats
+  --by model` gives the tool error and repair rates per model);
+- a Diagnoser that fails says nothing (**fixed 2026-11-27**: the run
+  prints one event when the Diagnoser did not finish).
 
 ### 5.7 Evaluations
 
