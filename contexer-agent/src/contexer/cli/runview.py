@@ -9,10 +9,14 @@ same in a terminal, in a CI log and pasted into an issue. The agent's tool
 calls are not among them unless ``verbose``: forty lines of "Read file" push
 the one line that matters off the screen.
 
-**A block that is redrawn in place**, in a terminal only: every check of the
-run with its state, what is happening now, and the time and money so far.
-It answers what a person looking up from other work wants to know: is it
-still going, on what, how far is it, what has it cost.
+**A block that is redrawn in place**, in a terminal only: the plan of the run
+with the step it is at, every check with its state, what is happening now,
+and the time and money so far next to their ceilings. It answers what a
+person looking up from other work wants to know: is it still going, on what,
+how far is it, what has it cost.
+
+The events carry the coding agent's spend and nothing about tokens or how
+full a model's context is, so the footer does not show those.
 
 Same rules as the rest of the terminal output (``term.py``): no boxes,
 colour for meaning only, one set of marks.
@@ -41,14 +45,30 @@ MAX_CHECK_LINES = 12
 MAX_FAILED_LINES = 6
 _STATE_MARK = {"verified": "pass", "refuted": "fail", "unverified": "open"}
 _STATE_WORD = {"verified": "", "refuted": "", "unverified": "could not be checked"}
+# The plan of a run. The hand-off happens after the last event, when the block is gone.
+STEPS = ("draft", "approve", "build", "prove", "review", "hand off")
 
 
 class RunView:
     """Turns a run's events into the lines that stay and the block that is redrawn."""
 
-    def __init__(self, console: Console, *, verbose: bool = False, project: Path | None = None) -> None:
+    def __init__(
+        self,
+        console: Console,
+        *,
+        verbose: bool = False,
+        project: Path | None = None,
+        drafts: bool = False,
+        max_attempts: int | None = None,
+        budget_usd: float | None = None,
+    ) -> None:
         self.console = console
         self.verbose = verbose
+        # A run that drafts its checks begins at the first step; one on approved checks begins at build.
+        self.step = "draft" if drafts else "build"
+        # The ceilings said before the run: the coding agent's turns, and its budget when one is set.
+        self.max_attempts = max_attempts
+        self.budget_usd = budget_usd
         # Paths in tool calls are shown from here: `Edit src/app.js`, not the whole way from the drive.
         self._roots = _roots(project)
         self.checks: list[dict[str, Any]] = []
@@ -65,6 +85,8 @@ class RunView:
         self._started = time.monotonic()
         self._at = 0.0
         self._live: Live | None = None
+        # One spinner for the whole run: a new one at every redraw would always show its first frame.
+        self._spinner = Spinner("dots", style="dim")
 
     # -- events ---------------------------------------------------------------------------------
 
@@ -79,6 +101,7 @@ class RunView:
         elif kind == "attempt-start":
             self.attempt = int(data.get("n") or 0)
             self.doing = str(data.get("doing") or "")
+            self.step = "build"
             self.tool_calls, self.last_tool = 0, ""
             fresh = " in a fresh session" if data.get("fresh") else ""
             self._line()
@@ -103,6 +126,7 @@ class RunView:
             self.tool_calls, self.last_tool = 0, ""  # the turn is over; what runs next is not the agent
             self._now("", event.at)
         elif kind == "phase" and data.get("proving"):
+            self.step = "prove"
             self._now(f"Proving {data['proving']} checks in Chromium", event.at)
         elif kind == "phase-quiet":
             self._now(event.message, event.at)
@@ -110,14 +134,18 @@ class RunView:
                 self._line(f"  [dim]{escape(event.message)}[/]")
         elif kind == "verdict":
             self._verdict(data)
+            if data.get("outcome") == "pass":
+                self.step = "review"  # what follows a pass; a repair the review asks for begins a new attempt
             self._now("", event.at)
         elif kind in ("strategy", "revert", "review") and event.message:
             self._line(f"  {term.mark('warn')} {escape(event.message)}")
         elif kind == "approved":
+            self.step = "build"
             self._line(f"{term.mark('pass')} {escape(event.message)}")
         elif kind == "app" and event.message:
             self._line(f"  [dim]{escape(event.message)}[/]")
         elif kind == "end":
+            self.step = "hand off"
             self.stop()
         self._refresh()
 
@@ -185,7 +213,7 @@ class RunView:
             self._live = None
 
     def _refresh(self) -> None:
-        if self._live is None and self.attempt and self.activity:
+        if self._live is None and self.activity:  # before the first attempt too: drafting and planning take time
             self.start()
 
     def _elapsed(self) -> float:
@@ -195,11 +223,14 @@ class RunView:
         """The block as it would be drawn ``now`` seconds into the run."""
         now = self._elapsed() if now is None else now
         width = max(30, self.console.width)
-        lines: list[RenderableType] = []
-        head = Text(f"Attempt {self.attempt}", style="bold")
-        if self.doing:
-            head.append(f" · {self.doing}", style="dim")
-        lines.append(head)
+        lines: list[RenderableType] = [self._plan_line(width)]
+        if self.attempt:
+            head = Text(f"Attempt {self.attempt}", style="bold", no_wrap=True, overflow="ellipsis")
+            if self.max_attempts:
+                head.append(f" of at most {self.max_attempts}", style="dim")
+            if self.doing:
+                head.append(f" · {self.doing}", style="dim")
+            lines.append(head)
 
         shown, hidden = self._ordered_checks()
         for check in shown:
@@ -217,13 +248,31 @@ class RunView:
                 status.append(f" · {self.last_tool}", style="dim")
             status.no_wrap, status.overflow = True, "ellipsis"
             status.truncate(width - 4, overflow="ellipsis")
-            lines.append(Spinner("dots", text=status, style="dim") if self.console.is_terminal else Text("  ") + status)
+            if self.console.is_terminal:
+                self._spinner.update(text=status)
+                lines.append(self._spinner)
+            else:
+                lines.append(Text("  ") + status)
 
         foot = Text(f"  {term.duration(now)}", style="dim", no_wrap=True, overflow="ellipsis")
-        if self.spent_usd:
+        if self.spent_usd:  # never $0.00: an agent that reports no cost has not spent nothing
             foot.append(f" · ${self.spent_usd:.2f}")
+            if self.budget_usd:
+                foot.append(f" of ${self.budget_usd:.2f}")
         lines.append(foot)
         return Group(*lines)
+
+    def _plan_line(self, width: int) -> Text:
+        """``✓ draft  ✓ approve  › build  · prove  · review  · hand off``: done, the step it is at, to come."""
+        at = STEPS.index(self.step)
+        line = Text(no_wrap=True, overflow="ellipsis")
+        for index, step in enumerate(STEPS):
+            char, style = term.plain_mark("pass" if index < at else "info" if index == at else "todo")
+            line.append("  " if index else "")
+            line.append(f"{char} ", style="bold" if index == at else style)
+            line.append(step, style="bold" if index == at else "dim")
+        line.truncate(width, overflow="ellipsis")
+        return line
 
     def _ordered_checks(self) -> tuple[list[dict[str, Any]], int]:
         """The checks to list, the ones that did not hold first, and how many are left out."""
@@ -234,11 +283,8 @@ class RunView:
     def _check_line(self, check: dict[str, Any], width: int) -> Text:
         row = self.verdicts.get(str(check.get("id")))
         verdict = str(row.get("verdict")) if row else ""
-        if verdict:
-            fancy, plain = term._MARKS[_STATE_MARK.get(verdict, "open")]
-            line = Text(f"  {fancy if term._encodable(fancy) else plain} ", style=term._MARK_STYLE[_STATE_MARK.get(verdict, "open")])
-        else:
-            line = Text("  · ", style="dim")
+        char, style = term.plain_mark(_STATE_MARK.get(verdict, "open") if verdict else "todo")
+        line = Text(f"  {char} ", style=style)
         why = _short_reason(str(row.get("evidence") or "")) if row and verdict != "verified" else ""
         name = str(check.get("description") or check.get("id"))
         room = max(20, int(width * 0.55)) if why else width  # a failing check keeps room for why it failed

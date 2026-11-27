@@ -169,13 +169,15 @@ class RunContext:
             return None
 
     def spent(self, coding_usd: float) -> str:
-        """Tell the budget what the coding agent has spent; returns why the whole run must stop, or ''."""
+        """Tell the budget what the coding agent has spent; returns why the whole run must stop, or ''.
+
+        Any limit that is reached stops the run, the token limit of Contexer's own agents too: a run
+        whose agents may no longer be asked would otherwise go on paying for coding turns under rules.
+        """
         if self.budget is None:
             return ""
         self.budget.other_usd = coding_usd
-        if self.budget.max_total_usd is not None and self.budget.total_left() == 0.0:
-            return self.budget.exhausted() or "the run budget is used up"
-        return ""
+        return self.budget.exhausted()
 
     def event(self, kind: str, message: str, **data: Any) -> None:
         """Say what happened, in words for a log and with data for a view."""

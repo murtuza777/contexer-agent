@@ -38,8 +38,8 @@ never calls a model.
 | Agent | Requirement |
 | --- | --- |
 | [Claude Code](https://code.claude.com) (`claude`) | Logged in, or `ANTHROPIC_API_KEY` set |
-| [Codex](https://github.com/openai/codex) (`codex`) | `codex login`, or `CODEX_API_KEY` set. Runs in the `workspace-write` sandbox with network on. Codex reports no cost, so `--budget` doesn't apply; rounds and the time limit still do |
-| [OpenCode](https://opencode.ai) (`opencode`, `npm i -g opencode-ai`) | With `OPENROUTER_API_KEY` set and no model chosen, it uses the free `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`; otherwise `--model provider/model` or `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID`. OpenCode's own free models refuse headless use. Tested with 1.4.3 and 1.19.4 |
+| [Codex](https://github.com/openai/codex) (`codex`) | `codex login`, or `CODEX_API_KEY` set. Runs in the `workspace-write` sandbox with network on. Codex reports no cost, so `--budget` doesn't apply and `--max-usd` is refused at the start; rounds and the time limit still do |
+| [OpenCode](https://opencode.ai) (`opencode`, `npm i -g opencode-ai`) | With `OPENROUTER_API_KEY` set and no model chosen, it uses the free `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`; otherwise `--model provider/model` or `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID`. OpenCode's own free models refuse headless use. No cost is reported for its turns, so `--max-usd` is refused at the start. Tested with 1.4.3 and 1.19.4 |
 
 ## Commands
 
@@ -67,7 +67,8 @@ The same groups as `contexer --help`:
 | `contexer verify --contract ID` / `--all` | Prove saved contracts; no LLM calls |
 | `contexer contract draft "GOAL"` / `list` / `show ID` | Create and review contracts |
 | `contexer contract approve ID` | Lock a contract at its current content (sha256). Any later edit needs re-approval |
-| `contexer runs` | Recent runs with outcome, check counts and report paths |
+| `contexer runs` | Recent runs with outcome, check counts and report paths. `--stats` adds up how the agent runs ended and what they cost; `--stats --by model` adds a row per model Contexer's own agents called, counted from each run's `trace.jsonl`; `--json` prints the list or the numbers as JSON |
+| `contexer runs show RUN` | The attempts of one agent run. `--diff` prints what the run changed, `--diff --attempt N` what one attempt changed; coloured and paged in a terminal, a plain diff into a pipe |
 | `contexer runs prune --keep N` | Remove all but the newest N run folders (20 by default) and their snapshots. Lists them with sizes and asks first; `--dry-run` only lists, `--yes` does not ask. A stopped run that can still be resumed is kept unless `--include-unfinished` is given |
 | `contexer restore RUN --attempt N` / `--stopped` / `--undo` | Put the files back to a snapshot a run took |
 | `contexer mcp` | Serve the approved checks to the coding agent you already work in, over MCP (see below) |

@@ -42,7 +42,7 @@ from contexer.config.project import (
 from contexer.contract import Contract, ContractError, ContractStore
 from contexer.contract.store import AUTOMATIC_APPROVAL
 from contexer.controller import RunOutcome, RunSettings
-from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
+from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget, unenforceable
 from contexer.crew.estimate import RunEstimate, estimate_run
 from contexer.evidence import RunDir
 from contexer.gate import RunResult
@@ -168,6 +168,12 @@ def run(
         )
     except AgentSettingError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    # Before anything is spent: a dollar limit that would count unknown spend as 0 is refused, not ignored.
+    called = [models_for_crew.get(name) or model_for_crew for name in RUN_AGENTS] if model_for_crew is not None else []
+    cannot_keep = unenforceable(crew_budget, models=called, coding_agent="" if agent.reports_cost else agent.name)
+    if cannot_keep:
+        term.note(console, "fail", escape(cannot_keep))
+        raise typer.Exit(code=2)
     draft_id: str | None = None
     contract: Contract | None = None
     graph_preview: RunResult | None = None
@@ -248,7 +254,7 @@ def _finish(
                 "exit_code": outcome.exit_code,
                 "attempts": len(outcome.attempts),
                 "best_attempt": outcome.best_attempt,
-                "cost_usd": outcome.cost_usd,
+                "cost_usd": coding_cost(outcome),
                 "crew_cost_usd": outcome.crew_cost_usd,
                 "review_notes": len(outcome.review),
                 "report": str(Path(outcome.run_dir, "report.html")),
@@ -381,13 +387,30 @@ def bill_line(outcome: RunOutcome) -> str:
     if not outcome.agents:
         return ""
     parts = [f"{a.agent} {a.tokens_in + a.tokens_out:,} tokens" for a in outcome.agents]
+    # An agent that used tokens and has no cost: its model has no known price. It is named, never counted as 0.
+    unpriced = [a.agent for a in outcome.agents if a.cost_usd is None and a.tokens_in + a.tokens_out > 0]
     if outcome.crew_cost_usd is None:
-        cost = "cost unknown (the provider reports none; set prices under [agents] to see it)"
+        cost = "cost unknown (no price is known for the model; set input_usd_per_mtok and output_usd_per_mtok under [agents] to see it)"
     else:
-        cost = f"${outcome.crew_cost_usd:.2f}" + (
-            " estimated from the configured rates" if outcome.crew_cost_estimated else ""
-        )
+        cost = f"${outcome.crew_cost_usd:.2f}" + (" estimated from token counts and prices per token" if outcome.crew_cost_estimated else "")
+        if unpriced:
+            cost += f" · {', '.join(unpriced)}'s cost is unknown and not in that figure"
     return " · ".join(parts) + f" · {cost}"
+
+
+def coding_cost(outcome: RunOutcome) -> float | None:
+    """What the coding agent cost, or None when a turn reported no cost: the figure is then not known, and it is not 0."""
+    return None if any(a.agent.cost_usd is None for a in outcome.attempts) else outcome.cost_usd
+
+
+def coding_spend(outcome: RunOutcome) -> str:
+    """What the coding agent spent, for the summary. A turn that reported no cost is said, never shown as $0.00."""
+    silent = sum(1 for a in outcome.attempts if a.agent.cost_usd is None)
+    if not silent:
+        return f"${outcome.cost_usd:.2f} agent spend" if outcome.cost_usd else ""
+    if silent == len(outcome.attempts):
+        return "coding agent cost unknown (no turn reported one)"
+    return f"${outcome.cost_usd:.2f} agent spend · {silent} turn{'s' if silent != 1 else ''} with no cost reported"
 
 
 def _run_budget_note(budget: Budget | None) -> str:
@@ -396,7 +419,19 @@ def _run_budget_note(budget: Budget | None) -> str:
     return f" · one budget of ${budget.max_total_usd:.2f} for the coding agent and Contexer's agents"
 
 
-def _estimate(settings: RunSettings, budget: Budget | None, has_model: bool, drafts_checks: bool) -> RunEstimate:
+def _estimate(
+    settings: RunSettings,
+    budget: Budget | None,
+    has_model: bool,
+    drafts_checks: bool,
+    model: Any = None,
+    models: dict[str, Any] | None = None,
+) -> RunEstimate:
+    """The ceiling for this run. Each agent's share is priced as its calls will be: on the model it runs on."""
+
+    def price(agent: str, tokens_in: int, tokens_out: int) -> float | None:
+        return budget.price(tokens_in, tokens_out, (models or {}).get(agent) or model) if budget is not None else None
+
     return estimate_run(
         rounds=settings.max_repair_rounds,
         has_model=has_model,
@@ -406,18 +441,17 @@ def _estimate(settings: RunSettings, budget: Budget | None, has_model: bool, dra
         planner_steps=settings.agent_steps.get("planner", 12),
         diagnoser_steps=settings.agent_steps.get("diagnoser", 15),
         reviewer_steps=settings.agent_steps.get("reviewer", 12),
-        input_usd_per_mtok=budget.input_usd_per_mtok if budget is not None else None,
-        output_usd_per_mtok=budget.output_usd_per_mtok if budget is not None else None,
+        price=price,
     )
 
 
 def _limits_line(agent: CodingAgentAdapter, settings: RunSettings) -> str:
     limits = f"up to {settings.max_repair_rounds} repair round(s)"
     if settings.budget_usd:
-        # Codex reports tokens, not cost: the round and time limits bound its runs instead.
+        # Codex and OpenCode report no cost: the round and time limits bound their runs instead.
         limits += (
-            " · no spending limit (Codex reports no cost)"
-            if agent.name == "codex"
+            f" · no spending limit ({agent.name} reports no cost)"
+            if not agent.reports_cost
             else f" · budget ${settings.budget_usd:.2f}"
         )
     return limits
@@ -510,13 +544,20 @@ def execute_graph(
             ("Limits", _limits_line(agent, settings) + _run_budget_note(budget)),
             (
                 "Estimate",
-                escape(_estimate(settings, budget, model is not None, contract is None and not resume).describe()),
+                escape(_estimate(settings, budget, model is not None, contract is None and not resume, model, models).describe()),
             ),
         ],
     )
     # The run is drawn from its events: lines that stay, and in a terminal a block that is redrawn (cli/runview.py).
     # With --json the same events are printed, one object per line, and nothing is drawn.
-    activity = RunView(console, verbose=verbose, project=project)
+    activity = RunView(
+        console,
+        verbose=verbose,
+        project=project,
+        drafts=contract is None and not resume,
+        max_attempts=settings.max_repair_rounds + 1,
+        budget_usd=settings.budget_usd,
+    )
 
     def on_detail(event: RunEvent) -> None:
         if not json_output:
@@ -830,8 +871,8 @@ def _render(
     if len(outcome.review) > 4:
         rows.append((" ", f"[dim]and {len(outcome.review) - 4} more in the report[/]"))
     rows.append(("Report", escape(term.path(Path(outcome.run_dir, "report.html")))))
-    spend = f" · ${outcome.cost_usd:.2f} agent spend" if outcome.cost_usd else ""
-    rows.append(("Took", f"{term.duration(outcome.duration_seconds)}{spend}"))
+    spend = coding_spend(outcome)
+    rows.append(("Took", term.duration(outcome.duration_seconds) + (f" · {spend}" if spend else "")))
     bill = bill_line(outcome)
     if bill:
         rows.append(("Contexer's agents", escape(bill)))

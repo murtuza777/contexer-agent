@@ -212,6 +212,77 @@ async def test_the_default_openrouter_model_keeps_its_free_fallback_and_openai_u
     assert body["max_completion_tokens"] == 300 and "max_tokens" not in body
 
 
+# -- COST-2: cached input ---------------------------------------------------------
+
+
+def test_claude_is_asked_to_cache_the_tools_and_the_system_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_core.tools import tool
+
+    @tool
+    def look(page: str) -> str:
+        """Look at a page."""
+        return page
+
+    @tool
+    def add_numbers(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    marker = {"type": "ephemeral"}
+    model: Any = chat_model("anthropic", "claude-opus-5-5", config=_config(monkeypatch))
+    bound = model.bind_tools([look, add_numbers])
+    payload = model._get_request_payload([SystemMessage("You test web apps."), HumanMessage("Go.")], **bound.kwargs)
+    # The request is cached up to a marker: one after the last tool, one after the system prompt.
+    assert payload["system"] == [{"type": "text", "text": "You test web apps.", "cache_control": marker}]
+    assert [t["name"] for t in payload["tools"]] == ["look", "add_numbers"]
+    assert "cache_control" not in payload["tools"][0] and payload["tools"][1]["cache_control"] == marker
+    assert "cache_control" not in json.dumps(payload["messages"])
+
+    bare = model._get_request_payload([HumanMessage("Go.")])  # nothing that repeats: nothing is marked
+    assert "cache_control" not in json.dumps(bare)
+
+
+async def test_openrouter_is_sent_one_session_id_per_model_so_calls_reach_the_same_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(monkeypatch)
+    client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY), httpx.Response(200, json=_FINAL_REPLY))
+    model = chat_model("openrouter", config=config, http_async_client=client)
+    await model.ainvoke("hello")
+    await model.ainvoke("hello again")
+    first, second = (json.loads(r.content) for r in requests)
+    assert first["session_id"] and first["session_id"] == second["session_id"]
+    assert first["models"] == [DEFAULT_OPENROUTER_MODEL, "openrouter/free"]  # the fallback is still sent with it
+
+    client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY))
+    await chat_model("openrouter", "vendor/model", config=config, http_async_client=client).ainvoke("hello")
+    assert json.loads(requests[0].content)["session_id"] != first["session_id"]  # another model object, another run of calls
+
+    client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY))
+    await chat_model("openai", "gpt-5", config=config, http_async_client=client).ainvoke("hello")
+    assert "session_id" not in json.loads(requests[0].content)  # OpenRouter's field; no other provider is sent it
+
+
+async def test_the_cached_part_of_the_input_is_read_from_an_openai_compatible_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.crew.base import cached_tokens
+
+    reply = {**_FINAL_REPLY, "usage": {"prompt_tokens": 70, "completion_tokens": 6, "total_tokens": 76, "prompt_tokens_details": {"cached_tokens": 64}}}
+    client, _ = recorded(httpx.Response(200, json=reply), httpx.Response(200, json=_FINAL_REPLY))
+    model = chat_model("custom", "some-model", config=_config(monkeypatch, **_custom("custom")), http_async_client=client)
+    assert cached_tokens(await model.ainvoke("hello")) == 64
+    assert cached_tokens(await model.ainvoke("hello")) is None  # the provider did not say: not the same as none cached
+async def test_openrouter_is_asked_for_a_provider_that_takes_every_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(monkeypatch)
+    for model in (None, "vendor/model"):  # the default model with its fallback list, and one the user picked
+        client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY))
+        await chat_model("openrouter", model, config=config, http_async_client=client).ainvoke("hello")
+        # Without it OpenRouter may route a request with tools to a provider that drops them.
+        assert json.loads(requests[0].content)["provider"] == {"require_parameters": True}
+
+    client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY))
+    await chat_model("groq", "llama", config=config, http_async_client=client).ainvoke("hello")
+    assert "provider" not in json.loads(requests[0].content)  # OpenRouter's own field: nobody else is sent it
+
+
 # -- Azure AI Foundry ------------------------------------------------------------
 
 

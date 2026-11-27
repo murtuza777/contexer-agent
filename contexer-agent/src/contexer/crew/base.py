@@ -11,6 +11,13 @@ provider has. A model that writes the answer as JSON text instead is accepted
 too, but only when the text is the answer: JSON with none of the answer's
 fields, or a tool call written out as text, is sent back.
 
+One exception to that last part: some local servers hand a model's tool call
+back as the reply's text. On a model nothing vouches for (its record does not
+say, from a catalogue or a measurement, that it calls tools natively), a reply
+whose text is exactly one call of one of the agent's own tools is run as that
+call and counted (``text_fallback_calls``). ``submit`` is never taken this way,
+and neither is a reply that carries the marker of text from the app.
+
 A mistake in a reply (an answer that does not fit, a tool call whose arguments
 are not JSON, talk where a call was expected) is answered with a correction.
 ``MAX_CORRECTIONS`` of them in a row are allowed; a reply without a mistake
@@ -19,6 +26,14 @@ starts the count again.
 A tool call is checked against the tool's schema before the tool runs. One
 that does not fit gets the problem and the required fields as its result, and
 the call that then runs is counted as repaired.
+
+Tools are sent with strict schemas (every field required, optional ones
+nullable, no extra properties; see ``wire_schema``). What comes back is still
+read tolerantly: a null for a field that does not take one means its default.
+
+When the conversation nears the model's context window, the content of old
+tool results (page snapshots, mostly) is replaced by a one-line note. See
+``_drop_old_results`` for what is kept.
 
 Every model call and tool call is written to the agent's transcript in the
 run folder. The task an agent is given and what a tool returns are masked
@@ -33,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -44,14 +60,16 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, ValidationError
 
 from contexer.crew.budget import Budget
 from contexer.crew.transcript import Masker, Trace, Transcript, tracing_callbacks
 from contexer.crew.untrusted import UNTRUSTED_RULE
+from contexer.llm.capabilities import capabilities_of
 from contexer.llm.catalog import PROVIDERS, is_azure
 from contexer.llm.chat import clean_error, describe_model, tool_calling_error
-from contexer.llm.structured import parse_json_object
+from contexer.llm.structured import CALL_ARGUMENT_KEYS, parse_json_object, parse_printed_call, strict_parameters
 
 AgentStatus = Literal["ok", "step_limit", "timeout", "invalid_output", "model_error", "budget_exhausted"]
 
@@ -60,14 +78,26 @@ SUBMIT_TOOL = "submit"
 MAX_CORRECTIONS = 2
 # What a provider reports as the reason a reply ended when it hit the output limit.
 _CUT_OFF = frozenset({"length", "max_tokens"})
-# Keys a model uses when it writes a tool call as text instead of calling the tool.
-_CALL_ARGUMENT_KEYS = ("arguments", "args", "parameters", "input", "tool_input")
+# The marker around text from the app under test (``crew/untrusted.py``). A reply that carries one is
+# repeating a page, and no call is read out of it.
+_UNTRUSTED_MARKER = re.compile(r"[<\[]\s*/?\s*untrusted\b", re.IGNORECASE)
 # A tool result longer than this is cut before it goes back to the model.
 MAX_TOOL_RESULT_CHARS = 20_000
 # Tool calls run from one reply. A model that sends hundreds gets an error for the rest.
 MAX_TOOL_CALLS_PER_REPLY = 25
 # The same call with the same arguments may run this many times in a row; the next one is refused.
 MAX_IDENTICAL_CALLS = 3
+# When the conversation passes this share of the model's context window, old tool results are dropped.
+CONTEXT_SHARE = 0.6
+# The window taken for a model whose record does not state one. Most models an agent is run on have at
+# least this; one with less and no stated window is not protected.
+ASSUMED_CONTEXT_WINDOW = 128_000
+# The newest tool results that are never dropped, and the length under which a result is not worth dropping.
+KEPT_RESULTS = 3
+MIN_DROPPED_CHARS = 400
+# Characters per token when a conversation is sized from its text. Low on purpose: page trees are dense,
+# and counting too many tokens only drops a result a little early.
+_CHARS_PER_TOKEN = 3
 
 
 @dataclass(frozen=True)
@@ -93,7 +123,8 @@ class AgentResult:
     tool_calls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    # Only when the provider reports what the calls cost (OpenRouter does); otherwise None.
+    # What the provider reports the calls cost (OpenRouter does), else what the run's budget priced them at
+    # (the project's rates, or the model's own prices); None when neither is known.
     cost_usd: float | None = None
     duration_seconds: float = 0.0
     error: str = ""
@@ -102,6 +133,11 @@ class AgentResult:
     # Tool calls that ran without an error right after a call of the same tool was refused for its
     # arguments (not JSON, or not fitting the tool's schema).
     repaired_calls: int = 0
+    # Tool calls the server returned as text that were run as calls (only on a model not known to call
+    # tools natively).
+    text_fallback_calls: int = 0
+    # Old tool results whose content was replaced by a note because the conversation neared the model's window.
+    dropped_results: int = 0
     # agents/<name>.jsonl in the run folder; None when there is no run folder.
     transcript: Path | None = None
     messages: list[BaseMessage] = field(default_factory=list, repr=False)
@@ -162,6 +198,8 @@ async def run_agent(
         seconds=round(result.duration_seconds, 3),
         corrections=result.corrections,
         repaired_calls=result.repaired_calls,
+        text_fallback_calls=result.text_fallback_calls,
+        dropped_results=result.dropped_results,
         error=result.error,
         output=result.output.model_dump(mode="json") if result.output is not None else None,
     )
@@ -200,7 +238,7 @@ class _Run:
             description="Hand in your final answer. Call this exactly once, when the work is finished.",
             args_schema=spec.output_schema,
         )
-        self.bound = model.bind_tools([*self.tools.values(), submit])
+        self.bound = model.bind_tools([wire_schema(tool) for tool in (*self.tools.values(), submit)])
         self.messages: list[BaseMessage] = []
         # Until a limit or an answer says otherwise, a run that stops has run out of steps.
         self.result = AgentResult(status="step_limit")
@@ -210,6 +248,16 @@ class _Run:
         self._cut_off = False
         # Tools whose last call was refused for its arguments. The next call that runs is a repaired one.
         self._refused: set[str] = set()
+        # A call written as text is run only when nothing says this model calls tools natively: on a model
+        # the provider's list or a measurement vouches for, text that looks like a call is a mistake.
+        record = capabilities_of(model)
+        native = record.native_tools
+        self._reads_text_calls = not (native.value and native.source != "assumed")
+        # Tokens the conversation may hold before old tool results are dropped.
+        self._room = int((record.context_window.value or ASSUMED_CONTEXT_WINDOW) * CONTEXT_SHARE)
+        # What the provider counted for the last request and its reply, and how many messages that covered.
+        self._counted = 0
+        self._counted_to = 0
 
     async def loop(self, user_input: str) -> None:
         spec, result = self.spec, self.result
@@ -233,6 +281,7 @@ class _Run:
                 result.error = f"{spec.name} stopped: {spent}"
                 return
             result.steps += 1
+            self._drop_old_results()
             called = time.monotonic()
             try:
                 reply = await self.bound.ainvoke(
@@ -251,6 +300,7 @@ class _Run:
                 reply = AIMessage(content=str(getattr(reply, "content", reply)))
             self.messages.append(reply)
             self._count(reply)
+            self._counted, self._counted_to = _counted_tokens(reply), len(self.messages)
             finish = _finish_reason(reply)
             self._cut_off = finish in _CUT_OFF
             usage = reply.usage_metadata or {}
@@ -260,6 +310,8 @@ class _Run:
                 seconds=_elapsed(called),
                 tokens_in=int(usage.get("input_tokens") or 0),
                 tokens_out=int(usage.get("output_tokens") or 0),
+                # The part of tokens_in the provider read from its cache; None when it did not say.
+                tokens_cached=cached_tokens(reply),
                 cost_usd=reported_cost(reply),
                 text=str(reply.text),
                 tool_calls=[{"name": call["name"], "args": call["args"]} for call in reply.tool_calls],
@@ -274,6 +326,47 @@ class _Run:
                 return
         result.error = f"{spec.name} used all {spec.max_steps} steps without handing in an answer"
 
+    def _drop_old_results(self) -> None:
+        """Before a model call: when the conversation nears the model's window, old tool results become a note.
+
+        Only the content of a long result of a call that worked is replaced, and the message stays under
+        its call's id, so the request is still one a provider accepts. The last ``KEPT_RESULTS`` such
+        results and the newest result of each tool (the page as it is now) are kept. The task, what the
+        model itself said or called, a correction and an error are never touched; the transcript still
+        has every result in full.
+        """
+        size = max(
+            _tokens(self.messages),
+            # The provider's own count where there is one: it includes the tools' schemas.
+            self._counted + _tokens(self.messages[self._counted_to :]) if self._counted else 0,
+        )
+        if size <= self._room:
+            return
+        long_results = [
+            (index, message)
+            for index, message in enumerate(self.messages)
+            if isinstance(message, ToolMessage)
+            and message.status == "success"
+            and len(str(message.content)) > MIN_DROPPED_CHARS
+        ]
+        newest = {message.name: index for index, message in long_results}
+        kept = {index for index, _ in long_results[-KEPT_RESULTS:]} | set(newest.values())
+        dropped = 0
+        for index, message in long_results:
+            if index in kept:
+                continue
+            note = (
+                f"[This result of `{message.name}` ({len(str(message.content)):,} characters) was dropped to keep "
+                "the conversation short. Call the tool again if you need it.]"
+            )
+            self.messages[index] = ToolMessage(
+                note, tool_call_id=message.tool_call_id, name=message.name, status=message.status
+            )
+            dropped += 1
+        if dropped:
+            self.result.dropped_results += dropped
+            self.transcript.write("dropped", step=self.result.steps, results=dropped, tokens=size, room=self._room)
+
     async def _handle(self, reply: AIMessage) -> bool:
         """Act on one model reply. True when the run is over."""
         sent = self.result.corrections
@@ -283,8 +376,15 @@ class _Run:
         return done
 
     async def _act(self, reply: AIMessage) -> bool:
+        from_text = False
         if not reply.tool_calls and not reply.invalid_tool_calls:
-            return self._text(reply)
+            called = self._text_call(reply)
+            if called is None:
+                return self._text(reply)
+            # The conversation now holds the call the way a server that had read it would have sent it,
+            # so its result can go back under an id.
+            reply = self.messages[-1] = called
+            from_text = True
         done = False
         ran = 0
         for call in reply.tool_calls:
@@ -311,10 +411,12 @@ class _Run:
                 continue
             ran += 1
             self.result.tool_calls += 1
+            self.result.text_fallback_calls += from_text
             called = time.monotonic()
             name = call["name"]
             tool = self.tools.get(name)
-            problem = _bad_arguments(tool, call["args"]) if tool is not None else ""
+            args = _given(tool.args_schema, call["args"]) if tool is not None else call["args"]
+            problem = _bad_arguments(tool, args) if tool is not None else ""
             repaired = False
             if problem:
                 # Checked before the tool runs, so an error from inside a tool is never taken for this.
@@ -323,7 +425,7 @@ class _Run:
             else:
                 mending = name in self._refused
                 self._refused.discard(name)
-                content, status = await self._call_tool(name, call["args"])
+                content, status = await self._call_tool(name, args)
                 repaired = mending and status == "success"
                 self.result.repaired_calls += repaired
             # A page may show a password or a key; the model has no use for it.
@@ -335,10 +437,12 @@ class _Run:
                 args=call["args"],
                 status=status,
                 repaired=repaired,
+                text_fallback=from_text,
                 result=content,
                 seconds=_elapsed(called),
             )
-            outcome = "repaired" if repaired else "ok" if status == "success" else "failed"
+            # One status per call: a failure and a repair are said before where the call came from.
+            outcome = "failed" if status != "success" else "repaired" if repaired else "text-fallback" if from_text else "ok"
             self._trace_tool(name, outcome, _elapsed(called))
             self.messages.append(ToolMessage(content, tool_call_id=call_id, name=call["name"], status=status))
         # A call whose arguments could not be read still needs a result under its id: the next request is
@@ -358,6 +462,27 @@ class _Run:
             if self._mistake(problem):
                 return True
         return done
+
+    def _text_call(self, reply: AIMessage) -> AIMessage | None:
+        """``reply`` with the tool call its text is, when the server returned a call as text; else None.
+
+        Only a call to one of the agent's own tools: the answer is never handed in this way. The call then
+        goes through everything a native call does (the limits, the schema check, the masking).
+        """
+        text = str(reply.text)
+        if not self._reads_text_calls or self._cut_off or _UNTRUSTED_MARKER.search(text):
+            return None
+        found = parse_printed_call(text)
+        if found is None or found[0] not in self.tools:
+            return None
+        name, args = found
+        return AIMessage(
+            content="",
+            tool_calls=[{"name": name, "args": args, "id": f"text_call_{self.result.steps}", "type": "tool_call"}],
+            usage_metadata=reply.usage_metadata,
+            response_metadata=reply.response_metadata,
+            id=reply.id,
+        )
 
     def _text(self, reply: AIMessage) -> bool:
         """A reply with no tool call: the answer as JSON text, or something to send back."""
@@ -448,7 +573,7 @@ class _Run:
                 raise ValueError(
                     f"no answer was handed in. Call the `{SUBMIT_TOOL}` tool with the answer as its arguments"
                 )
-            output = self.spec.output_schema.model_validate(candidate)
+            output = self.spec.output_schema.model_validate(_given(self.spec.output_schema, candidate))
         except (ValidationError, ValueError) as exc:
             problem = _validation_problem(exc)
             if self._mistake(problem):
@@ -477,9 +602,10 @@ class _Run:
         usage: dict[str, Any] = dict((reply.usage_metadata if reply is not None else None) or {})
         tokens_in, tokens_out = int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
         reported = reported_cost(reply) if reply is not None else None
+        cached = cached_tokens(reply) if reply is not None else None
         cost = reported
         if self.budget is not None and reply is not None:
-            cost = self.budget.cost_of(tokens_in, tokens_out, reported)
+            cost = self.budget.cost_of(tokens_in, tokens_out, reported, self.model, cached or 0)
         metadata = (reply.response_metadata if reply is not None else None) or {}
         answered = metadata.get("model_name") or metadata.get("model")
         finish = _finish_reason(reply) if reply is not None else ""
@@ -492,7 +618,7 @@ class _Run:
             "gen_ai.usage.input_tokens": tokens_in,
             "gen_ai.usage.output_tokens": tokens_out,
             # None: the provider did not say. That is not the same as nothing cached.
-            "gen_ai.usage.cache_read.input_tokens": (usage.get("input_token_details") or {}).get("cache_read"),
+            "gen_ai.usage.cache_read.input_tokens": cached,
             "gen_ai.response.finish_reasons": [finish] if finish else [],
             "contexer.step": self.result.steps,
             "contexer.seconds": _elapsed(called),
@@ -504,7 +630,7 @@ class _Run:
         self.trace.call("model", **line)
 
     def _trace_tool(self, name: str, status: str, seconds: float) -> None:
-        """One tool call in the run's trace: ``ok``, ``repaired`` or ``failed``. No arguments, no result."""
+        """One tool call in the run's trace: ``ok``, ``repaired``, ``text-fallback`` or ``failed``. No arguments, no result."""
         self.trace.call(
             "tool",
             **{
@@ -522,10 +648,28 @@ class _Run:
         self.result.tokens_in += int(usage.get("input_tokens") or 0)
         self.result.tokens_out += int(usage.get("output_tokens") or 0)
         cost = reported_cost(reply)
+        if self.budget is not None:
+            # The budget knows the prices: a call the provider did not price comes back priced for this model.
+            cost = self.budget.spend(
+                int(usage.get("input_tokens") or 0),
+                int(usage.get("output_tokens") or 0),
+                cost,
+                model=self.model,
+                cached_in=cached_tokens(reply) or 0,
+            )
         if cost is not None:
             self.result.cost_usd = (self.result.cost_usd or 0.0) + cost
-        if self.budget is not None:
-            self.budget.spend(int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), cost)
+
+
+def cached_tokens(reply: AIMessage) -> int | None:
+    """How many of the reply's input tokens the provider read from its cache; None when it did not say.
+
+    They are part of ``input_tokens``, not on top of it. LangChain puts them in one place for every
+    provider (an OpenAI-compatible ``prompt_tokens_details.cached_tokens``, Anthropic's ``cache_read_input_tokens``).
+    """
+    details: Any = (reply.usage_metadata or {}).get("input_token_details") or {}
+    cached = details.get("cache_read")
+    return cached if isinstance(cached, int) and not isinstance(cached, bool) else None
 
 
 def reported_cost(reply: AIMessage) -> float | None:
@@ -614,7 +758,7 @@ def _printed_call(data: dict[str, Any]) -> str:
         name = function.get("name")
         return name if isinstance(name, str) and name else ""
     name = function if isinstance(function, str) else data.get("name") or data.get("tool") or data.get("tool_name")
-    if isinstance(name, str) and name and any(key in data for key in _CALL_ARGUMENT_KEYS):
+    if isinstance(name, str) and name and any(key in data for key in CALL_ARGUMENT_KEYS):
         return name
     return ""
 
@@ -645,6 +789,64 @@ def _bad_arguments(tool: BaseTool, args: Any) -> str:
         needs = f"requires: {', '.join(required)}" if required else "has no required argument"
         return f"{_validation_problem(exc)}. `{tool.name}` {needs}. Send the call again with arguments that fit."
     return ""
+
+
+def wire_schema(tool: BaseTool) -> dict[str, Any]:
+    """``tool`` as a model is sent it: an OpenAI-style function description whose arguments are strict.
+
+    Every field is required and an optional one may be null (``llm/structured.py: strict_parameters``).
+    The tool's own schema is not changed: it still has its defaults, and ``_given`` reads a null as
+    "left out". The ``strict`` flag itself is not set, so no provider is asked to enforce the schema.
+    """
+    sent = convert_to_openai_tool(tool)
+    function = sent["function"]
+    parameters = function.get("parameters") or {"type": "object", "properties": {}}
+    return {**sent, "function": {**function, "parameters": strict_parameters(parameters)}}
+
+
+def _given(schema: Any, data: Any) -> Any:
+    """``data`` without its nulls, when it fits ``schema`` only that way; otherwise ``data`` as it is.
+
+    A strict schema makes a model send null for a field it would have left out. Where the field takes
+    null, null is kept; where it does not (``wait: int = 0``), the field is dropped and its default applies.
+    """
+    if not (isinstance(schema, type) and issubclass(schema, BaseModel) and isinstance(data, dict)):
+        return data
+    try:
+        schema.model_validate(data)
+        return data
+    except ValidationError:
+        pass
+    bare = _without_nulls(data)
+    try:
+        schema.model_validate(bare)
+    except ValidationError:
+        return data
+    return bare
+
+
+def _without_nulls(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _without_nulls(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [_without_nulls(item) for item in value]
+    return value
+
+
+def _tokens(messages: Sequence[BaseMessage]) -> int:
+    """Roughly how many tokens ``messages`` are, from their text and the calls they carry."""
+    chars = 0
+    for message in messages:
+        chars += len(str(message.content))
+        if isinstance(message, AIMessage):
+            chars += sum(len(call["name"]) + len(json.dumps(call["args"], default=str)) for call in message.tool_calls)
+    return chars // _CHARS_PER_TOKEN
+
+
+def _counted_tokens(reply: AIMessage) -> int:
+    """The tokens the provider counted for the request and this reply together; 0 when it did not say."""
+    usage = reply.usage_metadata or {}
+    return int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
 
 
 def _as_text(value: Any) -> str:

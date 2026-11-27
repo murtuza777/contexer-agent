@@ -545,10 +545,20 @@ prompts; `tests/test_controller.py` pins what those produce.
   covers the coding agent and Contexer's agents together. The engine tells
   the budget what the coding agent has spent; each turn is told what is
   left; a run that runs out ends `budget_exhausted` on its best attempt.
-  A provider that reports no price is priced from `[agents]
-  input_usd_per_mtok` and `output_usd_per_mtok`, and the total is marked
-  as an estimate. With neither, cost is unknown and only tokens are
-  limited. A coding agent can overshoot within one turn: Claude Code
+  Any limit that is reached, the token limit too, ends the run before the
+  next coding turn. A call the provider did not price is priced from its
+  tokens and the total is marked as an estimate: at `[agents]
+  input_usd_per_mtok` and `output_usd_per_mtok` when the project sets
+  them (for every model), else at the prices in the called model's own
+  record, cached input at its cached price. With neither, cost is unknown
+  and is said as "unknown", never as $0.00. `contexer run` and `contexer
+  test` refuse a dollar limit they could not keep before anything is
+  spent (`budget.unenforceable`): a model with no known price, or a coding
+  agent that reports no cost (Codex, OpenCode) under `max_usd`. `contexer
+  test` reads the same `[agents] max_usd` and rates. Cached input: the
+  Anthropic model marks the tools and the system prompt for caching, and
+  OpenRouter is sent one `session_id` per model object (`llm/chat.py`).
+  A coding agent can overshoot within one turn: Claude Code
   checks its budget between its own steps, and one turn went from $2.42
   to $6.26 against a $5 limit.
 - **A model per agent.** `[agents.<name>] model`, `provider` and
@@ -558,10 +568,8 @@ prompts; `tests/test_controller.py` pins what those produce.
   for its four (intent, tester, challenger, diagnoser); a model named on
   `contexer test --model` is for every agent of that run. A model that
   cannot be built, an unknown provider, and a provider with no model stop
-  the command before it starts. Not wired yet: `max_steps` for Intent and
-  Triage inside `contexer run` (both take the argument; `graph/nodes.py`
-  does not pass it), and the issue flow, which runs every agent on the
-  default model.
+  the command before it starts. Not wired yet: the issue flow, which runs
+  every agent on the default model.
 - **The estimate** (`crew/estimate.py`) is printed before a run: the most
   coding-agent turns and model calls it can make, from the caps in code.
   It is a ceiling, not a prediction.
@@ -920,6 +928,9 @@ models built from the same catalog:
   URL or the full URL of one API (`.../openai/v1/responses`) both become
   `.../openai/v1`. OpenRouter keeps its
   attribution headers and, for the default model, its free fallback list.
+  Every OpenRouter request carries `provider.require_parameters: true`, so
+  it is routed only to a provider that takes every parameter sent (`tools`
+  among them).
   Building a model makes no network call, and LangChain is imported only then.
 - `llm/capabilities.py: ModelCapabilities` is the record per model: context
   window, native tool calling, parallel calls, strict schemas, vision, and
@@ -933,8 +944,9 @@ models built from the same catalog:
   it with one read of the model list and no model request. `contexer
   doctor` prints every row with its source, `contexer setup` prints it
   after saving, and `build_model` keeps it so `capabilities_of(model)`
-  returns it for the chat model an agent runs on. Nothing in `crew/base.py`
-  reads it yet.
+  returns it for the chat model an agent runs on. `crew/base.py` reads two
+  facts from it: native tool calling (whether a call returned as text is
+  run) and the context window (when old tool results are dropped).
 - `supports_tools(provider, model)`: True, False or None (nobody says),
   taken from that record.
 - A model that cannot call tools gives a `ToolCallingError` that names it:
@@ -955,6 +967,14 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 - The model gets the agent's tools plus `submit`, whose arguments are the
   output schema. Calling `submit` with a valid answer ends the run. An answer
   written as JSON text is accepted too.
+- Each tool is sent as a function description with strict arguments
+  (`wire_schema`, `llm/structured.py: strict_parameters`): at every depth no
+  extra properties, every field required, and a field that has a default
+  may be null. The tool's own schema keeps its defaults: a null for a field
+  that does not take null is read as "left out" (`_given`), and a field
+  left out altogether is still accepted. The `strict` flag of the function
+  is not sent, so no provider is asked to enforce the schema. The loop
+  does not need several calls in one reply; it runs however many arrive.
 - An answer that does not fit the schema goes back to the model with what was
   wrong, at most twice (`MAX_CORRECTIONS`).
 - Tool calls in one reply run in order. A tool that raises, an unknown tool
@@ -964,6 +984,31 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
   tool runs. A call that does not fit gets the problem and the tool's
   required fields as its result. The next call of that tool that runs
   without an error is counted in `AgentResult.repaired_calls`.
+- A tool call a server returned as text (`_text_call`,
+  `llm/structured.py: parse_printed_call`) is run as that call when the
+  model's record does not say, from a catalogue or a measurement, that it
+  calls tools natively. The text must be exactly one call of one of the
+  agent's own tools: a Hermes `<tool_call>` block, a `<function=name>` block
+  or a Harmony `to=functions.name` message that ends the reply, or bare
+  JSON, a fenced JSON block or a Gemma `tool_code` block that is the whole
+  reply. It then passes the same limits, schema check and masking as any
+  call, and is counted in `AgentResult.text_fallback_calls`. `submit` is
+  never read from text this way, nor is a reply that was cut off or that
+  carries the `<untrusted>` marker. Anything else that looks like a call is
+  sent back with a correction, as before.
+- Before each model call the conversation is sized: the larger of its
+  characters divided by 3, and the tokens the provider counted for the last
+  request plus the characters added since. Past 60% (`CONTEXT_SHARE`) of the
+  model's context window, the content of old tool results is replaced by a
+  one-line note under the same call id (`_drop_old_results`). Only results
+  of calls that worked and are longer than 400 characters are replaced. The
+  last three of those and the newest result of each tool are kept; the
+  task, the model's own replies and calls, corrections and error results
+  are never changed. A model whose record states no window is taken to have
+  128,000 tokens (`ASSUMED_CONTEXT_WINDOW`), so a model with a smaller
+  window that no catalogue states is not protected. The count is
+  `AgentResult.dropped_results`, and the transcript gets a `dropped` line;
+  its `tool` lines still hold every result in full.
 - `AgentResult.status`: `ok`, `step_limit`, `timeout`, `invalid_output`,
   `model_error`. It also carries the steps (model calls), tool calls, tokens
   in and out, the duration, and the cost when the provider reports one
@@ -975,7 +1020,8 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 `runs/<run-id>/agents/<name>.jsonl`. A `start` line (model, input, tools,
 limits), then one `model` line per model call (step, seconds, tokens in and
 out, cost, text, tool calls, or the error) and one `tool` line per tool call
-(name, arguments, status, whether it was a repaired call, result, seconds),
+(name, arguments, status, whether it was a repaired call, whether it was
+read from text, result, seconds),
 then an `end` line (status, totals, the output).
 
 **Trace** (`crew/transcript.py: Trace`): `runs/<run-id>/trace.jsonl` is one
@@ -984,8 +1030,8 @@ semantic conventions it follows. The engine writes every run event as the
 line `--json` prints (`graph/engine.py: _context`). Every agent writes one
 `model` line per model call (agent, provider, requested and answering model,
 tokens in, out and read from cache, finish reason, seconds, cost and whether
-it is an estimate) and one `tool` line per tool call (name, `ok`, `repaired`
-or `failed`, seconds), under `gen_ai.*` names, with `contexer.*` for what the
+it is an estimate) and one `tool` line per tool call (name, `ok`, `repaired`,
+`text-fallback` or `failed`, seconds), under `gen_ai.*` names, with `contexer.*` for what the
 conventions do not name. It holds no prompt, reply, tool argument or tool
 result; those are in the agent's transcript under the same agent and step.
 Every line is masked. `run.json` gets each agent's count of repaired calls
@@ -1357,7 +1403,8 @@ result.json            the RunResult, without the page's HTML, text and base64 s
 run.json               contexer run only: the whole RunOutcome (attempts, agent turns, diff, cost)
 server.log             the dev server's output
 checks/<contract>/     per-check screenshots (and traces when kept)
-attempt-<n>/           contexer run: the same, per attempt (plus run-result.json)
+attempt-<n>/           contexer run: the same, per attempt (plus run-result.json, and prompt.md:
+                       what the coding agent was sent, secrets masked; it can quote the app's pages)
 checkpoint.sqlite      contexer run: the state after every node; what --resume reads
 agents/<name>.jsonl    one transcript per Contexer agent (crew/), secrets masked
 trace.jsonl            every run event, model call and tool call in order; no prompts or page content
@@ -1577,11 +1624,25 @@ the values a view needs). Two things come from the same events:
   review are one line each. They are printed once, so a terminal, a CI
   log and a pasted issue show the same thing. The coding agent's tool
   calls are not printed unless `--verbose`.
-- *A block redrawn in place*, in a terminal only: the attempt, every check
-  with its state (the ones that failed first, with the short reason, at
-  most 12 lines), a status line (`Agent working · 0:41 · 2 tool calls ·
-  Edit src/app.js`), and a footer with the time and the money so far. It
-  is taken away for a question to the person and at the end.
+- *A block redrawn in place*, in a terminal only: the plan of the run
+  (`✓ draft  ✓ approve  › build  · prove  · review  · hand off`, the step
+  it is at marked), the attempt and the most attempts the run may make,
+  every check with its state (the ones that failed first, with the short
+  reason, at most 12 lines), a status line (`Agent working · 0:41 · 2 tool
+  calls · Edit src/app.js`), and a footer with the time and what the
+  coding agent has spent, next to its budget when one is set. It is drawn
+  from the first drafting or planning step, and taken away for a question
+  to the person and at the end. The step is worked out from the kinds of
+  events, so a redraft after a correction in the middle of a run still
+  shows `build`. The events hold no token counts and nothing about how
+  full a model's context is, so the footer shows neither.
+
+`contexer runs show RUN` lists the attempts of a run. With `--diff` it
+prints the change of the whole run (kept in `run.json`), or with
+`--attempt N` the change of one attempt, from the snapshot of the files
+it began with to its own; that needs the run's snapshots, which
+`runs prune` removes. In a terminal the diff is coloured and goes through
+the system pager; into a pipe it is the plain diff, unwrapped.
 
 The summary at the end of a graph run does not repeat the attempts.
 
@@ -1619,11 +1680,11 @@ and prints the fix under each problem.
 | `[agent] max_repair_rounds` | 2 | Repair rounds after the first attempt |
 | `[agent] budget_usd` | none | Stop when the agent has spent this much |
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
-| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins |
-| `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens, used when the provider reports no cost |
+| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins. Read by `run` and `test`. Refused at the start when part of the spend cannot be known |
+| `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens for every model, used when the provider reports no cost. Without them a call is priced from its model's own record, when that states a price |
 | `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer`. Read by `run` and `test`. `provider` needs `model`; a model that cannot be built stops the command |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
-| `[limits] cost_usd` | none | Cost limit for the same, where the provider reports prices |
+| `[limits] cost_usd` | none | Cost limit for the same. Refused at the start when a model that will be called has no known price |
 
 ### Environment variables
 
