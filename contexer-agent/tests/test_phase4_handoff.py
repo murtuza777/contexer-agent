@@ -279,13 +279,15 @@ def _lockfile(packages: int) -> str:
 
 
 async def test_a_secret_after_a_large_lockfile_change_is_still_seen_and_not_pushed(repo: Path) -> None:  # noqa: F811
-    # The diff a run keeps is cut at 200,000 characters and a lockfile sorts before src/. What is scanned
-    # before a push is what is staged, all of it.
+    # The diff a run keeps is cut to 200,000 characters. What is scanned before a push is what is staged,
+    # all of it, whatever the kept diff holds.
     lock = _lockfile(1500)
     assert len(lock) > 300_000
     plan = plan_handoff(repo)
     outcome, contract = await _graph_run(repo, [{"package-lock.json": lock, "zz-config.js": LEAK, "app.js": GOOD_JS}], rounds=0)
-    assert "q7Rk2ZpX9vLm" not in outcome.diff  # the diff the run keeps was cut before the line with the key
+    # Since CTX-2 the cut leaves out the largest file, not whatever sorts last, so the small file is kept.
+    assert "left out to fit: package-lock.json" in outcome.diff and "q7Rk2ZpX9vLm" in outcome.diff
+    outcome.diff = ""  # the scan before a push must not need it
 
     github_ = PullsOnly()
     handoff = hand_off(plan, outcome, contract, client_factory=github_.factory)
