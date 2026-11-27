@@ -129,9 +129,24 @@ class ShadowRepo:
         out = self._git("diff", "--no-ext-diff", "--no-textconv", "--name-only", "--no-renames", a, b)
         return [line for line in out.splitlines() if line]
 
+    def read_file(self, commit: str, path: str, max_bytes: int = 1_000_000) -> str | None:
+        """The text of ``path`` as snapshot ``commit`` recorded it; None when it was not a file there, or is larger.
+
+        For what must be read as it was before a coding agent's turn, whatever the agent wrote since.
+        A link is not followed: the snapshot holds where it points, not a file.
+        """
+        try:
+            listed = self._git("ls-tree", "-l", commit, "--", path).strip()
+            mode, kind, blob, size = listed.split("\t")[0].split()
+            if kind != "blob" or mode not in ("100644", "100755") or int(size) > max_bytes:
+                return None
+            return self._git("cat-file", "blob", blob)
+        except (SnapshotError, ValueError):
+            return None
+
     def diff(self, a: str, b: str, max_chars: int = 200_000) -> str:
         text = self._git("diff", "--no-ext-diff", "--no-textconv", "--no-color", "--stat", "--patch", a, b)
-        return text if len(text) <= max_chars else text[:max_chars] + "\n... (diff truncated)\n"
+        return cut_diff(text, max_chars)
 
     def run_refs(self, run: str) -> list[str]:
         """The snapshots one run owns, as ``<run>/<name>``. A run is named exactly: never a pattern, never a path."""
@@ -232,6 +247,75 @@ class ShadowRepo:
         if proc.returncode != 0:
             raise SnapshotError(f"git {' '.join(args[:2])} failed: {proc.stderr.strip() or proc.stdout.strip()}")
         return proc.stdout
+
+
+_FILE_START = re.compile(r"^diff --git ", re.MULTILINE)
+_NEW_PATH = re.compile(r"^\+\+\+ b/(.+?)\t?$", re.MULTILINE)
+_OLD_PATH = re.compile(r"^--- a/(.+?)\t?$", re.MULTILINE)
+_HEADER_PATH = re.compile(r"^diff --git a/.+? b/(.+)$", re.MULTILINE)
+# A file named by what failed is shown in part when it does not fit whole, if at least this much room is left.
+_MIN_PART = 400
+_MAX_NAMED = 20
+
+
+def cut_diff(diff: str, max_chars: int, mentioned_in: str = "") -> str:
+    """``diff`` in about ``max_chars``, cut by file, and saying which files are missing.
+
+    A diff cut at a character count keeps whatever git listed first, which is the alphabet's choice and
+    often a lock file. Here the files whose names appear in ``mentioned_in`` (the page's errors, the
+    server log, the steps that failed) come first, then the rest from the smallest up, each whole. A
+    mentioned file that does not fit is shown in part. A diff that fits is returned as it is.
+    """
+    if len(diff) <= max_chars:
+        return diff
+    starts = [match.start() for match in _FILE_START.finditer(diff)]
+    if not starts:
+        return diff[:max_chars] + "\n... (cut short)\n"
+    files = [(_changed_path(diff[a:b]), diff[a:b]) for a, b in zip(starts, [*starts[1:], len(diff)], strict=True)]
+    mentioned = mentioned_in.replace("\\", "/")
+    first = [item for item in files if _mentions(mentioned, item[0])]
+    rest = sorted((item for item in files if item not in first), key=lambda item: len(item[1]))
+    kept = [diff[: starts[0]][: max_chars // 4]]  # the --stat list of everything that changed
+    room = max_chars - len(kept[0])
+    left_out: list[str] = []
+    cut_short: list[str] = []
+    ordered = [*first, *rest]
+    for position, (path, text) in enumerate(ordered):
+        if len(text) <= room:
+            kept.append(text)
+            room -= len(text)
+        elif position < len(first) and room >= _MIN_PART:
+            # Half of what is left, so that the files after it are not all lost to one.
+            part = room if position == len(ordered) - 1 else room // 2
+            kept.append(text[:part].rstrip("\n") + "\n")
+            room -= part
+            cut_short.append(path)
+        else:
+            left_out.append(path)
+    notes = [f"{label}: {_named(paths)}" for label, paths in (("cut short", cut_short), ("left out to fit", left_out)) if paths]
+    return "".join(kept) + f"... ({'; '.join(notes)})\n"
+
+
+def _changed_path(section: str) -> str:
+    for pattern in (_NEW_PATH, _OLD_PATH, _HEADER_PATH):
+        match = pattern.search(section)
+        if match:
+            return match.group(1).strip().strip('"')
+    return "a file"
+
+
+def _mentions(text: str, path: str) -> bool:
+    """True when ``text`` names the file: by its path, or by its file name standing on its own."""
+    if not text or not path:
+        return False
+    name = path.rsplit("/", 1)[-1]
+    return path in text or re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", text) is not None
+
+
+def _named(paths: list[str]) -> str:
+    unique = list(dict.fromkeys(paths))
+    more = f" and {len(unique) - _MAX_NAMED} more" if len(unique) > _MAX_NAMED else ""
+    return ", ".join(unique[:_MAX_NAMED]) + more
 
 
 # The snapshot repository is a folder in the project, so the coding agent can write to it. These settings, given

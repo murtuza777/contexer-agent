@@ -64,7 +64,6 @@ from contexer.verification.models import AcceptanceCriterion
 from contexer.verification.verifier import Verifier
 
 Node = Callable[[LoopState], Awaitable[dict[str, Any]]]
-_DIFF_CHARS = 20_000
 _REVIEW_DIFF_CHARS = 200_000
 # A review may ask the coding agent for one more turn on work that passed, and no more.
 MAX_REVIEW_REPAIRS = 1
@@ -109,6 +108,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             budget=ctx.budget,
             max_steps=_steps(ctx, "intent", DEFAULT_INTENT_STEPS),
             origin=(existing.origin if existing is not None else "") or state.get("goal_origin", ""),
+            sources=ctx.sources(state, ("issue",)),
             secrets=ctx.secrets(),
         )
         ctx.intents.save(result.spec)
@@ -230,6 +230,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 ctx.project,
                 others=ctx.others,
                 repo_summary=ctx.repo.format_summary() if ctx.repo is not None else "",
+                sources=ctx.sources(state),
                 run_dir=ctx.run.path,
                 budget=ctx.budget,
                 max_steps=_steps(ctx, "planner", DEFAULT_PLANNER_STEPS),
@@ -550,6 +551,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             ctx.model_for("reviewer"),
             intent=quoted_goal(contract.goal, contract.origin),
             checks=[c.description for c in contract.criteria],
+            sources=ctx.sources(state) if ctx.model_for("reviewer") is not None else (),
             run_dir=ctx.run.path,
             budget=ctx.budget,
             max_steps=_steps(ctx, "reviewer", DEFAULT_REVIEW_STEPS),
@@ -707,7 +709,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 diagnoser_model,
                 ctx.project,
                 intent=quoted_goal(contract.goal, contract.origin),
-                diff=ctx.shadow.diff(state["snapshots"]["0"], state["current"], max_chars=_DIFF_CHARS),
+                diff=ctx.shadow.diff(state["snapshots"]["0"], state["current"]),  # the Diagnoser cuts it, by what failed
                 server_log=shown.server_log_tail,
                 tried=_tried(state),
                 run_dir=ctx.run.path,
