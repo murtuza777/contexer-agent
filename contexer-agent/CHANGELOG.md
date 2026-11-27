@@ -27,6 +27,57 @@
   `--compare REPORT.json` says whether each rate is higher or lower than in an earlier report or
   cannot be told apart from it. The intervals treat every run as an independent trial of one rate,
   and `--compare` changes no exit code. (`EVAL-3`)
+- **`contexer run` replays the other approved contracts once before the first coding turn.** An
+  earlier check that passed then and fails after an attempt is reported as a regression, with the
+  attempt that broke it: first in the repair prompt, and in the run view, the report, `run.json`
+  and the pull request. (`AGT-1`)
+- A run now reads more than the goal: the comments on the issue it started from (from people with
+  write access only), the project's `AGENTS.md`, `CLAUDE.md` and `CONTRIBUTING.md` as they were
+  before the coding agent started, and the stored intent. The Planner and the Reviewer are given
+  them as quoted data, and the run prints which were read (`Context read: ...`). (`CTX-5`)
+- The Planner's brief can list conventions the project states, and the Reviewer can note a change
+  that breaks one. Both quote the line and name the file, and code drops any that the file does not
+  state. A convention note is advice: it never starts a repair and never holds a pull request.
+  (`CTX-5`)
+- `contexer issue draft` gives the Intent agent the issue's comments by people with write access,
+  quoted as data, as a run does.
+- `contexer run` keeps what the coding agent was asked: `attempt-<n>/prompt.md` in the run folder,
+  with secrets masked, and `report.html` shows it for each attempt. It can quote text from the
+  app's pages and stays on the machine; a hand-off never commits it. (`OBS-2`)
+- `contexer runs --stats --by model`: a row per model Contexer's own agents called (runs proven,
+  attempts, calls, tokens, cost, cost per proven run, tool error and repair rates), counted from
+  each run's `trace.jsonl`. (`OBS-3`)
+- `contexer runs --json` and `contexer runs --stats --json` print JSON and nothing else. (`OBS-3`)
+- `contexer run` shows the checks to approve as a numbered list with the keys under it: `y`
+  approves, `n` does not, `e` opens the contract in your editor (`$VISUAL` or `$EDITOR`), and a
+  sentence says what to change. (`DX-4`)
+- `contexer run --plain`: the run without colour, redrawing or symbols, one line per event, nothing
+  wrapped, for a CI log, a pipe or a screen reader. (`DX-4`)
+- The review looks up every package a change adds to `package.json`, a requirements file or
+  `pyproject.toml` on npm or PyPI. A name the registry does not have is a high note: it gets the
+  review's one repair turn and keeps the pull request a draft. A package first published in the
+  last 30 days is a medium note, or a high one when its name is one edit from a much used package.
+  Only the package's name is sent. Where a registry of your own is set (in the project, in
+  `~/.npmrc`, in pip's configuration or in the environment) nothing is looked up, and a lookup that
+  fails is a low note that says nothing was checked. `[review] dependency_lookup = false` in
+  `contexer.toml` turns the lookup off. (`AGT-2`)
+- The review notes a validation the change removed (a `required`, a length limit, a call to a
+  validator), and its notes about removed assertions and a removed confirmation now give the count
+  and the removed lines. When the Planner's brief names files, one low note lists the files the
+  change edited that nothing named. (`AGT-3`)
+- Reviewer suite: 12 planted and 12 clean cases (two of each added). (`AGT-3`)
+- `contexer runs show RUN` lists a run's attempts; `--diff` prints what the run changed and
+  `--diff --attempt N` what one attempt changed, coloured and paged in a terminal. (`DX-4`)
+- A tool call that a local server returns as text (Qwen, Gemma and gpt-oss formats through Ollama,
+  llama.cpp or vLLM) is now run as a call when the model is not known to call tools natively. It is
+  limited to the agent's own tools, checked against the tool's schema, and counted
+  (`text_fallback_calls` in the transcript, `text-fallback` in the trace). The final answer is
+  never taken this way. The formats were written from documentation, not recorded from a live
+  server. (`MOD-3`)
+- Cached input: Claude models are asked to cache the tools and the system prompt, OpenRouter calls
+  carry a session id, and cached input tokens are recorded (`tokens_cached` in an agent's
+  transcript) and priced at the cached price where the model lists one. Not measured live, and the
+  OpenRouter field was not checked against OpenRouter. (`COST-2`)
 
 ### Changed
 
@@ -39,8 +90,7 @@
   a model key and stay a person's step before tagging. (`REL-11`)
 - `[agents.<name>]` in `contexer.toml` now applies to `contexer test`: Intent, the Tester, the
   Challenger and the Diagnoser each run on the model and step cap named for them. `--model` is for
-  every agent of that run; `--steps` wins for the Tester. Not yet: in `contexer run`,
-  `[agents.intent] max_steps` and `[agents.triage] max_steps` still do nothing. (`MOD-5`)
+  every agent of that run; `--steps` wins for the Tester. (`MOD-5`)
 - A model under `[agents.<name>]` that cannot be built stops `contexer run` and `contexer test` at
   the start. It used to print a warning and use the default model. `provider` with no `model`, and
   an unknown provider, are errors in `contexer.toml`. (`MOD-5`)
@@ -55,6 +105,77 @@
 - CI runs the test suite on one worker process per core (`pytest -n auto`, pytest-xdist, now in the
   `dev` extra). The Ubuntu `Tests` job takes 11 to 12 minutes where it took 33 to 36, and its limit
   is 30 minutes. The same tests run and the same tests are skipped on each system.
+- **A piped `y` no longer approves: a run with no terminal (a pipe, CI) approves nothing.**
+  `echo y | contexer run "goal"` used to approve; use `--yes`, which is recorded as not reviewed by
+  a person, or `contexer contract approve ID` after reading. At a terminal, one word that is not a
+  key is asked about again and is no longer treated as a correction. (`DX-4`)
+- **The review of a passing run sends the names of the packages a change adds to
+  `registry.npmjs.org` or `pypi.org`**, one request per package, the name and nothing else of
+  yours. Turn it off with `[review] dependency_lookup = false` in `contexer.toml`, or with
+  `--no-review` for one run. Nothing is sent when a registry of your own is set in the project, in
+  `~/.npmrc`, in pip's configuration or in `npm_config_registry`, `PIP_INDEX_URL` or
+  `PIP_EXTRA_INDEX_URL`. Not seen as a registry of your own: npm's global config, a `pip.conf`
+  inside a virtual environment, `C:\ProgramData\pip\pip.ini`, Yarn and pnpm settings, and a
+  registry given only on a command line. (`AGT-2`)
+- **`contexer run` refuses `--max-usd` (or `[agents] max_usd`, `[limits] cost_usd`) at the start
+  when it could not enforce it:** the coding agent reports no cost (Codex, OpenCode), or a model
+  Contexer's agents will call has no known price and the project sets no rates. The message says
+  what to set. Before, the unknown part counted as $0 and the budget was never reached. (`COST-1`)
+- **A token or cost limit that is reached now ends the run** (`budget_exhausted`) before the next
+  coding turn. Before, Contexer's agents went quiet and the coding agent kept working. (`COST-1`)
+- **An earlier check that was already failing before the run no longer fails the run** and is not
+  sent to the coding agent to repair. It is listed as not proven on every verdict, in `run.json`,
+  in the report and in the pull request, and the last line of the run says how many there are.
+  `contexer verify`, `contexer replay`, the MCP server and the stop hook are unchanged: a failing
+  approved check fails there. When the app does not start before the first turn there is nothing
+  to compare with, and every earlier failure counts against the change as before. (`AGT-1`)
+- **A run of a contract whose goal came from a GitHub issue reads that issue's comments from the
+  GitHub API** when a token is available, also without `--issue` or `--pr`. (`CTX-5`)
+- **`contexer issue build` and `contexer issue draft` use the models `[agents.<name>]` in
+  `contexer.toml` names**, as `contexer run` does. A model named there that cannot be built stops
+  the command. (`MOD-5`)
+- **`contexer init --issues` writes a workflow with two jobs** (see Security). With it Contexer
+  comments on the issue once the build has ended, not while it runs. A workflow written earlier
+  keeps working as it did; write the new one with `contexer init --issues` after deleting the old
+  file. The two-job workflow has not been run on GitHub yet (`REL-8`). (`SEC-10`)
+- A run's summary says "cost unknown" where a cost is not known, instead of leaving it out or
+  counting it as $0.00; `--json` prints `"cost_usd": null` for it. (`COST-1`)
+- `contexer runs` and `runs --stats` no longer count a cost that is not known as $0: the sum is
+  labelled "known", the runs are counted, and no cost per proven run is given. (`OBS-3`)
+- Without rates in `contexer.toml`, each model call is priced from its own model's listed price,
+  so a run with two models bills each at its own. `[agents] input_usd_per_mtok` and
+  `output_usd_per_mtok` still override this for every model. (`COST-3`)
+- `contexer test` reads `[agents] max_usd` and the rates, and refuses a dollar limit it could not
+  enforce. (`COST-4`)
+- `contexer issue build` refuses, before anything is approved or spent, a dollar limit it cannot
+  keep, and says why on the issue. It now reads `[agents] max_usd` and the `[agents]` rates, as
+  `contexer run` does; before, they were ignored there.
+- A run now says when the Diagnoser did not finish and the repair prompt went out without a likely
+  cause.
+- The errors of `contexer run` have one form: what happened and why, the next step, the exit code.
+  The refusals that were a boxed usage error are in it too; exit codes are unchanged. With `--json`
+  an error is printed on stderr instead of not at all. (`DX-4`)
+- `run.json` has `baseline`, `stale` and `regressions`; `result.json` has `decision.stale` and
+  `decision.regressions`; the `verdict` event of `--json` has `stale` and `regressions`, and its
+  `others_failing` no longer counts stale checks. A run with other approved contracts costs one
+  more replay of their checks. (`AGT-1`)
+- A diff too long for the Diagnoser or the Reviewer is cut by file, not at a character count:
+  files named by the failed steps, the page's errors or the server log first, then the smallest,
+  and the last line names the files left out. (`CTX-2`)
+- A long agent conversation no longer grows without limit: past 60% of the model's context window,
+  old tool results are replaced by a one-line note. The last three, the newest result of each
+  tool, corrections and errors are kept. A model with no stated window is taken to have 128,000
+  tokens. (`CTX-3`)
+- Tools are sent to the model with strict argument schemas (every field required, optional ones
+  nullable, no extra properties). A null for an optional argument means its default. No provider
+  has seen these schemas yet. (`MOD-4`)
+- OpenRouter requests ask for a provider that supports every parameter sent, so a provider without
+  tool calling is not chosen. (`MOD-4`)
+- The live block of `contexer run` shows the plan of the run with the current step marked, the
+  most attempts the run may make, and the coding agent's budget next to its spend. It is drawn
+  while checks are drafted too. The spinner moves. (`DX-4`)
+- `openai`, `pydantic`, `python-dotenv`, `httpx` and `playwright` now have an upper bound at their
+  next major version. (`SEC-9`)
 
 ### Fixed
 
@@ -71,6 +192,12 @@
   the folder back.
 - `contexer test --again` and `--correct` could pick the wrong feature when two were saved within
   the same instant.
+- `[agents.intent] max_steps` and `[agents.triage] max_steps` now apply inside `contexer run`.
+  (`MOD-5`)
+- A second Ctrl+C during `contexer run` no longer interrupts putting the project back. It used to
+  be able to leave the agent's half-done change in the project with no record of the run. Ctrl+C
+  at a question now leaves the question at once. Not tried with a real key press at a real
+  console. (`DX-4`)
 
 ### Security
 
@@ -88,8 +215,8 @@
   GitHub's own renderer. (`SEC-8`)
 - **The HTML report inlines only images from its own run folder.** A result that named another file
   as a screenshot had that file embedded in `report.html`, which is uploaded as an artifact in
-  Actions. The `contexer test` report checks that the file is an image, not yet that it is in the
-  run folder.
+  Actions. Since 2026-11-27 the `contexer test` report makes the same check: it no longer inlines
+  a screenshot from outside its run folder. (`OBS-2`)
 - Issue text: characters that do not render on GitHub (Unicode tag characters, bidi isolates, the
   soft hyphen, private-use and unassigned characters, variation selectors) are removed before an
   issue becomes a goal. Emoji and other scripts are kept. (`SEC-6`)
@@ -110,6 +237,30 @@
 - During `contexer run`, a skill file the coding agent changed, added or deleted is put back and
   the run ends as tampered. (`SEC-9`)
 - A comment counts as Contexer's draft only when it begins with the draft marker. (`SEC-9`)
+- **The issue workflow that `contexer init --issues` writes has two jobs.** The job in which the
+  app and the coding agent run has a token that can only read: it cannot push, comment or open a
+  pull request. It leaves the change as a patch. A second job with the write token, and no model
+  key, runs nothing from the repository: it reads who approved which checks from the issue again,
+  refuses a change that touches `.github/`, a contract other than the approved one, a symbolic
+  link or a submodule, or that adds a secret, then pushes the branch and opens the pull request.
+  New: `contexer issue event --hand-over DIR`, `contexer issue publish DIR`, the `issue/publish`
+  action, and the `hand-over` input of the issue action. Not yet run on GitHub (`REL-8`).
+  (`SEC-10`)
+- Every third-party action in `action.yml`, `issue/action.yml`, the dogfood gate and the workflows
+  `contexer init` writes is named by commit. Action inputs reach the scripts as environment
+  variables. `ci.yml` and `release.yml` are not pinned by commit yet. (`SEC-9`)
+- The status comment on an issue shows its headline and progress lines as plain text: a failure
+  reason or a progress line can no longer close the code fence, mention someone or reference an
+  issue.
+- **The prompt Contexer sends to the coding agent is now masked like the copy it keeps.** A repair
+  prompt quotes the page, so before this an `[auth]` password or a key the app displayed could
+  reach the coding agent. The masker knows the `[auth]` passwords and codes, the key and token
+  variables Contexer knows by name, and OpenAI, OpenRouter and Google key shapes; other secrets a
+  page prints are not recognised. A password that is also an ordinary word is replaced wherever
+  that word stands in the prompt.
+- `~/.contexer/` is created owner-only (mode 0700 on POSIX) whichever file `contexer setup` saves
+  first. Before, saving a model measurement first created it with the default mode. An existing
+  folder is left as it is; on Windows the mode does nothing.
 
 ## 0.6.0 — 2026-11-26
 

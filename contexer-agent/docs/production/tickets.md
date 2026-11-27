@@ -234,6 +234,22 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   then: it takes the run's lock); with more than 30 skill files the
   first 30 by name are read. Not checked: the two POSIX-only tests of the
   file mode had not run anywhere before the pull request.
+- **After it, 2026-11-27, the Actions follow-ups** (pull request 72, no
+  ticket of their own). Third-party actions are pinned by commit, with the
+  version in a comment, in `action.yml`, `issue/action.yml`,
+  `issue/publish/action.yml`, the dogfood gate (`acceptance-gate.yml`) and
+  the templates in `cli/init_cli.py`; no `run:` script there reads
+  `${{ inputs.* }}` or `${{ github.event.* }}`, the inputs arrive through
+  `env:`; `openai`, `pydantic`, `python-dotenv`, `httpx` and `playwright`
+  have an upper bound at their next major version; the status comment's
+  headline and progress lines are made plain (`_plain` from
+  `github/handoff.py`); `[agents.<name>]` is applied in the issue flow.
+  Open: the same pins in `ci.yml` and `release.yml`; the templates still
+  reference this repository's own actions at `@main`; the footer of the
+  status comment is still the caller's own markdown. The folder mode left
+  open above (`save_measurement` creating `~/.contexer` with the default
+  mode) was closed the same day by pull request 79: see the note under
+  `OBS-2`.
 
 ### SEC-10 Build with no write token, push from a second job
 - **Type.** Security, architecture. **Priority.** P1. **Effort.** L.
@@ -252,6 +268,29 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Accept.** The hostile-repository suite passes with the token absent
   from the first job's environment, checked by the job itself.
 - **Tests.** The workflow run on a sandbox repository (REL-8).
+- **Built 2026-11-27.** The issue workflow is two jobs: `build`
+  (`contents: read`, `issues: read`) runs `contexer issue event
+  --hand-over` and uploads the outcome and the change as a patch; `publish`
+  (write token, no model key, no project code) runs `contexer issue
+  publish`, re-reads the approval from the event and the issue, validates
+  the patch from a temporary index (`github/handoff.py: publish_patch`),
+  re-runs the secret scan, commits with `commit-tree` and opens the pull
+  request. The first job refuses to build when the API reports its token
+  can push (`github/api.py: GitHubClient.can_push`). A workflow written
+  before this (one job, `hand-over` unset) behaves as before. Open: **the
+  workflow has not been run on GitHub** (`REL-8`), so the ticket's Accept
+  line (the hostile-repository suite with the token absent) is met only by
+  local tests; the second job shows the first job's report of the checks
+  and cannot replay them; no status comment while the build runs; the
+  first job's check of its own token is a best effort (when the API's
+  answer has no `permissions.push` the build goes on); the draft comment
+  does not neutralise mentions in a model's check descriptions; paths
+  other CI systems read (`.circleci/`, `.gitlab-ci.yml`) are not refused;
+  `ci.yml` and `release.yml` are not pinned by commit yet. Not checked:
+  artifact upload and download between the jobs, `inputs.hand-over` in a
+  composite step's `if:`, the `publish` job's condition after a failed or
+  skipped `build`, the permission API with a read-only token; macOS and
+  Linux for the new git code outside CI.
 
 ---
 
@@ -469,6 +508,20 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   produce for Qwen, Gemma and gpt-oss each run the right tool.
 - **Tests.** One per recorded shape; one that a quoted example in prose is
   not run.
+- **Built 2026-11-27.** One call in a template's tags at the end of a
+  reply, or as the whole reply in JSON or `tool_code`, is run on a model
+  whose record does not vouch for native tool calling
+  (`llm/structured.py: parse_printed_call`, `crew/base.py: _text_call`):
+  off when `native_tools` is true from a catalogue or a measurement, on
+  when it is assumed or false. Only the agent's own tools, never `submit`,
+  never from a reply that was cut off or that carries the untrusted
+  marker. Counted in `AgentResult.text_fallback_calls`, marked
+  `text_fallback` on the transcript's tool line and `text-fallback` in the
+  trace, which closes that item under `OBS-1`; with `CTX-3` it is the first
+  use `crew/base.py` makes of the record of `MOD-1`. Open: the shapes come
+  from documentation, not from recorded server replies (the Accept line
+  asks for recorded ones); JSON after prose is still corrected, not run;
+  `run.json` does not carry the count yet.
 
 ### MOD-4 Strict, flat schemas and strict provider routing
 - **Type.** Model compatibility. **Priority.** P2. **Effort.** S.
@@ -480,6 +533,18 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   `llm/chat.py`.
 - **Accept.** A test walks every tool schema and fails on an optional
   field without a null type.
+- **Built 2026-11-27.** Strict schemas on the wire for every tool and
+  every answer (`crew/base.py: wire_schema`, `llm/structured.py:
+  strict_parameters`; test: `tests/test_tool_schemas.py`), tolerant
+  reading (a null for a field that does not take null is read as left
+  out), and `provider.require_parameters: true` on OpenRouter
+  (`llm/chat.py: chat_model_from`). The tools' own pydantic schemas are
+  unchanged. Open: the `strict` flag of a function is not sent, so no
+  provider is asked to enforce a schema; no live provider has been tried;
+  the effect on output tokens and on weaker models is not measured (a
+  bench run on the release model should be compared with the last one
+  before this ships); whether a refusal by OpenRouter for want of a
+  provider is recognised by `tool_calling_error` is not known.
 
 ### MOD-5 `[agents]` settings reach every agent
 - **Type.** Bug. **Priority.** P1. **Effort.** S.
@@ -496,9 +561,11 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   `max_steps` for intent, tester, challenger, diagnoser); Triage, Intent
   and the Challenger take `max_steps`; a model that cannot be built, a
   provider with no model and an unknown provider are errors at start.
-  Open: `graph/nodes.py` does not pass `max_steps` to Intent and Triage in
-  `contexer run`, so those two settings still do nothing there; the issue
-  flow (`cli/issue_cli.py`) passes no per-agent models.
+  Since 2026-11-27 `graph/nodes.py` passes `max_steps` to Intent and
+  Triage in `contexer run` (pull request 76; test:
+  `test_the_step_caps_the_project_sets_for_intent_and_triage_reach_them`)
+  and the issue flow uses the per-agent models (`cli/issue_cli.py` calls
+  `run_cli.crew_models`, pull request 72). Nothing open.
 
 ---
 
@@ -564,6 +631,22 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   `agents/opencode_agent.py`, `agents/codex_agent.py`.
 - **Accept.** `--max-usd 2` with Codex and no rates stops at start with a
   sentence that says what to set.
+- **Built 2026-11-27.** A dollar limit that cannot be kept is refused at
+  the start of `contexer run`, exit code 2 (`crew/budget.py:
+  unenforceable`): a coding agent that reports no cost (Codex, OpenCode;
+  `reports_cost` in `agents/base.py`) under `max_usd`, whether or not the
+  project sets rates; a model without a known price and no rates under
+  `max_usd` or `[limits] cost_usd`. Unknown cost is a word in the summary
+  and `null` in `--json`; any reached limit ends the run
+  `budget_exhausted` before the next coding turn. The test
+  `test_a_spent_budget_runs_the_loop_on_rules_alone` asserted the opposite
+  and is now `test_a_spent_budget_stops_the_coding_turns_too`. Open:
+  `[agent] budget_usd` with Codex or OpenCode is still only noted, not
+  refused. The issue flow did not make the check in this pull request;
+  `contexer issue build` makes it since pull request 79 the same day (see
+  the note under `OBS-2`). Not checked: the
+  owner's Azure `gpt-5.4` deployment (the refusal is tested with a
+  scripted model that has no price).
 
 ### COST-2 Cached input is used and counted
 - **Type.** Cost. **Priority.** P2. **Effort.** S.
@@ -573,21 +656,41 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Files.** `llm/chat.py`, `crew/base.py`, `crew/budget.py`.
 - **Accept.** A 20-step Tester run on a provider with caching shows cached
   tokens above zero from the second call.
+- **Built 2026-11-27.** Cache markers on the last tool and the system
+  prompt for Anthropic (`llm/chat.py: _anthropic_class`); a `session_id`
+  per model object on OpenRouter; cached tokens read from usage
+  (`crew/base.py: cached_tokens`) into the transcript (`tokens_cached`)
+  and priced at the cached price where the model's record states one.
+  Open: **not measured live**, so the Accept line is not met; the
+  OpenRouter `session_id` field was written from memory of its API and is
+  unverified; a write to the cache is priced as input; the conversation
+  after the system prompt is not marked; the project's rate pair has no
+  cached rate, so with it cached input is priced as input.
 
 ### COST-3 A price per model
 - **Type.** Cost. **Priority.** P2. **Effort.** S. **Depends on.** MOD-1.
 - **Do.** Price each agent's calls from its own model's record. One rate
   pair in `[agents]` stays as an override.
 - **Accept.** A run with two models bills each at its own price.
-- **Not built 2026-11-26.** It needs `crew/base.py` (`Budget.spend` is
-  called with tokens only, without the model) and `graph/nodes.py: _cost`.
-  The record of `MOD-1` has the prices: `capabilities_of(model)
-  .input_usd_per_mtok` and `.output_usd_per_mtok`.
+- **Built 2026-11-27.** Calls are priced from the called model's record
+  when the project sets no rates (`Budget.spend` is told the model by
+  `crew/base.py`); the rate pair overrides for every model; the bill, the
+  trace and the estimate follow. A record with no price, or with only one
+  of the two, leaves the cost unknown. Open: Anthropic's model list states
+  no prices, so Claude models need the rate pair; the per-call `model`
+  line of an agent's transcript still carries the provider's reported cost
+  only (the `end` line and `trace.jsonl` carry the priced figure).
 
 ### COST-4 One budget for `contexer test` too
 - **Type.** Cost. **Priority.** P2. **Effort.** S.
 - **Do.** `contexer test` reads `[agents] max_usd` and the rates.
 - **Files.** `cli/test_cli.py`.
+- **Built 2026-11-27.** `contexer test` uses the same budget as
+  `contexer run` (`cli/run_cli.py: run_budget`) and refuses a dollar limit
+  it cannot keep before any model call. `--max-tokens` still wins for the
+  token limit. Open: its HTML report (`evidence/test_report.py`) still
+  says "not reported by the provider" and does not mark an estimated cost;
+  `contexer test --again` with a dollar limit has no test of its own.
 
 ---
 
@@ -624,6 +727,41 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   emits an event.
 - **Files.** `graph/nodes.py`, `evidence/rundir.py`, `evidence/report.py`.
 - **Accept.** `report.html` shows, per attempt, what was sent.
+- **Built 2026-11-27.** Each prompt to the coding agent is kept masked as
+  `attempt-<n>/prompt.md` (`graph/nodes.py: coder_turn`) and shown per
+  attempt in `report.html`, folded, cut at 60,000 characters; the test
+  report checks that a screenshot is inside its run folder. Open: the
+  lead is kept as part of the repair prompt, not as its own file. Two
+  items the pull request left open were closed the same day (next note):
+  a Diagnoser that fails emitted no event, and the prompt sent to the
+  agent itself was not masked (a made-up token on the page reached the
+  agent in the test, while the kept file had it masked). Not checked: the
+  symlink test for the prompt file is skipped on Windows.
+- **After it, 2026-11-27, five changes with no ticket** (pull request 79).
+  (1) Every prompt sent to the coding agent is masked before it is sent,
+  and the kept file is the text that was sent (`graph/nodes.py:
+  coder_turn`, `controller/prompts.py: masked_for_agent`); a prompt with
+  no secret in it is unchanged. Open: secrets the masker does not
+  recognise (other key shapes, cookies, JWTs, transformed copies); what
+  the coding agent inherits from the environment; a password that is also
+  an ordinary word is replaced wherever that word stands. Not checked: a
+  live run with a real coding agent or a real `[auth]` section. (2)
+  `~/.contexer/` has one creator, `config/user.py: home_dir`, which
+  `llm/capabilities.py: save_measurement` now uses, so the folder is 0700
+  whichever file is saved first. Open: a folder that already exists with a
+  wider mode is not tightened; nothing on Windows. Not checked: the POSIX
+  mode test has only run in CI. (3) `contexer issue build` uses
+  `run_budget` and `crew/budget.py: unenforceable`, so a dollar limit it
+  cannot keep is refused before anything is approved or spent, and it now
+  honours `[agents] max_usd` and the rates. Open: `issue build` has no
+  `--max-usd` flag, though the refusal names one; `issue draft` runs its
+  Intent agent without a budget. (4) `contexer issue draft` gives the
+  Intent agent the issue's comments by people with write access
+  (`cli/issue_cli.py: _discussion`), with the same source, filter and
+  quoting as a run. Open: the Planner's and the Reviewer's other sources
+  (instruction files, intent) are not part of a draft, as designed. (5) A
+  Diagnoser that does not finish emits one `strategy` event
+  (`graph/nodes.py: diagnose_node`). Nothing open.
 
 ### OBS-3 `runs --stats` by model, and as JSON
 - **Type.** Monitoring. **Priority.** P2. **Effort.** S. **Depends on.** OBS-1.
@@ -631,6 +769,12 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   and `--json`: proven rate, attempts, cost per proven run, tool error and
   repair rates.
 - **Files.** `cli/runs_cli.py`, `evidence/test_report.py`.
+- **Built 2026-11-27.** `runs --stats --by model` from each run's
+  `trace.jsonl`, `--json` for the list and the stats, unknown costs kept
+  apart from $0 (the sum is labelled "known" and the runs with an unknown
+  part are counted). A tool call goes to the model its agent last called.
+  Open: no model id in `run.json`; the coding agent's model is not
+  recorded anywhere.
 
 ### OBS-4 Optional OpenTelemetry export
 - **Type.** Monitoring. **Priority.** P3. **Effort.** S. **Depends on.** OBS-1.
@@ -665,6 +809,14 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
   appear in page errors, the server log and the failed steps; then the
   rest, smallest first. Say which files were left out.
 - **Files.** `crew/diagnoser.py`, `crew/reviewer.py`, `checkpoint/shadow.py`.
+- **Built 2026-11-27.** `checkpoint/shadow.py: cut_diff` orders by what
+  failed, then smallest first, whole files, and names what was left out;
+  used by the Diagnoser (12,000 characters), the Reviewer (30,000, with
+  nothing named) and `ShadowRepo.diff`. Open: a file is "named" by its
+  path or file name appearing in the text, so a common name (`index.js`)
+  can match a file that is not the one meant; `contexer test`'s diff
+  (`cli/test_cli.py: _git_diff`) goes through the Diagnoser's cut but not
+  through `ShadowRepo.diff`.
 
 ### CTX-3 Long conversations drop old page snapshots
 - **Type.** Context. **Priority.** P2. **Effort.** M. **Depends on.** MOD-1.
@@ -674,6 +826,16 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Files.** `crew/base.py`.
 - **Accept.** A Tester run on a model with a 32,000-token window finishes
   its steps.
+- **Built 2026-11-27.** Past 60% of the model's window, old tool results
+  longer than 400 characters become a one-line note
+  (`crew/base.py: _drop_old_results`); the last three, the newest result
+  of each tool, corrections and errors are kept; 128,000 tokens are
+  assumed when the window is not known. The transcript still holds every
+  result in full. Open: no protection for a small-window model whose
+  window no catalogue states; no real tokenizer (3 characters per token
+  unless the provider reports usage). Not checked: a run against a real
+  32,000-token model (the Accept test uses a scripted one); whether a
+  model does worse after results are dropped.
 
 ### CTX-4 A cached project summary
 - **Type.** Context. **Priority.** P3. **Effort.** S.
@@ -762,7 +924,9 @@ an agent a person is already using calls Contexer (not built).
   Planner cannot point at `.env` or `.contexer/`; the tool audit lists it.
 - **Tests.** As for the Diagnoser, with a scripted model.
 - **Built 2026-11-26**, without `CTX-5`: the Planner reads the goal, the
-  checks and the project, not tickets or `AGENTS.md`. It is its own node
+  checks and the project; since `CTX-5` (2026-11-27) also the issue's
+  comments, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md` and the stored
+  intent. It is its own node
   (`plan`, between `approve` and the first `coder_turn`), so `graph/routing.py`
   and `graph/state.py` changed too, and `RunSettings.plan` /
   `contexer run --no-plan` turn it off (`BRIEF-2` needs both arms). Open:
@@ -802,6 +966,23 @@ an agent a person is already using calls Contexer (not built).
   a change that breaks it gets a Reviewer note that quotes the line.
 - **Tests.** The injection suite of `tests/test_security.py` extended to
   the three new channels.
+- **Built 2026-11-27.** The three sources, read once per run, quoted and
+  capped (`crew/context_sources.py`), for the Planner and the Reviewer
+  (the Intent agent gets the issue's comments). Comments by people without
+  write access are counted and left out. The instruction files come from
+  the baseline snapshot, not the working tree. Conventions in the brief
+  and `convention` notes are kept only when code finds the quoted line in
+  a file (`stated_in`); a convention note is never `backed` and is lowered
+  from high to medium. The run prints `Context read: ...`. Open: no live
+  run; only three file names at the project's root are read (no nested
+  `AGENTS.md`, no `.cursorrules`, no `.github/copilot-instructions.md`); a
+  line a file does state is passed on whatever it says; the Diagnoser is
+  not given the sources (`contexer issue draft` gives the comments to the
+  Intent agent since pull request 79 the same day); Jira or Linear tickets are not read (GitHub
+  issues only). Not checked: `read_discussion` against the real GitHub
+  API; a resumed run, which reads the sources again; the effect on the
+  brief's quality and on tokens (up to about 30,000 characters more in the
+  Planner's and the Reviewer's first message).
 
 ---
 
@@ -893,6 +1074,33 @@ an agent a person is already using calls Contexer (not built).
 - **Files.** `cli/runview.py`, `cli/term.py`, `cli/runs_cli.py`.
 - **Accept.** Snapshot tests of the view at 80 and 120 columns, with and
   without colour.
+- **Built 2026-11-27** (pull request 74): item 1 in part (the plan with
+  the current step, the attempt and budget ceilings, the block drawn from
+  drafting on) and item 2 (`runs show RUN --diff [--attempt N]`), with
+  snapshot tests at 80 and 120 columns, with and without colour. Open:
+  tokens and context fullness in the footer (not in the events); the cost
+  of Contexer's agents during the run (only in the `end` event); item 3
+  (numbered approval, `e` for the editor), item 4 as a pass over existing
+  errors, item 5 (a second Ctrl+C), item 6 (`--plain`), all in
+  `cli/run_cli.py`. Not checked: the pager and colours of `runs show
+  --diff` and the live block in a real terminal; macOS and Linux.
+- **Built 2026-11-27** (pull request 80): item 3 (numbered approval,
+  `y`/`n`/`e`, no approval from a stray key or without a terminal, the
+  editor started without a shell), item 4 for `contexer run`
+  (`cli/term.py: error`), item 5 in part (a second Ctrl+C cannot interrupt
+  the restore; Ctrl+C leaves a question), item 6 (`run --plain`). A piped
+  `y` no longer approves: without a terminal `--yes` is needed, and it is
+  recorded as not reviewed by a person. Open: Ctrl+C once stopping after
+  the current step (needs `graph/engine.py`); no Ctrl+C way out of a stop
+  that hangs; no editor guessed when `$EDITOR` is unset; an edit with `e`
+  followed by Ctrl+C leaves the edited draft on disk, and `--resume`
+  refuses that run; an edit with `e` is not recorded in the run's
+  `corrections`; `--plain` and the error form for the other commands;
+  tokens and context fullness in the footer (from pull request 74); item 7
+  (`contexer watch`). Not checked: a real terminal on any system (every
+  Ctrl+C in the tests is a signal raised inside the process, on Windows);
+  macOS and Linux; a real editor; `--plain` with a screen reader or in a
+  real CI log.
 
 ### DX-5 Prune old runs
 - **Type.** DX. **Priority.** P2. **Effort.** S.
@@ -925,21 +1133,30 @@ an agent a person is already using calls Contexer (not built).
 - **Files.** `graph/nodes.py`, `controller/shared.py`, `gate/decision.py`.
 - **Evaluate.** A seeded suite: each bug of the gate benchmark introduced
   by a change that satisfies a new contract.
-- **Not built 2026-11-26.** Today nothing is replayed before the first
-  turn, so at attempt 1 a failing earlier check cannot be told apart:
-  broken by this change, or already broken. It needs, in order: a baseline
-  replay of the earlier contracts on the project as found, before the
-  first coding turn, kept in the run state; stale checks left out of the
-  score, the signatures, the repair prompt, the Diagnoser's failures and
-  Triage's findings; a gate that does not fail on a stale check
-  (`gate/decision.py: decide`), while `contexer verify` and the stop hook,
-  which have no baseline, keep today's behaviour; the attempt that broke a
-  check, walked back through `Attempt.reverted_to`; a repair prompt that
-  puts regressions first; "stale" and "regression" in the gate's counts,
-  the report, the terminal view and the pull request body; and the seeded
-  suite. The full list is in the body of pull request 67. **Decision
-  needed from the owner:** how a stale check is shown on a run that
-  passes.
+- **Built 2026-11-27**, except the seeded suite under "Evaluate". A
+  `baseline` node (`graph/nodes.py`, after `plan`, only when there are
+  other approved contracts) replays them before the first turn and keeps
+  the result in the run state. A check that passed there and fails later
+  is a regression: first in the repair prompt, with the attempt that broke
+  it (`graph/nodes.py: _broken_in`), and in the report, the run view,
+  `run.json` and the pull request body. A check that failed there is
+  stale: out of the gate (`gate/decision.py: decide(..., stale=...)`), the
+  score, the signatures, the repair prompt, Triage's findings and the
+  Diagnoser's failures, and shown as not proven everywhere a result is
+  shown. When the baseline could not run (the app does not start, the page
+  does not load, the sign-in fails), every earlier failure counts against
+  the change as before. `contexer verify`, `contexer replay`, the MCP
+  server and the stop hook have no baseline and are unchanged. **Decided
+  by the lead, reversible: a stale check does not fail the run.** Test:
+  `tests/test_graph_regressions.py`. Open: the seeded suite under
+  "Evaluate"; no live measurement (whether a coding agent repairs a
+  regression first when told to); whether a stale check should make the
+  pull request a draft (today it does not); files the app writes during
+  the baseline replay are counted as attempt 1's; a check that fails at
+  the baseline only because it is flaky is stale for the whole run (the
+  baseline is replayed once); the cost of one more replay per run is not
+  measured. Not checked: a stop inside the baseline replay; a sign-in that
+  fails at the baseline.
 
 ### AGT-2 Dependency checker
 - **Type.** New capability. **Priority.** P2. **Effort.** S.
@@ -950,6 +1167,28 @@ an agent a person is already using calls Contexer (not built).
   a medium one. Network access to the registries only.
 - **Model.** None. **Files.** `crew/reviewer.py`, new `crew/dependencies.py`.
 - **Evaluate.** Twenty manifests: ten with a planted name, ten clean.
+- **Built 2026-11-27.** `crew/dependencies.py`: packages added to
+  `package.json`, `requirements*.txt` and `pyproject.toml` are looked up
+  on npm and PyPI (exists, first published, releases); missing is high,
+  under 30 days is medium, and a near-miss of a much used name raises a
+  new package to high. One GET per package with the name in the address,
+  5 seconds, no redirects, at most 20 in a review. Evaluated on twenty
+  manifests in tests with a fake registry (10 planted found, 10 clean
+  quiet). A registry set in the project or for the user means nothing is
+  looked up, and `[review] dependency_lookup = false` turns it off
+  (`config/project.py: ReviewSettings`). Open: no bench suite against live
+  registries; npm's global config, a virtual environment's `pip.conf`,
+  Windows `C:\ProgramData\pip\pip.ini`, Yarn and pnpm settings and a
+  registry given only on a command line are not read, so a project relying
+  on one of them has its added package names sent to the public registry
+  unless the setting is off; other ecosystems (Cargo, Go, Gemfile,
+  Pipfile, `setup.py`); the lookup runs on the event loop (audit L9);
+  `review_node` reads `contexer.toml` as it is after the coding agent's
+  turn, and whether an agent that edits it to switch the lookup off is
+  caught elsewhere was not checked. Not checked: a real private registry
+  (the user-level configuration was tested with temporary homes and
+  made-up values); the real registries were asked once by hand, seven
+  lookups.
 
 ### AGT-3 Scope guard
 - **Type.** New capability. **Priority.** P2. **Effort.** M.
@@ -960,6 +1199,18 @@ an agent a person is already using calls Contexer (not built).
 - **Model.** None. **Files.** `crew/reviewer.py`.
 - **Evaluate.** "Passed for the wrong reason" cases added to the reviewer
   suite.
+- **Built 2026-11-27.** The scan counts removed assertions, confirmations
+  and validations with the removed lines, and one low note lists changed
+  files that the goal, the checks, the Planner's brief and the Diagnoser's
+  leads never named (`crew/reviewer.py: scope_notes`). A removed
+  validation is a medium note: it can cost the one review repair turn and
+  cannot hold a pull request. Four cases added to the reviewer suite, now
+  12 planted and 12 clean (scan: 6/12 flagged, 0 false highs). Open: the
+  model's results page (`bench/reviewer-results/reviewer.md`) is from the
+  20-case suite; the release gate still reads "at most 1 false high in
+  10" beside 12 clean diffs, for the owner to decide; the scope note needs
+  the Planner (none with `--no-plan` or no model); a validation the goal
+  asked to remove is still noted. Not checked: any live model call.
 
 ### AGT-4 Access prober, and an HTTP check
 - **Type.** New capability. **Priority.** P2. **Effort.** L. **Depends on.**

@@ -55,6 +55,14 @@ This covers the dev server's log (in `server.log`, `result.json`, the report
 and every prompt that quotes it), the task each of Contexer's agents is
 given, what their tools return, and their transcripts.
 
+The prompt sent to the coding agent is masked too: the first instruction and
+every repair prompt pass through the same replacement before they are sent,
+and the copy kept in the run folder (`attempt-<n>/prompt.md`) is the text
+that was sent. A repair prompt quotes the page, so this is where an `[auth]`
+password or a key the app displays would otherwise reach the coding agent
+and its provider. A password that is also an ordinary word is replaced
+wherever that word stands in the prompt.
+
 Nothing else is recognised. A secret of your app under another variable name
 (`DATABASE_URL`, `STRIPE_SECRET_KEY`), a key of another shape (AWS, a GitHub
 `ghp_...` token, a JWT), or a value that is encoded or split over lines

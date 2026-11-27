@@ -51,7 +51,7 @@ Set against the code, that is three things to build and one to keep:
 | --- | --- | --- |
 | Instruct like a senior engineer | The first prompt is a template: goal, checks, a file list, rules. Only repairs get a model-written lead | A brief for the first turn: the files that matter, the project's own conventions, the order of work, what not to touch (`BRIEF-1`), measured (`BRIEF-2`) |
 | Connect to any coding agent | Contexer starts the agent headless through three adapters. Nothing lets an agent a person is already using call Contexer | An MCP server (`INT-1`), a hook that refuses "done" while a check fails (`INT-2`), the skill that installs both (`DX-1`) |
-| Take context | The goal, the page, a file list, the diff, the server log. Corrections are remembered | The ticket and its discussion, the project's instruction files, earlier attempts (`CTX-5`, `CTX-1`) |
+| Take context | The goal, the page, a file list, the diff, the server log, the issue's comments, the project's instruction files and the stored intent. Corrections are remembered | Earlier attempts (`CTX-1`) |
 | Work until it is finished | Built: the loop, the budget, stop and resume | Keep; make it hold with a weak model (milestone B) |
 
 These move ahead of the model matrix in the order of work: after
@@ -113,10 +113,13 @@ person. Every milestone ends with a stop for review.
 
 - **Objective.** The issue flow can be pointed at a public repository.
 - **Current state.** Never run against a real issue. `SEC-5` to `SEC-8`
-  were built on 2026-11-26, and four of the seven items of `SEC-9` (open:
-  a release tag in the workflow templates, Actions pinned by commit,
-  Action inputs through `env:`, upper bounds on five dependencies). None
-  of it is in a release yet. Not built: `SEC-10`, `REL-8`.
+  were built on 2026-11-26, and four of the seven items of `SEC-9`. On
+  2026-11-27: Actions pinned by commit, Action inputs through `env:` and
+  upper bounds on five dependencies (open under `SEC-9`: a release tag in
+  the workflow templates, and the same pins in `ci.yml` and
+  `release.yml`), and `SEC-10` (the two-job workflow; it has not been run
+  on GitHub, so its Accept line is met by local tests only). None of it
+  is in a release yet. Not built: `REL-8`.
 - **Required.** `SEC-5` to `SEC-9`, `SEC-10` (two jobs: build with no
   write token, push from a second), `REL-8` (the issue flow run for real).
 - **Depends on.** A.
@@ -134,12 +137,14 @@ person. Every milestone ends with a stop for review.
 
 - **Objective.** Know which models can drive Contexer's agents and say so
   in the tool, from measurement.
-- **Current state.** One model measured. No fallback for a tool call
-  printed as text. Built on 2026-11-26: `MOD-1` (the record exists and
-  `doctor` and `setup` show it; no agent is built from it yet), `MOD-2`,
-  `MOD-5` (open: `max_steps` for Intent and Triage inside `contexer run`),
-  `EVAL-3` (no suite has been re-run with repeats). Not built: `MOD-3`,
-  `MOD-4`, `EVAL-1`, `EVAL-2`.
+- **Current state.** One model measured. Built on 2026-11-26: `MOD-1`
+  (the record exists and `doctor` and `setup` show it; since 2026-11-27
+  the agent loop reads it for the text fallback and the context window),
+  `MOD-2`, `MOD-5`, `EVAL-3` (no suite has been re-run with repeats).
+  Built on 2026-11-27: `MOD-3` (the shapes read are from documentation,
+  not recorded from live servers) and `MOD-4` (the `strict` flag is not
+  sent; no live provider has seen the schemas). Not built: `EVAL-1`,
+  `EVAL-2`.
 - **Required.** `MOD-1` (capability record per model), `MOD-2`
   (validate-and-repair turn), `MOD-3` (tool calls found in text), `MOD-4`
   (strict schemas and `require_parameters`), `MOD-5` (`[agents]` wired
@@ -162,9 +167,9 @@ person. Every milestone ends with a stop for review.
   compare two models or two versions.
 - **Current state.** [audit.md](audit.md) §5.4 and §5.6. Built on
   2026-11-26: `OBS-1` (without `--trace-content` and retries per call) and
-  `CTX-1`. Not built: `COST-3` (the record of `MOD-1` has the prices; the
-  budget is not told which model a call was for), `COST-1`, `COST-2`,
-  `COST-4`, `OBS-2`, `OBS-3`, `OBS-4`, `CTX-2`, `CTX-3`, `CTX-4`.
+  `CTX-1`. Built on 2026-11-27: `COST-1`, `COST-2` (not measured live),
+  `COST-3`, `COST-4`, `OBS-2`, `OBS-3` (no model id in `run.json`),
+  `CTX-2`, `CTX-3`. Not built: `OBS-4`, `CTX-4`.
 - **Required.** `COST-1` (unknown cost is said, not counted as zero),
   `COST-2` (cached tokens and cache markers), `COST-3` (a price per model
   from the provider's catalogue), `COST-4` (the budget covers `contexer
@@ -194,9 +199,10 @@ person. Every milestone ends with a stop for review.
   `DX-1`, `DX-2` (off by default; no real pull request opened with it
   yet), `DX-3`, `DX-5`, `DOC-1`. CI installs the package cleanly and runs
   `contexer demo` on Ubuntu, Windows and macOS; the steps of the guide
-  that need a model key were followed on Windows only. Not built: `DX-4`,
-  `BRIEF-2`, `CTX-5`. The five-minute run by a person has not been timed
-  on any system.
+  that need a model key were followed on Windows only. Built on
+  2026-11-27: `CTX-5` (no live run) and `DX-4`, items 1 to 6 (§6 says
+  what is left of each). Not built: `BRIEF-2`. The five-minute run by a person has not
+  been timed on any system.
 - **Required.** `DX-1` (a skill and a command for Claude Code, Codex and
   OpenCode that calls `contexer verify` and reads what failed), `DX-2`
   (screenshots of each check in the pull request), `DX-3` (clean installs
@@ -217,9 +223,12 @@ person. Every milestone ends with a stop for review.
 
 - **Objective.** Add only what code can prove.
 - **Current state.** [readiness.md](../agentic/readiness.md) §5 chose four.
-  None is built. `AGT-1` was looked at on 2026-11-26 and left: it needs a
-  baseline replay before the first turn and a decision by the owner on how
-  a stale check is shown ([tickets.md](tickets.md)).
+  Built on 2026-11-27: `AGT-1`, except its seeded suite (decided by the
+  lead, reversible: a check that was already failing before the run does
+  not fail it; [tickets.md](tickets.md)), `AGT-2` (tested against a fake
+  registry; no bench suite against live registries) and `AGT-3` (the
+  model's results page is still from the 20-case suite). Not built:
+  `AGT-4`.
 - **Required.** `AGT-1` (regression guard as its own finding), `AGT-2`
   (dependency checker), `AGT-3` (scope guard), `AGT-4` (access prober, and
   with it an HTTP check).
@@ -281,7 +290,8 @@ parallel with `MOD-1` and `MOD-2`; then `EVAL-1` and `EVAL-2`.
 8. ~~`DOC-1`~~: built on 2026-11-26.
 
 **Blocks the issue flow only** (ship the beta with it off): ~~`SEC-3`~~,
-~~`SEC-6`~~ (built on 2026-11-26), `SEC-10`, `REL-8`.
+~~`SEC-6`~~ (built on 2026-11-26), `SEC-10` (built on 2026-11-27; the
+two-job workflow has not been run on GitHub), `REL-8`.
 
 **Not a blocker.** Everything in D, E and G; the run view; OpenTelemetry;
 a second coding agent live. They are P1 or P2.
@@ -335,11 +345,22 @@ So, in this order (`DX-4`):
 3. Approval: the checks as a numbered list; `e` opens the contract in the
    editor; a typed sentence is a correction. One key each, shown.
 4. Errors: one sentence, what Contexer did about it, the next command.
-5. Ctrl+C once stops after the current step and says how to resume; twice
-   stops now. Both restore.
+5. Ctrl+C stops the agent at once, puts the project back and says how to
+   resume; a second press cannot interrupt that. (The plan was: once stops
+   after the current step, twice stops now. A stop that lets the current
+   step finish is not built.)
 6. `--json` stays the contract for tools; `--plain` for CI with no redraw.
 7. `contexer watch RUN`, a full-screen view reading the same events, only
    after the above, and never the default.
+
+Built on 2026-11-27 (`DX-4`): item 1 in part (the plan with the current
+step marked, the most attempts a run may make, the coding agent's budget
+next to its spend; not the tokens or how full the model's context is),
+item 2 (`contexer runs show RUN --diff [--attempt N]`), item 3 (the keys
+need Enter; without a terminal nothing is approved), item 4 for `contexer
+run` only, item 5 as it now reads, and item 6 (`--plain` on `run` only).
+Item 7 is not built. None of it has been tried in a real terminal on
+macOS or Linux.
 
 Accessibility: no meaning carried by colour alone (marks are already
 words and symbols), `NO_COLOR` honoured, nothing that needs a mouse.
@@ -394,6 +415,10 @@ A release is cut only when all hold on its commit:
 | False success | 0 runs in any suite end `succeeded` without a gate pass | All suites |
 | Clean install | First proven check in 5 minutes on three systems | `DX-3` |
 
+The reviewer suite has 12 clean diffs since 2026-11-27 (`AGT-3`); the
+threshold "at most 1 false high in 10" was set when it had 10 and is
+unchanged, for the owner to decide.
+
 "No worse" means that `--compare` against the last release's report does
 not say `lower` for a rate that should be high, or `higher` for false
 alarms (`EVAL-3`). The release workflow checks the first two rows by
@@ -429,6 +454,13 @@ On 2026-11-26: for 2, `SEC-1` to `SEC-4` are in the release 0.6.0, and
 package and runs `contexer demo` on three systems, and the steps that
 need a model key were followed on Windows only; 6 is written
 ([data-and-limits.md](../data-and-limits.md)).
+
+On 2026-11-27: for 2, the issue workflow builds with a token that can
+only read and pushes from a second job (`SEC-10`), on `main`, not
+released and not yet run on GitHub; for 1, a check that was already
+failing before a run no longer fails that run and is listed as not proven
+(`AGT-1`), so "succeeded" now means the gate passed on every check that
+was not already failing.
 
 ---
 
