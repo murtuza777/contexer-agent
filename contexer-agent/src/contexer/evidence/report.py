@@ -51,6 +51,7 @@ def render_report(result: RunResult) -> str:
     sections = [
         _header(result, project),
         _reasons(result),
+        _earlier_section(result),
         _agent_run_section(result),
         *(_contract_section(o, result.run_dir) for o in _ordered(result.contracts)),
         _load_section(result),
@@ -86,6 +87,8 @@ def _header(result: RunResult, project: str) -> str:
         ("Unverified", d.unverified, "warn"),
         ("Advisory", d.advisory, "muted"),
     ]
+    if d.stale:  # a pass beside these is not a clean pass, so the header says it too
+        stats.append(("Already failing before", len(d.stale), "warn"))
     stat_html = "".join(
         f'<div class="stat stat-{cls}"><span class="num">{n}</span><span class="lbl">{label}</span></div>'
         for label, n, cls in stats
@@ -121,6 +124,34 @@ def _reasons(result: RunResult) -> str:
     items = "".join(f"<li>{_e(r)}</li>" for r in reasons[:30])
     more = f"<li class='muted'>… and {len(reasons) - 30} more</li>" if len(reasons) > 30 else ""
     return f'<section class="card reasons"><h2>Why</h2><ul>{items}{more}</ul></section>'
+
+
+def _earlier_section(result: RunResult) -> str:
+    """Earlier approved checks that fail in this state: the ones the run broke, and the ones that failed before it."""
+    d = result.decision
+    described = {f"{o.contract.id}/{c.id}": c.description for o in result.contracts for c in o.contract.criteria}
+
+    def item(label: str, tail: str = "") -> str:
+        return f"<li>{_e(described.get(label, label))} <code>{_e(label)}</code>{_e(tail)}</li>"
+
+    parts: list[str] = []
+    if d.regressions:
+        items = "".join(item(label, f", broken in attempt {n}") for label, n in d.regressions.items())
+        parts.append(f"<p><strong>Regressions.</strong> These passed before this change and fail now:</p><ul>{items}</ul>")
+    if d.stale:
+        items = "".join(item(label) for label in d.stale)
+        parts.append(
+            "<p><strong>Not proven.</strong> These were already failing before this change. They did not count "
+            f"toward the verdict, and nobody was asked to repair them:</p><ul>{items}</ul>"
+        )
+    if result.agent_run is not None and result.agent_run.baseline_ran is False:
+        parts.append(
+            "<p class='muted'>The earlier checks could not be replayed before the first turn, so nothing says which "
+            "of them were already failing. Every earlier check that fails counts against this change.</p>"
+        )
+    if not parts:
+        return ""
+    return f'<section class="card reasons"><h2>Earlier behaviours</h2>{"".join(parts)}</section>'
 
 
 def _contract_section(outcome: ContractOutcome, run_dir: str = "") -> str:

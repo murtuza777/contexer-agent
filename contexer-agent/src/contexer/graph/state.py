@@ -55,6 +55,12 @@ class LoopState(_Always, total=False):
     planned: str
     brief: str
 
+    # -- the earlier contracts, before the first turn ---------------------------------------
+    # The replay of the other approved contracts on the project as it was found: whether it ran, and the
+    # checks ("contract/check") that passed and that failed then. Absent until it was taken; taken once.
+    # A check that passed here and fails after an attempt is a regression; one that failed here is stale.
+    baseline: dict[str, Any]
+
     # -- the attempts ---------------------------------------------------------------------
     attempts: list[dict[str, Any]]
     best: int | None

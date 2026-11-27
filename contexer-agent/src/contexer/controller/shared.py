@@ -38,6 +38,7 @@ def write_run_evidence(project: Path, outcome: RunOutcome, run: RunDir) -> None:
         intent_id=outcome.intent_id,
         corrections=list(outcome.corrections),
         review=[ReviewRow(**note.model_dump(exclude={"evidence"})) for note in outcome.review],
+        baseline_ran=outcome.baseline["ran"] if outcome.baseline else None,
         attempts=[
             AttemptRow(
                 n=a.n,
@@ -129,14 +130,18 @@ class ContractGuard:
 
 
 def score(result: RunResult, target_id: str) -> int:
-    """Verified target checks, minus double for every broken regression check."""
+    """Verified target checks, minus double for every broken regression check.
+
+    A check that was already failing before the run (``decision.stale``) costs nothing: the change did not break it.
+    """
     if result.decision.outcome == "error":
         return -(10**6)
     total = 0
+    stale = set(result.decision.stale)
     for outcome in result.contracts:
         is_target = outcome.contract.id == target_id
         for r in outcome.verification.criteria_results if outcome.verification else []:
-            if not r.proven:
+            if not r.proven or f"{outcome.contract.id}/{r.criterion_id}" in stale:
                 continue
             if r.verdict == "verified":
                 total += 1 if is_target else 0
@@ -146,10 +151,12 @@ def score(result: RunResult, target_id: str) -> int:
 
 
 def signatures(result: RunResult) -> set[str]:
+    """One signature per check that failed and counts against the change; a stale check is not among them."""
     sigs: set[str] = set()
+    stale = set(result.decision.stale)
     for outcome in result.contracts:
         for r in outcome.verification.criteria_results if outcome.verification else []:
-            if not r.proven or r.verdict == "verified":
+            if not r.proven or r.verdict == "verified" or f"{outcome.contract.id}/{r.criterion_id}" in stale:
                 continue
             check = r.check_result
             evidence = ""

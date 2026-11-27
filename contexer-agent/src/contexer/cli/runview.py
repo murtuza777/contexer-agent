@@ -162,9 +162,13 @@ class RunView:
         if unchecked:
             parts.append(f"{unchecked} could not be checked")
         broke = int(data.get("others_failing") or 0)
+        # Earlier checks that failed before the run began: not counted, and said on every verdict, a pass too.
+        stale = int(data.get("stale") or 0)
         if broke:
             parts.append(f"[red]{broke} earlier check{'' if broke == 1 else 's'} broke[/]")
-        elif self.earlier_checks:
+        if stale:
+            parts.append(f"[yellow]{stale} earlier check{' was' if stale == 1 else 's were'} already failing before this change[/]")
+        if not broke and not stale and self.earlier_checks:
             parts.append(f"{self.earlier_checks} earlier checks still pass")
         style = "green" if passed else "red" if (failed or broke) else "yellow"
         self._line(f"  {term.mark('pass' if passed else 'fail' if (failed or broke) else 'open')} [{style}]{parts[0]}[/]" + "".join(f" [dim]·[/] {p}" for p in parts[1:]))
@@ -182,6 +186,8 @@ class RunView:
             self.console.print(Padding(table, (0, 0, 0, 6), expand=False), highlight=False)
         if len(wrong) > MAX_FAILED_LINES:
             self._line(f"      [dim]and {len(wrong) - MAX_FAILED_LINES} more; all of them are in the report[/]")
+        for found in list(data.get("regressions") or [])[:MAX_FAILED_LINES]:
+            self._line(f"      {term.mark('fail')} Regression: {escape(str(found.get('check')))}, broken in attempt {found.get('attempt')}")
 
     def _local(self, text: str) -> str:
         for root in self._roots:

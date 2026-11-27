@@ -38,6 +38,11 @@ class GateDecision(BaseModel):
     unverified: int = 0
     # Judged or heuristic results that did not count toward the outcome.
     advisory: int = 0
+    # Checks of earlier contracts ("contract/check") that already failed before the run and fail now. They did
+    # not count toward the outcome, and they are not proven. Only a run has a baseline to know this from.
+    stale: list[str] = Field(default_factory=list)
+    # Checks of earlier contracts that passed before the run and fail now -> the attempt that broke them.
+    regressions: dict[str, int] = Field(default_factory=dict)
 
     @property
     def exit_code(self) -> int:
@@ -53,7 +58,19 @@ class GateDecision(BaseModel):
         counts = f"{self.verified} verified, {self.refuted} refuted, {self.unverified} unverified"
         if self.advisory:
             counts += f", {self.advisory} advisory"
+        if self.stale:
+            counts += f", {len(self.stale)} already failing before"
         return f"{label}: {counts}"
+
+    def stale_line(self) -> str:
+        """One sentence for the checks that were failing before the run, or '' when there are none."""
+        if not self.stale:
+            return ""
+        one = len(self.stale) == 1
+        return (
+            f"{len(self.stale)} earlier check{' was' if one else 's were'} already failing before this change "
+            f"and {'is' if one else 'are'} not proven: {', '.join(self.stale)}."
+        )
 
 
 class AttemptRow(BaseModel):
@@ -123,6 +140,8 @@ class AgentRunSummary(BaseModel):
     intent_id: str = ""
     corrections: list[str] = Field(default_factory=list)
     review: list[ReviewRow] = Field(default_factory=list)
+    # Whether the earlier contracts were replayed before the first turn. None: there were none to replay.
+    baseline_ran: bool | None = None
 
 
 class RunResult(BaseModel):

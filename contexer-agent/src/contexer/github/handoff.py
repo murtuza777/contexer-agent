@@ -44,6 +44,7 @@ from contexer.procutil import REPOSITORY_TOKENS
 
 if TYPE_CHECKING:
     from contexer.controller.models import RunOutcome
+    from contexer.gate.models import RunResult
     from contexer.intent.store import IntentSpec
 
 PROJECT_URL = "https://github.com/murtuza777/contexer-agent"
@@ -496,7 +497,15 @@ def pull_request_body(
     decision = final.decision if final is not None else None
     lines: list[str] = []
     if outcome.terminal == "succeeded" and decision is not None:
-        lines.append(f"✅ **All {decision.verified} checks proven in a real browser.**")
+        if decision.stale:
+            # Never "all": an earlier approved check was failing before the run, and still is.
+            lines += [
+                f"✅ **{decision.verified} checks proven in a real browser.**",
+                "",
+                f"⚠️ {_md(decision.stale_line())} See \"Already failing before this change\" below.",
+            ]
+        else:
+            lines.append(f"✅ **All {decision.verified} checks proven in a real browser.**")
         if holds_pull_request(outcome.review):
             lines += [
                 "",
@@ -551,6 +560,7 @@ def pull_request_body(
             f"{held} of {total} checks from {len(others)} earlier approved contract(s) still pass.",
             "",
         ]
+    lines += _earlier_lines(final)
 
     lines += _attempt_lines(outcome)
     lines += _review_lines(outcome)
@@ -579,6 +589,32 @@ def pull_request_body(
         "in Chromium against the app as changed here, and the contract's checks replay on later pull requests.",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _earlier_lines(final: RunResult | None) -> list[str]:
+    """Earlier approved checks that fail in the state handed over: what the run broke, and what failed before it."""
+    if final is None:
+        return []
+    described = {f"{o.contract.id}/{c.id}": c.description for o in final.contracts for c in o.contract.criteria}
+    lines: list[str] = []
+    if final.decision.regressions:
+        lines += ["### Regressions", "", "These earlier approved checks passed before this change and fail now:", ""]
+        lines += [
+            f"- ❌ {_md(described.get(label, label))} (`{_code(label)}`), broken in attempt {n}"
+            for label, n in final.decision.regressions.items()
+        ]
+        lines.append("")
+    if final.decision.stale:
+        lines += [
+            "### Already failing before this change",
+            "",
+            "These earlier approved checks were already failing before this change. They did not count toward the "
+            "result above, nobody was asked to repair them, and they are not proven:",
+            "",
+        ]
+        lines += [f"- ❔ {_md(described.get(label, label))} (`{_code(label)}`)" for label in final.decision.stale]
+        lines.append("")
+    return lines
 
 
 def _screenshot_lines(screens: Screenshots) -> list[str]:

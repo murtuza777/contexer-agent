@@ -263,7 +263,7 @@ async def test_a_run_with_no_other_contract_replays_nothing_before_the_first_tur
 
     assert outcome.terminal == "succeeded", outcome.reason
     assert not [m for m in events if BEFORE_FIRST_TURN in m]
-    assert len(replayed) == 7  # the contract's checks once, and nothing else
+    assert len(replayed) == 1  # the runner ran once, for the contract's checks after the attempt, and never before it
     assert _saved(outcome)["baseline"] is None and outcome.stale == [] and outcome.regressions == {}
 
 

@@ -469,6 +469,25 @@ stateDiagram-v2
     Succeeded --> [*]
 ```
 
+Before the first turn, when there are other approved contracts
+(`graph/nodes.py: baseline`): their checks are replayed once on the project as
+it was found, in `runs/<run>/baseline/`. The run keeps which passed and which
+failed. A check that passed there and fails after an attempt is a
+**regression**: it is named first in the repair prompt, with the attempt that
+broke it (`_broken_in`), and in the report, the run view and the pull
+request. A check that already failed there is **stale**: it does not fail the
+gate (`gate/decision.py: decide(stale=...)`), costs nothing in the score, has
+no signature and is not sent to the coding agent, Triage or the Diagnoser. It
+is listed as not proven on every verdict, in `run.json`, the report and the
+pull request, and the run's last line says how many there are. If the app
+does not start or load for that replay there is no baseline: every earlier
+check that fails counts against the change, as before. No model takes part.
+`contexer verify`, `contexer replay`, the MCP server and the stop hook have no
+baseline, so a failing approved check fails there. Limits: a check that was
+stale at the baseline and is broken again later in the run stays stale; and
+files the app writes during the replay are in the first attempt's changed
+files.
+
 Per attempt *n*:
 
 1. **Agent turn**: implement (attempt 1) or repair, with the remaining budget
@@ -585,8 +604,9 @@ intent → approve → coder_turn → guard_snapshot → ensure_app → test →
                         └────────────── diagnose ◄──────────────────────┘
 ```
 
-Before the first turn, `approve` leads to `plan` and `plan` to `coder_turn`.
-Checks approved again after work began go from `approve` straight to
+Before the first turn, `approve` leads to `plan` and `plan` to `coder_turn`;
+when there are other approved contracts and no baseline yet, `plan` leads to
+`baseline` first. Checks approved again after work began go from `approve` straight to
 `coder_turn`.
 
 | Node | Does | Asks a model |
@@ -594,6 +614,7 @@ Checks approved again after work began go from `approve` straight to
 | `intent` | Starts the app and reads what the page shows, then drafts checks from the goal, or redrafts them for a correction; saves the intent and an unapproved contract | The Intent agent, when a model is configured |
 | `approve` | Waits for a person (`interrupt`) unless the contract is approved at the hash the state holds | No |
 | `plan` | Before the first turn only: reads the project and adds a brief after the first instruction. Does nothing with no model, a spent budget or `--no-plan` | The Planner, when a model is configured |
+| `baseline` | Once, before the first turn, when there are other approved contracts: replays their checks on the project as found and keeps which passed and which failed. A run resumed after it does not replay them again | No |
 | `coder_turn` | One turn of the coding agent; before it, the wall-clock and budget limits | No |
 | `guard_snapshot` | Restores the files that define done if the agent touched them (`tampered`), snapshots the work | No |
 | `ensure_app` | Starts or refreshes the app | No |
