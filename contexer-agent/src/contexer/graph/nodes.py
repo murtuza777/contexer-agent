@@ -665,6 +665,8 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 secrets=ctx.secrets(),
             )
             updates["agents"] = _used(state, "diagnoser", found.steps, found.tokens_in, found.tokens_out, _cost(ctx, found))
+            if found.status != "ok":
+                ctx.event("strategy", f"The Diagnoser did not finish ({found.error or found.status}); the repair prompt holds what the browser saw, without a cause.")
             section = brief_section(found.brief)
             if section and found.brief is not None:
                 prompt += "\n\n" + section
