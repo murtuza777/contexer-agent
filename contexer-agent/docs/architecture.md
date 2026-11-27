@@ -905,8 +905,9 @@ models built from the same catalog:
   it with one read of the model list and no model request. `contexer
   doctor` prints every row with its source, `contexer setup` prints it
   after saving, and `build_model` keeps it so `capabilities_of(model)`
-  returns it for the chat model an agent runs on. Nothing in `crew/base.py`
-  reads it yet.
+  returns it for the chat model an agent runs on. `crew/base.py` reads two
+  facts from it: native tool calling (whether a call returned as text is
+  run) and the context window (when old tool results are dropped).
 - `supports_tools(provider, model)`: True, False or None (nobody says),
   taken from that record.
 - A model that cannot call tools gives a `ToolCallingError` that names it:
@@ -936,6 +937,18 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
   tool runs. A call that does not fit gets the problem and the tool's
   required fields as its result. The next call of that tool that runs
   without an error is counted in `AgentResult.repaired_calls`.
+- A tool call a server returned as text (`_text_call`,
+  `llm/structured.py: parse_printed_call`) is run as that call when the
+  model's record does not say, from a catalogue or a measurement, that it
+  calls tools natively. The text must be exactly one call of one of the
+  agent's own tools: a Hermes `<tool_call>` block, a `<function=name>` block
+  or a Harmony `to=functions.name` message that ends the reply, or bare
+  JSON, a fenced JSON block or a Gemma `tool_code` block that is the whole
+  reply. It then passes the same limits, schema check and masking as any
+  call, and is counted in `AgentResult.text_fallback_calls`. `submit` is
+  never read from text this way, nor is a reply that was cut off or that
+  carries the `<untrusted>` marker. Anything else that looks like a call is
+  sent back with a correction, as before.
 - `AgentResult.status`: `ok`, `step_limit`, `timeout`, `invalid_output`,
   `model_error`. It also carries the steps (model calls), tool calls, tokens
   in and out, the duration, and the cost when the provider reports one
@@ -947,7 +960,8 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 `runs/<run-id>/agents/<name>.jsonl`. A `start` line (model, input, tools,
 limits), then one `model` line per model call (step, seconds, tokens in and
 out, cost, text, tool calls, or the error) and one `tool` line per tool call
-(name, arguments, status, whether it was a repaired call, result, seconds),
+(name, arguments, status, whether it was a repaired call, whether it was
+read from text, result, seconds),
 then an `end` line (status, totals, the output).
 
 **Trace** (`crew/transcript.py: Trace`): `runs/<run-id>/trace.jsonl` is one
@@ -956,8 +970,8 @@ semantic conventions it follows. The engine writes every run event as the
 line `--json` prints (`graph/engine.py: _context`). Every agent writes one
 `model` line per model call (agent, provider, requested and answering model,
 tokens in, out and read from cache, finish reason, seconds, cost and whether
-it is an estimate) and one `tool` line per tool call (name, `ok`, `repaired`
-or `failed`, seconds), under `gen_ai.*` names, with `contexer.*` for what the
+it is an estimate) and one `tool` line per tool call (name, `ok`, `repaired`,
+`text-fallback` or `failed`, seconds), under `gen_ai.*` names, with `contexer.*` for what the
 conventions do not name. It holds no prompt, reply, tool argument or tool
 result; those are in the agent's transcript under the same agent and step.
 Every line is masked. `run.json` gets each agent's count of repaired calls

@@ -11,6 +11,13 @@ provider has. A model that writes the answer as JSON text instead is accepted
 too, but only when the text is the answer: JSON with none of the answer's
 fields, or a tool call written out as text, is sent back.
 
+One exception to that last part: some local servers hand a model's tool call
+back as the reply's text. On a model nothing vouches for (its record does not
+say, from a catalogue or a measurement, that it calls tools natively), a reply
+whose text is exactly one call of one of the agent's own tools is run as that
+call and counted (``text_fallback_calls``). ``submit`` is never taken this way,
+and neither is a reply that carries the marker of text from the app.
+
 A mistake in a reply (an answer that does not fit, a tool call whose arguments
 are not JSON, talk where a call was expected) is answered with a correction.
 ``MAX_CORRECTIONS`` of them in a row are allowed; a reply without a mistake
@@ -33,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -49,9 +57,10 @@ from pydantic import BaseModel, ValidationError
 from contexer.crew.budget import Budget
 from contexer.crew.transcript import Masker, Trace, Transcript, tracing_callbacks
 from contexer.crew.untrusted import UNTRUSTED_RULE
+from contexer.llm.capabilities import capabilities_of
 from contexer.llm.catalog import PROVIDERS, is_azure
 from contexer.llm.chat import clean_error, describe_model, tool_calling_error
-from contexer.llm.structured import parse_json_object
+from contexer.llm.structured import CALL_ARGUMENT_KEYS, parse_json_object, parse_printed_call
 
 AgentStatus = Literal["ok", "step_limit", "timeout", "invalid_output", "model_error", "budget_exhausted"]
 
@@ -60,8 +69,9 @@ SUBMIT_TOOL = "submit"
 MAX_CORRECTIONS = 2
 # What a provider reports as the reason a reply ended when it hit the output limit.
 _CUT_OFF = frozenset({"length", "max_tokens"})
-# Keys a model uses when it writes a tool call as text instead of calling the tool.
-_CALL_ARGUMENT_KEYS = ("arguments", "args", "parameters", "input", "tool_input")
+# The marker around text from the app under test (``crew/untrusted.py``). A reply that carries one is
+# repeating a page, and no call is read out of it.
+_UNTRUSTED_MARKER = re.compile(r"[<\[]\s*/?\s*untrusted\b", re.IGNORECASE)
 # A tool result longer than this is cut before it goes back to the model.
 MAX_TOOL_RESULT_CHARS = 20_000
 # Tool calls run from one reply. A model that sends hundreds gets an error for the rest.
@@ -102,6 +112,9 @@ class AgentResult:
     # Tool calls that ran without an error right after a call of the same tool was refused for its
     # arguments (not JSON, or not fitting the tool's schema).
     repaired_calls: int = 0
+    # Tool calls the server returned as text that were run as calls (only on a model not known to call
+    # tools natively).
+    text_fallback_calls: int = 0
     # agents/<name>.jsonl in the run folder; None when there is no run folder.
     transcript: Path | None = None
     messages: list[BaseMessage] = field(default_factory=list, repr=False)
@@ -162,6 +175,7 @@ async def run_agent(
         seconds=round(result.duration_seconds, 3),
         corrections=result.corrections,
         repaired_calls=result.repaired_calls,
+        text_fallback_calls=result.text_fallback_calls,
         error=result.error,
         output=result.output.model_dump(mode="json") if result.output is not None else None,
     )
@@ -210,6 +224,10 @@ class _Run:
         self._cut_off = False
         # Tools whose last call was refused for its arguments. The next call that runs is a repaired one.
         self._refused: set[str] = set()
+        # A call written as text is run only when nothing says this model calls tools natively: on a model
+        # the provider's list or a measurement vouches for, text that looks like a call is a mistake.
+        native = capabilities_of(model).native_tools
+        self._reads_text_calls = not (native.value and native.source != "assumed")
 
     async def loop(self, user_input: str) -> None:
         spec, result = self.spec, self.result
@@ -283,8 +301,15 @@ class _Run:
         return done
 
     async def _act(self, reply: AIMessage) -> bool:
+        from_text = False
         if not reply.tool_calls and not reply.invalid_tool_calls:
-            return self._text(reply)
+            called = self._text_call(reply)
+            if called is None:
+                return self._text(reply)
+            # The conversation now holds the call the way a server that had read it would have sent it,
+            # so its result can go back under an id.
+            reply = self.messages[-1] = called
+            from_text = True
         done = False
         ran = 0
         for call in reply.tool_calls:
@@ -311,6 +336,7 @@ class _Run:
                 continue
             ran += 1
             self.result.tool_calls += 1
+            self.result.text_fallback_calls += from_text
             called = time.monotonic()
             name = call["name"]
             tool = self.tools.get(name)
@@ -335,10 +361,12 @@ class _Run:
                 args=call["args"],
                 status=status,
                 repaired=repaired,
+                text_fallback=from_text,
                 result=content,
                 seconds=_elapsed(called),
             )
-            outcome = "repaired" if repaired else "ok" if status == "success" else "failed"
+            # One status per call: a failure and a repair are said before where the call came from.
+            outcome = "failed" if status != "success" else "repaired" if repaired else "text-fallback" if from_text else "ok"
             self._trace_tool(name, outcome, _elapsed(called))
             self.messages.append(ToolMessage(content, tool_call_id=call_id, name=call["name"], status=status))
         # A call whose arguments could not be read still needs a result under its id: the next request is
@@ -358,6 +386,27 @@ class _Run:
             if self._mistake(problem):
                 return True
         return done
+
+    def _text_call(self, reply: AIMessage) -> AIMessage | None:
+        """``reply`` with the tool call its text is, when the server returned a call as text; else None.
+
+        Only a call to one of the agent's own tools: the answer is never handed in this way. The call then
+        goes through everything a native call does (the limits, the schema check, the masking).
+        """
+        text = str(reply.text)
+        if not self._reads_text_calls or self._cut_off or _UNTRUSTED_MARKER.search(text):
+            return None
+        found = parse_printed_call(text)
+        if found is None or found[0] not in self.tools:
+            return None
+        name, args = found
+        return AIMessage(
+            content="",
+            tool_calls=[{"name": name, "args": args, "id": f"text_call_{self.result.steps}", "type": "tool_call"}],
+            usage_metadata=reply.usage_metadata,
+            response_metadata=reply.response_metadata,
+            id=reply.id,
+        )
 
     def _text(self, reply: AIMessage) -> bool:
         """A reply with no tool call: the answer as JSON text, or something to send back."""
@@ -504,7 +553,7 @@ class _Run:
         self.trace.call("model", **line)
 
     def _trace_tool(self, name: str, status: str, seconds: float) -> None:
-        """One tool call in the run's trace: ``ok``, ``repaired`` or ``failed``. No arguments, no result."""
+        """One tool call in the run's trace: ``ok``, ``repaired``, ``text-fallback`` or ``failed``. No arguments, no result."""
         self.trace.call(
             "tool",
             **{
@@ -614,7 +663,7 @@ def _printed_call(data: dict[str, Any]) -> str:
         name = function.get("name")
         return name if isinstance(name, str) and name else ""
     name = function if isinstance(function, str) else data.get("name") or data.get("tool") or data.get("tool_name")
-    if isinstance(name, str) and name and any(key in data for key in _CALL_ARGUMENT_KEYS):
+    if isinstance(name, str) and name and any(key in data for key in CALL_ARGUMENT_KEYS):
         return name
     return ""
 
