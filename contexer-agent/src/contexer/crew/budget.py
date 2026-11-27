@@ -6,12 +6,14 @@ model can use all of them. The budget counts what the whole run has spent
 and ``run_agent`` asks it before every model call.
 
 Tokens are always counted. Cost is counted when the provider reports a price
-per call, or when the project gives the rates (``[agents]
-input_usd_per_mtok`` / ``output_usd_per_mtok``): then a call the provider
-did not price is priced from its tokens, and the total is marked as an
-estimate. With neither, cost stays unknown and a cost limit never triggers,
-which is why the token limit is the one with a default, and why a command
-refuses a dollar limit it could not keep (``unenforceable``) before it starts.
+per call. A call it did not price is priced from its tokens, and the total
+is then marked as an estimate: at the rates the project gives (``[agents]
+input_usd_per_mtok`` / ``output_usd_per_mtok``), which apply to every model,
+else at the prices in the record of the model that was called
+(``llm/capabilities.py``), so two models are each billed at their own. With
+none of these, cost stays unknown and a cost limit never triggers, which is
+why the token limit is the one with a default, and why a command refuses a
+dollar limit it could not keep (``unenforceable``) before it starts.
 
 ``max_total_usd`` is one budget for everything: Contexer's agents and the
 coding agent. The engine tells the budget what the coding agent has spent
@@ -61,25 +63,42 @@ class Budget:
     def tokens(self) -> int:
         return self.tokens_in + self.tokens_out
 
-    def price(self, tokens_in: int, tokens_out: int) -> float | None:
-        """What these tokens cost at the configured rates, or None when no rates are configured."""
-        if self.input_usd_per_mtok is None and self.output_usd_per_mtok is None:
+    def _rates(self, model: Any) -> tuple[float, float] | None:
+        """US dollars per million tokens in and out for a call to ``model``, or None when nobody says.
+
+        The project's rates are an override and apply to every model. Without them the model's own
+        record is asked, and only a record that states both prices counts: half a price is no price.
+        """
+        if self.input_usd_per_mtok is not None or self.output_usd_per_mtok is not None:
+            return self.input_usd_per_mtok or 0.0, self.output_usd_per_mtok or 0.0
+        if model is None:
             return None
-        return (max(0, tokens_in) * (self.input_usd_per_mtok or 0.0) + max(0, tokens_out) * (self.output_usd_per_mtok or 0.0)) / 1_000_000
+        record = capabilities_of(model)
+        listed_in, listed_out = record.input_usd_per_mtok.value, record.output_usd_per_mtok.value
+        return None if listed_in is None or listed_out is None else (listed_in, listed_out)
 
-    def cost_of(self, tokens_in: int, tokens_out: int, reported: float | None) -> float | None:
-        """The cost to record for a call: what the provider reported, else the price at the configured rates."""
-        return reported if reported is not None else self.price(tokens_in, tokens_out)
+    def price(self, tokens_in: int, tokens_out: int, model: Any = None) -> float | None:
+        """What these tokens cost at the project's rates, else at the prices of ``model``; None when neither is known."""
+        rates = self._rates(model)
+        if rates is None:
+            return None
+        return (max(0, tokens_in) * rates[0] + max(0, tokens_out) * rates[1]) / 1_000_000
 
-    def spend(self, tokens_in: int, tokens_out: int, cost_usd: float | None = None) -> None:
+    def cost_of(self, tokens_in: int, tokens_out: int, reported: float | None, model: Any = None) -> float | None:
+        """The cost to record for a call: what the provider reported, else its price (``price``)."""
+        return reported if reported is not None else self.price(tokens_in, tokens_out, model)
+
+    def spend(self, tokens_in: int, tokens_out: int, cost_usd: float | None = None, *, model: Any = None) -> float | None:
+        """Count one call to ``model``; returns the cost that was recorded for it, or None when it is not known."""
         self.tokens_in += max(0, tokens_in)
         self.tokens_out += max(0, tokens_out)
         if cost_usd is None:
-            cost_usd = self.price(tokens_in, tokens_out)
+            cost_usd = self.price(tokens_in, tokens_out, model)
             if cost_usd is not None:
                 self.estimated = True
         if cost_usd is not None:
             self.cost_usd = (self.cost_usd or 0.0) + cost_usd
+        return cost_usd
 
     def total_left(self) -> float | None:
         """What is left of the one budget for the whole run, never below 0. None when there is no such budget."""
@@ -99,8 +118,8 @@ class Budget:
         return ""
 
     def priced(self, model: Any) -> bool:
-        """Whether a call to ``model`` will have a known cost: the project gives rates, or the provider reports one per call."""
-        return self.price(0, 0) is not None or capabilities_of(model).provider in _REPORTS_COST
+        """Whether a call to ``model`` will have a known cost: there are rates for it, or its provider reports one per call."""
+        return self._rates(model) is not None or capabilities_of(model).provider in _REPORTS_COST
 
 
 def unenforceable(budget: Budget, *, models: Iterable[Any] = (), coding_agent: str = "") -> str:
@@ -128,7 +147,7 @@ def unenforceable(budget: Budget, *, models: Iterable[Any] = (), coding_agent: s
     tokens = f"{budget.max_tokens:,}" if budget.max_tokens is not None else "not set"
     return (
         f"{limit} cannot be enforced: no price is known for {', '.join(unknown)}, which Contexer's agents will call. "
-        "Set input_usd_per_mtok and output_usd_per_mtok under [agents] in contexer.toml (US dollars per million tokens), "
+        "Set input_usd_per_mtok and output_usd_per_mtok under [agents] in contexer.toml (US dollars per million tokens, used for every model), "
         f"or remove the dollar limit: the token limit ([limits] tokens, {tokens} for this run) still applies."
     )
 

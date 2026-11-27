@@ -931,7 +931,7 @@ def _others_failing(result: RunResult, contract_id: str) -> int:
 
 
 def _cost(ctx: RunContext, used: Any) -> float | None:
-    """What a call cost: the provider's figure, else the price at the project's rates, else unknown."""
+    """What an agent's calls cost: the provider's figure or the budget's price for its model (``run_agent`` adds both up), else unknown."""
     if ctx.budget is None:
         return used.cost_usd
     return ctx.budget.cost_of(used.tokens_in, used.tokens_out, used.cost_usd)

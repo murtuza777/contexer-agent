@@ -390,9 +390,9 @@ def bill_line(outcome: RunOutcome) -> str:
     # An agent that used tokens and has no cost: its model has no known price. It is named, never counted as 0.
     unpriced = [a.agent for a in outcome.agents if a.cost_usd is None and a.tokens_in + a.tokens_out > 0]
     if outcome.crew_cost_usd is None:
-        cost = "cost unknown (no price is known for the model; set prices under [agents] to see it)"
+        cost = "cost unknown (no price is known for the model; set input_usd_per_mtok and output_usd_per_mtok under [agents] to see it)"
     else:
-        cost = f"${outcome.crew_cost_usd:.2f}" + (" estimated from the configured rates" if outcome.crew_cost_estimated else "")
+        cost = f"${outcome.crew_cost_usd:.2f}" + (" estimated from token counts and prices per token" if outcome.crew_cost_estimated else "")
         if unpriced:
             cost += f" · {', '.join(unpriced)}'s cost is unknown and not in that figure"
     return " · ".join(parts) + f" · {cost}"
@@ -419,7 +419,19 @@ def _run_budget_note(budget: Budget | None) -> str:
     return f" · one budget of ${budget.max_total_usd:.2f} for the coding agent and Contexer's agents"
 
 
-def _estimate(settings: RunSettings, budget: Budget | None, has_model: bool, drafts_checks: bool) -> RunEstimate:
+def _estimate(
+    settings: RunSettings,
+    budget: Budget | None,
+    has_model: bool,
+    drafts_checks: bool,
+    model: Any = None,
+    models: dict[str, Any] | None = None,
+) -> RunEstimate:
+    """The ceiling for this run. Each agent's share is priced as its calls will be: on the model it runs on."""
+
+    def price(agent: str, tokens_in: int, tokens_out: int) -> float | None:
+        return budget.price(tokens_in, tokens_out, (models or {}).get(agent) or model) if budget is not None else None
+
     return estimate_run(
         rounds=settings.max_repair_rounds,
         has_model=has_model,
@@ -429,8 +441,7 @@ def _estimate(settings: RunSettings, budget: Budget | None, has_model: bool, dra
         planner_steps=settings.agent_steps.get("planner", 12),
         diagnoser_steps=settings.agent_steps.get("diagnoser", 15),
         reviewer_steps=settings.agent_steps.get("reviewer", 12),
-        input_usd_per_mtok=budget.input_usd_per_mtok if budget is not None else None,
-        output_usd_per_mtok=budget.output_usd_per_mtok if budget is not None else None,
+        price=price,
     )
 
 
@@ -533,7 +544,7 @@ def execute_graph(
             ("Limits", _limits_line(agent, settings) + _run_budget_note(budget)),
             (
                 "Estimate",
-                escape(_estimate(settings, budget, model is not None, contract is None and not resume).describe()),
+                escape(_estimate(settings, budget, model is not None, contract is None and not resume, model, models).describe()),
             ),
         ],
     )

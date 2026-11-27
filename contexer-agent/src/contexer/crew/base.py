@@ -93,7 +93,8 @@ class AgentResult:
     tool_calls: int = 0
     tokens_in: int = 0
     tokens_out: int = 0
-    # Only when the provider reports what the calls cost (OpenRouter does); otherwise None.
+    # What the provider reports the calls cost (OpenRouter does), else what the run's budget priced them at
+    # (the project's rates, or the model's own prices); None when neither is known.
     cost_usd: float | None = None
     duration_seconds: float = 0.0
     error: str = ""
@@ -479,7 +480,7 @@ class _Run:
         reported = reported_cost(reply) if reply is not None else None
         cost = reported
         if self.budget is not None and reply is not None:
-            cost = self.budget.cost_of(tokens_in, tokens_out, reported)
+            cost = self.budget.cost_of(tokens_in, tokens_out, reported, self.model)
         metadata = (reply.response_metadata if reply is not None else None) or {}
         answered = metadata.get("model_name") or metadata.get("model")
         finish = _finish_reason(reply) if reply is not None else ""
@@ -522,10 +523,13 @@ class _Run:
         self.result.tokens_in += int(usage.get("input_tokens") or 0)
         self.result.tokens_out += int(usage.get("output_tokens") or 0)
         cost = reported_cost(reply)
+        if self.budget is not None:
+            # The budget knows the prices: a call the provider did not price comes back priced for this model.
+            cost = self.budget.spend(
+                int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), cost, model=self.model
+            )
         if cost is not None:
             self.result.cost_usd = (self.result.cost_usd or 0.0) + cost
-        if self.budget is not None:
-            self.budget.spend(int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), cost)
 
 
 def reported_cost(reply: AIMessage) -> float | None:
