@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contexer-agent"
-version = "0.6.0"
+version = "0.7.0"
 description = "Proof that your coding agent is done: approved checks, proven in a real browser, before the change reaches review"
 readme = "PYPI.md"
 license = "MIT"

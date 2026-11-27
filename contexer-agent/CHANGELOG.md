@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-11-28
+
 ### Added
 
 - **`contexer run ... --pr --screenshots`** pushes one screenshot per check to a branch

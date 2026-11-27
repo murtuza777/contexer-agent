@@ -20,7 +20,7 @@ uv tool install contexer-agent
 contexer --version
 ```
 
-You should see `contexer 0.6.0` or newer.
+You should see `contexer 0.7.0` or newer.
 
 - `uv tool install` (or `pipx install contexer-agent`) puts Contexer in its
   own environment and the `contexer` command on your PATH. No uv? On Windows:
