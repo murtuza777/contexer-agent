@@ -129,7 +129,9 @@ class Budget:
             return f"the cost budget of ${self.max_cost_usd:.2f} is used up (${self.cost_usd:.2f} spent)"
         if self.max_total_usd is not None and self.total_left() == 0.0:
             spent = (self.cost_usd or 0.0) + self.other_usd
-            return f"the run budget of ${self.max_total_usd:.2f} is used up (${spent:.2f} spent by the coding agent and Contexer's agents)"
+            # `contexer test` runs no coding agent: there the budget is spent by Contexer's agents alone.
+            by = "the coding agent and Contexer's agents" if self.other_usd else "Contexer's agents"
+            return f"the run budget of ${self.max_total_usd:.2f} is used up (${spent:.2f} spent by {by})"
         return ""
 
     def priced(self, model: Any) -> bool:

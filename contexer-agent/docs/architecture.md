@@ -545,10 +545,20 @@ prompts; `tests/test_controller.py` pins what those produce.
   covers the coding agent and Contexer's agents together. The engine tells
   the budget what the coding agent has spent; each turn is told what is
   left; a run that runs out ends `budget_exhausted` on its best attempt.
-  A provider that reports no price is priced from `[agents]
-  input_usd_per_mtok` and `output_usd_per_mtok`, and the total is marked
-  as an estimate. With neither, cost is unknown and only tokens are
-  limited. A coding agent can overshoot within one turn: Claude Code
+  Any limit that is reached, the token limit too, ends the run before the
+  next coding turn. A call the provider did not price is priced from its
+  tokens and the total is marked as an estimate: at `[agents]
+  input_usd_per_mtok` and `output_usd_per_mtok` when the project sets
+  them (for every model), else at the prices in the called model's own
+  record, cached input at its cached price. With neither, cost is unknown
+  and is said as "unknown", never as $0.00. `contexer run` and `contexer
+  test` refuse a dollar limit they could not keep before anything is
+  spent (`budget.unenforceable`): a model with no known price, or a coding
+  agent that reports no cost (Codex, OpenCode) under `max_usd`. `contexer
+  test` reads the same `[agents] max_usd` and rates. Cached input: the
+  Anthropic model marks the tools and the system prompt for caching, and
+  OpenRouter is sent one `session_id` per model object (`llm/chat.py`).
+  A coding agent can overshoot within one turn: Claude Code
   checks its budget between its own steps, and one turn went from $2.42
   to $6.26 against a $5 limit.
 - **A model per agent.** `[agents.<name>] model`, `provider` and
@@ -558,10 +568,8 @@ prompts; `tests/test_controller.py` pins what those produce.
   for its four (intent, tester, challenger, diagnoser); a model named on
   `contexer test --model` is for every agent of that run. A model that
   cannot be built, an unknown provider, and a provider with no model stop
-  the command before it starts. Not wired yet: `max_steps` for Intent and
-  Triage inside `contexer run` (both take the argument; `graph/nodes.py`
-  does not pass it), and the issue flow, which runs every agent on the
-  default model.
+  the command before it starts. Not wired yet: the issue flow, which runs
+  every agent on the default model.
 - **The estimate** (`crew/estimate.py`) is printed before a run: the most
   coding-agent turns and model calls it can make, from the caps in code.
   It is a ceiling, not a prediction.
@@ -1534,11 +1542,11 @@ and prints the fix under each problem.
 | `[agent] max_repair_rounds` | 2 | Repair rounds after the first attempt |
 | `[agent] budget_usd` | none | Stop when the agent has spent this much |
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
-| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins |
-| `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens, used when the provider reports no cost |
+| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins. Read by `run` and `test`. Refused at the start when part of the spend cannot be known |
+| `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens for every model, used when the provider reports no cost. Without them a call is priced from its model's own record, when that states a price |
 | `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer`. Read by `run` and `test`. `provider` needs `model`; a model that cannot be built stops the command |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
-| `[limits] cost_usd` | none | Cost limit for the same, where the provider reports prices |
+| `[limits] cost_usd` | none | Cost limit for the same. Refused at the start when a model that will be called has no known price |
 
 ### Environment variables
 

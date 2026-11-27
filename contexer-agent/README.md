@@ -38,8 +38,8 @@ never calls a model.
 | Agent | Requirement |
 | --- | --- |
 | [Claude Code](https://code.claude.com) (`claude`) | Logged in, or `ANTHROPIC_API_KEY` set |
-| [Codex](https://github.com/openai/codex) (`codex`) | `codex login`, or `CODEX_API_KEY` set. Runs in the `workspace-write` sandbox with network on. Codex reports no cost, so `--budget` doesn't apply; rounds and the time limit still do |
-| [OpenCode](https://opencode.ai) (`opencode`, `npm i -g opencode-ai`) | With `OPENROUTER_API_KEY` set and no model chosen, it uses the free `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`; otherwise `--model provider/model` or `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID`. OpenCode's own free models refuse headless use. Tested with 1.4.3 and 1.19.4 |
+| [Codex](https://github.com/openai/codex) (`codex`) | `codex login`, or `CODEX_API_KEY` set. Runs in the `workspace-write` sandbox with network on. Codex reports no cost, so `--budget` doesn't apply and `--max-usd` is refused at the start; rounds and the time limit still do |
+| [OpenCode](https://opencode.ai) (`opencode`, `npm i -g opencode-ai`) | With `OPENROUTER_API_KEY` set and no model chosen, it uses the free `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`; otherwise `--model provider/model` or `OPENCODE_MODEL_PROVIDER`/`OPENCODE_MODEL_ID`. OpenCode's own free models refuse headless use. No cost is reported for its turns, so `--max-usd` is refused at the start. Tested with 1.4.3 and 1.19.4 |
 
 ## Commands
 
