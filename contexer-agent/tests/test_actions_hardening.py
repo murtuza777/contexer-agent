@@ -43,7 +43,8 @@ def _templates() -> dict[str, str]:
 
 
 def _texts() -> dict[str, str]:
-    files = {path.relative_to(REPO).as_posix(): path.read_text(encoding="utf-8") for path in [*ACTIONS, GATE] if path.exists()}
+    workflows = sorted(GATE.parent.glob("*.yml"))  # every workflow of this repository, the CI and the release too
+    files = {path.relative_to(REPO).as_posix(): path.read_text(encoding="utf-8") for path in [*ACTIONS, *workflows] if path.exists()}
     return {**files, **_templates()}
 
 
