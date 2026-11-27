@@ -127,6 +127,15 @@ class GitHubClient:
         data = self._request("GET", f"/repos/{self.repo}/collaborators/{user}/permission")
         return str(data.get("role_name") or data.get("permission") or "none")
 
+    def can_push(self) -> bool | None:
+        """Whether this token may push to the repository, as the API reports it. None when it does not say."""
+        try:
+            data = self._request("GET", f"/repos/{self.repo}")
+        except GitHubError:
+            return None
+        granted = data.get("permissions") if isinstance(data, dict) else None
+        return bool(granted["push"]) if isinstance(granted, dict) and "push" in granted else None
+
     # -- pull requests --------------------------------------------------------------
 
     def open_pull(self, *, title: str, head: str, base: str, body: str, draft: bool) -> dict[str, Any]:

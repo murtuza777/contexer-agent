@@ -1450,6 +1450,26 @@ sequenceDiagram
   status comment (`<!-- contexer:status -->`), edited on each phase and
   verdict (at most every 5 s, verdicts immediately); the hand-off closes the
   issue.
+- **Two jobs** (the workflow `contexer init --issues` writes; not yet run on
+  GitHub, see REL-8). The job in which the app and the coding agent run has
+  `contents: read` and `issues: read` and runs `contexer issue event
+  --hand-over DIR`: it posts and pushes nothing, refuses to build when the
+  API reports that its token can push, and leaves `handover.json` (the
+  draft's parts, or the run's outcome and status lines, or why it stopped)
+  and `change.patch` (`handoff.make_patch`) as an artifact. The second job
+  has the write token and no model key and runs `contexer issue publish
+  DIR`. It takes the issue, the approver and the time of the approval from
+  the event, asks GitHub again whether the approver has write access and
+  which checks are in the draft, and gives the patch to
+  `handoff.publish_patch`: applied to a temporary index, read back with
+  `git diff-index --raw`, refused when a path is under `.github/`, is a
+  contract other than the approved one, is a symbolic link or a submodule,
+  when the contract in it does not hold the approved checks and approval,
+  when it is over 5 MB or adds a secret; then committed with `commit-tree`
+  and pushed by id. No file of the change is written to that job's checkout
+  and no hook runs. What the first job says about the checks (passed or
+  not) is shown as reported: the second job cannot replay them. There is no
+  status comment while the build runs, one when it has ended.
 
 ## 15. The command line
 
@@ -1669,10 +1689,21 @@ replay --dir . --json [--url] [--github]`, exposes `outcome`, uploads
 
 **Issue action** (`issue/action.yml`): inputs `agent`, `model`,
 `working-directory`, `label`, `github-token`, `python-version`,
-`node-version`; reads the event (`contexer issue event --plan`), installs
-Node, Chromium and (for builds) the coding agent, runs `contexer issue
-event`, uploads the evidence. `contexer init --issues` writes a workflow
-using it.
+`node-version`, `hand-over`; reads the event (`contexer issue event
+--plan`), installs Node, Chromium and (for builds) the coding agent, runs
+`contexer issue event`, uploads the evidence. With `hand-over: true` it
+posts and pushes nothing and uploads `contexer-hand-over-<issue>`.
+
+**Issue publish action** (`issue/publish/action.yml`): inputs
+`working-directory`, `label`, `github-token`, `python-version`; installs
+Contexer from the action's own checkout, downloads
+`contexer-hand-over-<issue>` outside the checkout and runs `contexer issue
+publish`. No Node, no browser, no command of the project. `contexer init
+--issues` writes a workflow with one job for each action. A workflow
+written before the split (one job, `hand-over` unset) works as it did.
+
+Third-party actions are named by commit with the version in a comment, and
+no input or event value is written into a script: each goes through `env`.
 
 **Publishing**: the distribution is `contexer-agent` (`contexer` on PyPI is a
 different project); the command and import package are `contexer`. The wheel
