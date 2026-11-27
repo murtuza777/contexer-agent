@@ -49,7 +49,7 @@ from contexer.crew.transcript import Masker
 from contexer.crew.triage import DEFAULT_MAX_STEPS as DEFAULT_TRIAGE_STEPS
 from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, TriageDecision, triage
 from contexer.crew.untrusted import quoted_goal
-from contexer.evidence.rundir import write_whole
+from contexer.evidence.rundir import PROMPT_FILE, write_whole
 from contexer.evidence.test_report import AgentUsage
 from contexer.gate.decision import decide
 from contexer.gate.models import GateDecision, RunResult
@@ -276,6 +276,8 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         _announce_checks(ctx)
         ctx.detail("attempt-start", n=n, doing=doing, fresh=bool(fresh and n > 1), agent=ctx.agent.describe())
         ctx.event("phase", f"Attempt {n}: {doing}{' (fresh session)' if fresh and n > 1 else ''} with {ctx.agent.describe()}")
+        # What the agent is asked, kept as evidence in the run folder (never in a snapshot or a hand-off).
+        write_whole(ctx.attempt_dir(n).path / PROMPT_FILE, Masker(ctx.secrets()).text(state["prompt"]))
         turn = await ctx.agent.run_turn(
             ctx.project,
             state["prompt"],
