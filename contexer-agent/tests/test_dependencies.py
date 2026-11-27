@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -509,7 +510,13 @@ async def test_in_a_run_the_setting_decides_whether_a_registry_is_asked(tmp_path
         (project / "contexer.toml").write_text(setting, encoding="utf-8")
     asked: list[bool] = []
 
-    def no_network(**_kwargs: object) -> httpx.Client:
+    real_client = httpx.Client
+
+    def no_network(**kwargs: Any) -> httpx.Client:
+        # The dev server polls the app with httpx too (appserver/devserver.py); only the registry's client
+        # sends these headers, and only that one is refused.
+        if "headers" not in kwargs:
+            return real_client(**kwargs)
         asked.append(True)
         raise httpx.ConnectError("no network in tests")
 
