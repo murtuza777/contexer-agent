@@ -65,7 +65,15 @@ ISSUES_WORKFLOW = """\
 #    with agent: codex.
 #  - Settings > Actions > General: allow GitHub Actions to create pull requests.
 #  - Pull requests opened with the default token do not start other workflows. To have your CI
-#    and the acceptance gate run on them, pass a personal or app token as github-token.
+#    and the acceptance gate run on them, pass a personal or app token as github-token to the
+#    publish job (never to the build job).
+#
+# Two jobs. "build" is where the app and the coding agent run: its token can only read, so nothing
+# there can push or comment, and it holds the model key. It leaves the checks, or the change as a
+# patch, as an artifact. "publish" holds the write token and no model key, and runs nothing from
+# this repository: it reads who approved what from the issue again, refuses a change that touches
+# .github/ or a contract other than the approved one, pushes the branch and opens the pull request.
+# Contexer comments once the build has ended, not while it runs.
 name: Contexer issues
 
 on:
@@ -74,16 +82,14 @@ on:
   issue_comment:
     types: [created]
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+# Each job names what it may do.
+permissions: {{}}
 
 concurrency:
   group: contexer-issue-${{{{ github.event.issue.number }}}}
 
 jobs:
-  contexer:
+  build:
     if: >-
       (github.event_name == 'issues' && github.event.label.name == 'contexer') ||
       (github.event_name == 'issue_comment' && !github.event.issue.pull_request &&
@@ -91,16 +97,41 @@ jobs:
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: read
     env:
       OPENROUTER_API_KEY: ${{{{ secrets.OPENROUTER_API_KEY }}}}
+    outputs:
+      command: ${{{{ steps.contexer.outputs.command }}}}
     steps:
-      # No stored credentials: the coding agent edits files; only Contexer pushes.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: murtuza777/contexer-agent/issue@main
+        id: contexer
         with:
           agent: opencode
+          working-directory: {working_directory}
+          hand-over: true
+
+  publish:
+    needs: build
+    # Also after a build that did not pass (it still opens a draft), never after one that had nothing to do.
+    if: ${{{{ !cancelled() && needs.build.outputs.command != '' && needs.build.outputs.command != 'ignore' }}}}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      # The default branch as it is, to commit onto. The change is never checked out here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: murtuza777/contexer-agent/issue/publish@main
+        with:
           working-directory: {working_directory}
 """
 

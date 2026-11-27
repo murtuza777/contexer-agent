@@ -21,10 +21,17 @@ inputs:
   label:
     description: The label that asks Contexer to draft checks for an issue.
     default: contexer
+  hand-over:
+    description: >-
+      "true" in a job whose token cannot write: nothing is posted or pushed. What would have been is
+      uploaded as the artifact contexer-hand-over-<issue>, and a second job with the write token
+      publishes it with the issue/publish action. The workflow `contexer init --issues` writes does this.
+    default: "false"
   github-token:
     description: >-
       Token that comments, pushes the branch and opens the pull request. Pull requests opened with
       the default token do not start other workflows; pass a personal or app token for that.
+      With hand-over it only reads: give the write token to the issue/publish action instead.
     default: ${{ github.token }}
   python-version:
     description: Python used to run Contexer.
@@ -105,10 +112,22 @@ runs:
         CONTEXER_LABEL: ${{ inputs.label }}
         CONTEXER_AGENT: ${{ inputs.agent }}
         CONTEXER_MODEL: ${{ inputs.model }}
+        CONTEXER_HAND_OVER: ${{ inputs.hand-over }}
       run: |
         args=(issue event --label "$CONTEXER_LABEL" --agent "$CONTEXER_AGENT")
         if [ -n "$CONTEXER_MODEL" ]; then args+=(--model "$CONTEXER_MODEL"); fi
+        if [ "$CONTEXER_HAND_OVER" = "true" ]; then args+=(--hand-over "$RUNNER_TEMP/contexer-hand-over"); fi
         contexer "${args[@]}"
+
+    # One per issue, replaced when the run is started again: the publishing job of this run reads it by this name.
+    - if: always() && inputs.hand-over == 'true' && steps.plan.outputs.command != 'ignore'
+      name: Upload what the publishing job needs
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: contexer-hand-over-${{ github.event.issue.number }}
+        path: ${{ runner.temp }}/contexer-hand-over/
+        if-no-files-found: ignore
+        overwrite: true
 
     - if: always() && steps.plan.outputs.command != 'ignore'
       name: Upload evidence report
