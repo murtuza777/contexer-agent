@@ -39,11 +39,12 @@ from contexer.cli.run_cli import (
     crew_models,
     execute_graph,
     one_engine,
+    run_budget,
 )
 from contexer.config.project import ProjectConfigError, load_project_config, load_project_env
 from contexer.contract import Contract, ContractStore
 from contexer.controller import RunOutcome, RunSettings
-from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
+from contexer.crew.budget import unenforceable
 from contexer.crew.intent import IntentResult, Question, run_intent
 from contexer.evidence import RunDir
 from contexer.gate import RunResult
@@ -230,6 +231,13 @@ def build(
             models = crew_models(project, config, default_provider=config.compiler.provider, agents=RUN_AGENTS) if crew is not None else {}
         except (IssueFlowError, HandoffError, ValueError) as exc:
             _stop(console, client, number, str(exc), 3, hand_over)
+        # Before anything is spent or approved, as `contexer run` does: a dollar limit that would count
+        # unknown spend as 0 is refused, and the issue is told why.
+        crew_budget = run_budget(config)
+        called = [models.get(name) or crew for name in RUN_AGENTS] if crew is not None else []
+        cannot_keep = unenforceable(crew_budget, models=called, coding_agent="" if agent.reports_cost else agent.name)
+        if cannot_keep:
+            _stop(console, client, number, cannot_keep, 2, hand_over)
         check_free_quota(console, None, agent, yes=True)
 
         store = ContractStore(project)
@@ -256,7 +264,7 @@ def build(
             settings,
             model=crew,
             models=models,
-            budget=Budget(max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=config.limits.cost_usd),
+            budget=crew_budget,
             yes=True,  # nobody is at a terminal in a workflow: Triage does not stop to ask
             contract=contract,
             on_progress=live.event,
