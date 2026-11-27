@@ -5,10 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import shutil
+import signal
+import subprocess
 import sys
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, NoReturn
@@ -31,6 +34,7 @@ from contexer.cli.gate_cli import (
     warn_if_weak_draft,
 )
 from contexer.cli.runview import RunView
+from contexer.cli.test_cli import is_interactive
 from contexer.config.project import (
     CREW_AGENTS,
     AgentSettings,
@@ -67,7 +71,7 @@ def run(
     model: str | None = typer.Option(None, "--model", help="Model for the coding agent."),
     rounds: int | None = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
     budget: float | None = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Approve the checklist without asking."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve the checklist without asking; the approval is recorded as not reviewed by a person."),
     no_replay: bool = typer.Option(False, "--no-replay", help="Skip re-checking other approved contracts."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
     json_output: bool = typer.Option(
@@ -105,24 +109,58 @@ def run(
     correct: str | None = typer.Option(
         None, "--correct", help="With --resume: a correction to what done means, applied first."
     ),
+    plain: bool = typer.Option(
+        False,
+        "--plain",
+        help="No colour, nothing redrawn, marks as words (ok:, not ok:): one line per event, for a CI log, a pipe or a screen reader.",
+    ),
 ) -> None:
     """Turn a goal into approved checks, have a coding agent build it, prove it, and repair until it passes."""
+    # With --json nothing is printed but events; an error then goes to stderr (term.error).
+    console = Console(quiet=True) if json_output else term.plain_console() if plain else Console()
+
+    def refuse(why: str, next_step: str) -> NoReturn:
+        """Nothing ran and nothing was spent. Every error of this command has one form (term.error)."""
+        _fail(console, "Not started", why, next_step, code=2)
+
     if sum((bool(goal), bool(contract_id), issue is not None, bool(resume))) != 1:
-        raise typer.BadParameter("give a GOAL, --contract ID, --issue N or --resume RUN")
-    one_engine(engine)
+        refuse(
+            "give a GOAL, --contract ID, --issue N or --resume RUN: exactly one of them says what to run",
+            '`contexer run "what should be true when the work is done"`, or `contexer run --help` for the others.',
+        )
+    try:
+        one_engine(engine)
+    except typer.BadParameter as exc:
+        refuse(exc.message, "drop --engine, or unset CONTEXER_ENGINE, and run again.")
     if correct and not resume:
-        raise typer.BadParameter("--correct goes with --resume RUN: it corrects a run that was stopped")
+        refuse(
+            "--correct goes with --resume RUN: it corrects a run that was stopped",
+            '`contexer run --resume RUN --correct "..."`; `contexer runs` lists the runs.',
+        )
     if screenshots and not (pr or issue is not None):
-        raise typer.BadParameter("--screenshots goes with --pr or --issue N: the pull request is where they are shown")
+        refuse(
+            "--screenshots goes with --pr or --issue N: the pull request is where they are shown",
+            "add --pr, or drop --screenshots.",
+        )
+    if json_output and plain:
+        refuse(
+            "--plain and --json are two forms of output",
+            "choose one: --json for a tool that reads events, --plain for a log a person reads.",
+        )
     if json_output and not (yes or resume):
-        raise typer.BadParameter("--json cannot stop to ask for an approval: add --yes, or approve the contract first")
-    console = Console(quiet=True) if json_output else Console()
+        refuse(
+            "--json cannot stop to ask for an approval",
+            "add --yes, or approve the checks first (`contexer contract approve ID`) and pass --contract ID.",
+        )
     project = project_dir.resolve()
     if shutil.which("git") is None:
-        raise typer.BadParameter("git is not installed. Contexer snapshots your project with git before an agent touches it.")
+        refuse(
+            "git is not installed, and Contexer snapshots your project with git before an agent touches it",
+            "install git, then run again.",
+        )
     unsafe = unsafe_work_tree(project)
     if unsafe:
-        raise typer.BadParameter(f"{unsafe}; run Contexer in your app's folder, or pass --dir")
+        refuse(unsafe, "run Contexer in your app's folder, or pass --dir PATH.")
     for risk in scan_project(project):  # before anything is spent; a warning, never a refusal
         term.note(console, "warn", escape(risk.message))
     pr = pr or issue is not None  # work on an issue ends in a pull request that closes it
@@ -131,18 +169,23 @@ def run(
         try:
             handoff_plan = plan_handoff(project)  # before anything is spent
         except HandoffError as exc:
-            console.print(f"[red]Cannot open a pull request:[/] {escape(str(exc))}")
-            raise typer.Exit(code=3) from exc
+            _fail(
+                console,
+                "Cannot open a pull request",
+                str(exc),
+                "set that right and run again, or run without --pr: the result then stays in the project folder.",
+                code=3,
+            )
     load_project_env(project)  # model keys for the drafting model and the coding agent
     try:
         config = load_project_config(project)
     except ProjectConfigError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        refuse(str(exc), "correct contexer.toml, then run again.")
     store = ContractStore(project)
     try:
         agent = create_agent(*choose_agent(config.agent, agent_name, model))
     except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        refuse(str(exc), "--agent takes claude-code, codex or opencode; `contexer doctor` shows which are installed.")
     settings = RunSettings(
         max_repair_rounds=rounds if rounds is not None else config.agent.max_repair_rounds,
         budget_usd=budget if budget is not None else config.agent.budget_usd,
@@ -167,13 +210,13 @@ def run(
             else {}
         )
     except AgentSettingError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+        refuse(str(exc), "correct the model under [agents] in contexer.toml, or remove the line to use the default model.")
     # Before anything is spent: a dollar limit that would count unknown spend as 0 is refused, not ignored.
     called = [models_for_crew.get(name) or model_for_crew for name in RUN_AGENTS] if model_for_crew is not None else []
     cannot_keep = unenforceable(crew_budget, models=called, coding_agent="" if agent.reports_cost else agent.name)
     if cannot_keep:
-        term.note(console, "fail", escape(cannot_keep))
-        raise typer.Exit(code=2)
+        why, _, remedy = cannot_keep.partition(". ")  # the sentence that says what, then the one that says what to do
+        refuse(why, remedy or "remove the limit, or set what it needs, and run again.")
     draft_id: str | None = None
     contract: Contract | None = None
     graph_preview: RunResult | None = None
@@ -184,7 +227,7 @@ def run(
         try:
             contract = store.load(contract_id)
         except ContractError as exc:
-            raise typer.BadParameter(str(exc)) from exc
+            refuse(str(exc), "`contexer contract list` shows the contracts of this project.")
     elif goal and model_for_crew is None:
         # No model for the Intent agent: the checks are drafted the 0.4 way, and approved before the run.
         drafting = compiler_llm(project)
@@ -314,18 +357,22 @@ def _take_lock(console: Console, activity: Any, agent: CodingAgentAdapter, proje
     except RunLocked as exc:
         activity.stop()
         agent.close()
-        term.note(console, "fail", f"[red]Not started:[/] {escape(str(exc))}")
-        raise typer.Exit(code=2) from None
+        why, _, wait = str(exc).partition(". ")  # the lock's message says who holds it, then what to do
+        _fail(console, "Not started", why, wait or "run again when that run has ended.", code=2)
     return stack
 
 
 def _snapshot_failed(console: Console, activity: Any, exc: Exception) -> NoReturn:
     """Contexer snapshots the project with git. When that fails there is nothing safe to go on with."""
     activity.stop()
-    hint = "Install git and run again." if shutil.which("git") is None else "Your files are as the last step left them; `contexer runs` lists what was saved."
-    term.note(console, "fail", f"[red]Could not snapshot the project:[/] {escape(str(exc))}")
-    console.print(f"  {escape(hint)}")
-    raise typer.Exit(code=3) from None
+    hint = "install git and run again." if shutil.which("git") is None else "your files are as the last step left them; `contexer runs` lists what was saved."
+    _fail(console, "Could not snapshot the project", str(exc), hint, code=3)
+
+
+def _fail(console: Console, what: str, why: str, next_step: str, code: int) -> NoReturn:
+    """Say an error in the one form (term.error) and exit with its code."""
+    term.error(console, what, why, next_step, code)
+    raise typer.Exit(code=code)
 
 
 def emit_json(event: dict[str, Any]) -> None:
@@ -457,34 +504,162 @@ def _limits_line(agent: CodingAgentAdapter, settings: RunSettings) -> str:
     return limits
 
 
-def _asker(console: Console, activity: Any, yes: bool) -> Callable[[dict[str, Any]], dict[str, Any]]:
+APPROVE_QUESTION = "Approve these checks as the definition of done?"
+
+
+def read_decision(typed: str) -> tuple[str, str]:
+    """What a line typed at the approval prompt means: approve, reject, edit, correction (with its text) or unclear.
+
+    Only ``y`` approves. An empty line is a no. One word that is not a key is nothing at all: a sentence is a
+    correction, a slip of the finger is not, and it must not cost a redraft.
+    """
+    text = typed.strip()
+    low = text.lower()
+    if low in ("y", "yes"):
+        return "approve", ""
+    if low in ("n", "no", ""):
+        return "reject", ""
+    if low in ("e", "edit"):
+        return "edit", ""
+    if len(text.split()) < 2:
+        return "unclear", text
+    return "correction", text
+
+
+def _ask_approval(console: Console, *, can_correct: bool = True) -> tuple[str, str]:
+    """Show the keys and ask until the answer is one of them, or a sentence where a sentence can be used."""
+    keys = "y approve · n do not approve · e edit the checks in your editor"
+    console.print(f"  [dim]{keys}{' · or type what to change' if can_correct else ''}[/]")
+    while True:
+        kind, text = read_decision(typer.prompt(APPROVE_QUESTION, default="", show_default=False))
+        if kind == "unclear":
+            console.print(f"  '{escape(text)}' is not one of the keys. Nothing was approved.")
+        elif kind == "correction" and not can_correct:
+            console.print("  No model is set up to redraft the checks from a sentence. `e` opens them in your editor.")
+        else:
+            return kind, text
+
+
+def _not_at_a_terminal(contract_id: str) -> tuple[str, str]:
+    """Why nothing was approved where no person can read the checks, and the two ways on."""
+    return (
+        "this is not a terminal, so nobody read the checks",
+        f"read them, then `contexer contract approve {contract_id}`. Or pass --yes: "
+        "that approves without a reading and is recorded as not reviewed by a person.",
+    )
+
+
+def _numbered(console: Console, lines: list[str]) -> None:
+    """The checks as a numbered list, each check's steps under it. A correction can name a check by its number."""
+    number = 0
+    for line in lines:
+        if line.startswith(" "):
+            console.print(f"      [dim]{escape(line.strip())}[/]", highlight=False)
+        else:
+            number += 1
+            console.print(f"  [dim]{number:>2}[/]  {escape(line)}", highlight=False)
+
+
+def _editor_argv(command: str) -> list[str]:
+    """``$VISUAL`` or ``$EDITOR`` as a program and its arguments (``code --wait``). No shell reads it."""
+    try:
+        parts = shlex.split(command, posix=os.name != "nt")
+    except ValueError:
+        return []
+    return [part.strip('"') for part in parts] if os.name == "nt" else parts
+
+
+def _edit_contract(console: Console, store: ContractStore, contract_id: str) -> Contract | None:
+    """Open the contract's file in the person's editor. The edited contract, or None when there is none to show.
+
+    The editor is started as a program with the file as its last argument; nothing from the project is part
+    of the command. What comes back is read like any contract file, and one that is not this contract, or has
+    no check that can be run, is put back as it was. An edit never approves: the question is asked again.
+    """
+    path = store.path_for(contract_id)
+    argv = _editor_argv(os.environ.get("VISUAL") or os.environ.get("EDITOR") or "")
+    if not argv:
+        term.note(
+            console,
+            "warn",
+            f"No editor is set. Set EDITOR (for example to `code --wait`) and press e again, or answer n and edit {escape(str(path))}.",
+        )
+        return None
+    try:
+        was = store.load(contract_id)
+        before = path.read_bytes()
+        subprocess.run([*argv, str(path)], check=False)
+    except (ContractError, OSError) as exc:
+        term.note(console, "fail", f"The editor `{escape(argv[0])}` was not used: {escape(str(exc))}. Nothing changed.")
+        return None
+    problem = ""
+    edited: Contract | None = None
+    try:
+        edited = store.load(contract_id)
+    except ContractError as exc:
+        problem = f"it is not a valid contract ({str(exc).splitlines()[0]})"
+    if edited is not None and edited.id != contract_id:
+        problem = f"its id changed from '{contract_id}' to '{edited.id}'"
+    elif edited is not None and not any(c.check for c in edited.criteria):
+        problem = "it has no check that can be run"
+    if problem or edited is None:
+        path.write_bytes(before)
+        term.note(console, "fail", f"The edit was not kept: {escape(problem)}. The contract was put back as it was.")
+        return None
+    if edited.content_hash() == was.content_hash():
+        console.print("  The editor changed no check.")
+        return None
+    return edited
+
+
+def _asker(
+    console: Console, activity: Any, yes: bool, store: ContractStore | None = None
+) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """How a run puts its questions to the person at the terminal."""
+
+    def approve(request: dict[str, Any]) -> dict[str, Any]:
+        title = "The checks changed" if request.get("changed") else "Checks drafted from the goal"
+        term.section(console, title, "what will count as done")
+        _numbered(console, [str(line) for line in request.get("checks", [])])
+        assumptions = [str(a) for a in request.get("assumptions", [])]
+        if assumptions:
+            console.print()
+            console.print("  [dim]Assumed without asking:[/]")
+            term.bullets(console, [escape(a) for a in assumptions], indent=4)
+        console.print()
+        contract_id = str(request.get("contract_id") or "")
+        if yes:
+            return {"approve": True, "by": AUTOMATIC_APPROVAL}
+        if not is_interactive():
+            why, next_step = _not_at_a_terminal(contract_id)
+            term.note(console, "warn", escape(f"Not approved: {why}. Next: {next_step}"))
+            return {"approve": False}
+        path = store.path_for(contract_id) if store is not None else None
+        drafted: bytes | None = None
+        while True:
+            kind, text = _ask_approval(console)
+            if kind == "correction":
+                return {"correction": text}
+            if kind == "reject" and path is not None and drafted is not None and path.read_bytes() != drafted:
+                # The run puts back what defines done when nobody approved the change; said here, as what it is.
+                path.write_bytes(drafted)
+                console.print("  The edit was not approved, so the contract is back as it was drafted.")
+            if kind != "edit":
+                return {"approve": kind == "approve"}
+            if path is None or store is None or not path.is_file():
+                console.print("  This contract is not a file in the project, so there is nothing to open.")
+                continue
+            drafted = path.read_bytes() if drafted is None else drafted
+            edited = _edit_contract(console, store, contract_id)
+            if edited is not None:
+                term.section(console, "The checks as you edited them", "what will count as done")
+                _numbered(console, edited.describe_lines())
+                console.print()
 
     def ask(request: dict[str, Any]) -> dict[str, Any]:
         activity.stop()
         if request.get("kind") == "approve":
-            title = "The checks changed" if request.get("changed") else "Checks drafted from the goal"
-            term.section(console, title, "what will count as done")
-            for line in request.get("checks", []):
-                console.print(f"  {escape(str(line))}")
-            assumptions = [str(a) for a in request.get("assumptions", [])]
-            if assumptions:
-                console.print()
-                console.print("  [dim]Assumed without asking:[/]")
-                term.bullets(console, [escape(a) for a in assumptions], indent=4)
-            console.print()
-            if yes:
-                return {"approve": True, "by": AUTOMATIC_APPROVAL}
-            typed = typer.prompt(
-                "Approve these checks as the definition of done? [y/n, or type what to change]",
-                default="n",
-                show_default=False,
-            ).strip()
-            if typed.lower() in ("y", "yes"):
-                return {"approve": True}
-            if typed.lower() in ("n", "no", ""):
-                return {"approve": False}
-            return {"correction": typed}
+            return approve(request)
         attempt = request.get("attempt")
         term.section(console, f"A question after attempt {attempt}", "the run is waiting for you")
         console.print(f"  {escape(str(request.get('question') or 'How should this continue?'))}")
@@ -500,6 +675,76 @@ def _asker(console: Console, activity: Any, yes: bool) -> Callable[[dict[str, An
         return {"answer": typed}
 
     return ask
+
+
+class _CtrlC:
+    """What Ctrl+C does while a run is under way.
+
+    The first press stops the run in order: the engine stops the app and the agent, keeps the unfinished
+    work as a snapshot and puts the project back (graph/engine.py). Python's own handling raises
+    KeyboardInterrupt at a second press wherever the program is, and that can be in the middle of putting
+    the files back. So from the first press on, a press is answered with a line and changes nothing: the
+    stop that is under way ends with the project whole and the run lock released.
+
+    At a question to the person Ctrl+C leaves the question, as it does anywhere, and the run stops in order.
+    """
+
+    def __init__(self, console: Console, activity: Any) -> None:
+        self.console = console
+        self.activity = activity
+        self.asking = False
+        self.stopping = False
+        self._task: asyncio.Task[Any] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._installed = False
+        self._before: Any = None
+
+    def install(self) -> None:
+        try:
+            self._before = signal.signal(signal.SIGINT, self._pressed)
+            self._installed = True
+        except ValueError:  # not the main thread: Ctrl+C does not arrive here
+            pass
+
+    def remove(self) -> None:
+        if self._installed:
+            signal.signal(signal.SIGINT, self._before if self._before is not None else signal.default_int_handler)
+            self._installed = False
+
+    async def watch(self, run: Coroutine[Any, Any, RunOutcome]) -> RunOutcome:
+        """Run ``run`` as the task the first press cancels."""
+        self._loop, self._task = asyncio.get_running_loop(), asyncio.current_task()
+        return await run
+
+    def at_a_question(self, ask: Callable[[dict[str, Any]], dict[str, Any]]) -> Callable[[dict[str, Any]], dict[str, Any]]:
+        def asked(request: dict[str, Any]) -> dict[str, Any]:
+            self.asking = True
+            try:
+                return ask(request)
+            finally:
+                self.asking = False
+
+        return asked
+
+    def _pressed(self, _signum: int, _frame: Any) -> None:
+        if self.asking:
+            self.stopping = True
+            raise KeyboardInterrupt
+        if self._task is None or self._loop is None:  # the run has not begun: nothing to put back
+            raise KeyboardInterrupt
+        if self._task.done():  # the run is over; what is left releases the project
+            return
+        if self.stopping:
+            term.note(
+                self.console,
+                "warn",
+                "Still putting the project back. Ctrl+C does not cut that short, so the project is never left half restored.",
+            )
+            return
+        self.stopping = True
+        self.activity.stop()
+        term.note(self.console, "warn", "Stopping: the agent is stopped, its unfinished work is kept, and the project is put back.")
+        self._loop.call_soon_threadsafe(self._task.cancel)
 
 
 def execute_graph(
@@ -525,7 +770,6 @@ def execute_graph(
     verbose: bool = False,
 ) -> RunOutcome:
     """One run: it can wait for an approval or an answer, be stopped, and be resumed."""
-    from contexer.cli.test_cli import is_interactive
     from contexer.llm.chat import describe_model
 
     others = [c for c in store.list() if c.status == "approved"] if settings.replay_others else []
@@ -565,6 +809,7 @@ def execute_graph(
         elif event.kind != "end":  # the last line is written when the hand-off is known too
             emit_json(event.as_json())
 
+    stop = _CtrlC(console, activity)
     if json_output:
         emit_json(
             {
@@ -586,38 +831,44 @@ def execute_graph(
         on_event=on_progress,
         on_detail=on_detail,
         model=model,
-        ask=_asker(console, activity, yes),
+        ask=stop.at_a_question(_asker(console, activity, yes, store)),
         # Triage may stop to ask only when a person is at the terminal; an approval is always asked for.
         can_ask=not yes and is_interactive(),
         budget=budget,
         models=models,
     )
     held = _take_lock(console, activity, agent, project, resume or "")
+    stop.install()
     try:
         if resume:
-            outcome = asyncio.run(controller.resume(resume, correction=correction))
+            outcome = asyncio.run(stop.watch(controller.resume(resume, correction=correction)))
         elif contract is not None:
-            outcome = asyncio.run(controller.run(contract, others))
+            outcome = asyncio.run(stop.watch(controller.run(contract, others)))
         else:
             outcome = asyncio.run(
-                controller.run_goal(goal or "", others=others, contract_id=contract_id, origin=origin)
+                stop.watch(controller.run_goal(goal or "", others=others, contract_id=contract_id, origin=origin))
             )
     except SnapshotError as exc:
         _snapshot_failed(console, activity, exc)
     except ResumeError as exc:
         activity.stop()
-        term.note(console, "fail", f"[red]Cannot resume:[/] {escape(str(exc))}")
-        raise typer.Exit(code=2) from None
+        _fail(console, "Cannot resume", str(exc), "`contexer runs` lists the runs of this project and how each ended.", code=2)
     except (KeyboardInterrupt, typer.Abort, asyncio.CancelledError):
         activity.stop()
         if controller.last_outcome is None:  # stopped before the first snapshot
-            term.note(console, "warn", "Stopped. Nothing was changed.")
-            raise typer.Exit(code=130) from None
+            _fail(
+                console,
+                "Stopped",
+                "the run was stopped before its first snapshot, so nothing was changed",
+                "run the same command to start again.",
+                code=130,
+            )
         outcome = controller.last_outcome
     finally:
         activity.stop()
         agent.close()
         held.close()
+        stop.remove()  # last: a press while the lock is released must not skip releasing it
     return outcome
 
 
@@ -629,15 +880,23 @@ def issue_goal(console: Console, plan: HandoffPlan | None, number: int, store: C
     """The goal an issue describes (its title and text), and a contract id that names the issue."""
     token = github_token()
     if plan is None or plan.repo is None or token is None:
-        missing = "a GitHub token (GITHUB_TOKEN, or `gh auth login`)" if token is None else "a GitHub remote"
-        console.print(f"[red]Cannot read issue #{number}:[/] the project needs {missing}.")
-        raise typer.Exit(code=3)
+        missing, get_it = (
+            ("a GitHub token", "`gh auth login`, or set GITHUB_TOKEN, then run again.")
+            if token is None
+            else ("a GitHub remote", "`git remote add origin URL` with the repository the issue is in, then run again.")
+        )
+        _fail(console, f"Cannot read issue #{number}", f"the project needs {missing}", get_it, code=3)
     try:
         with GitHubClient(plan.repo, token) as client:
             found = client.issue(number)
     except GitHubError as exc:
-        console.print(f"[red]Cannot read issue #{number}:[/] {escape(str(exc))}")
-        raise typer.Exit(code=3) from exc
+        _fail(
+            console,
+            f"Cannot read issue #{number}",
+            str(exc),
+            f"check that the issue is in {plan.repo} and that the token can read it, then run again.",
+            code=3,
+        )
     if found.get("state") == "closed":
         console.print(f"[yellow]Issue #{number} is closed;[/] working on it anyway.")
     # The same reading as the Actions path: without what GitHub does not show (HTML comments, invisible
@@ -694,18 +953,35 @@ def _approve(
     warn_if_weak_draft(console, contract, analyzer.last_error if analyzer else None)
     if yes and contract.source == "rules":
         # Building against a rule-based fallback wastes the agent's budget on a contract nobody chose.
-        term.note(
+        _fail(
             console,
-            "warn",
-            f"Not approved: --yes never approves a weak draft. Review {escape(str(store.path_for(contract.id)))}, "
-            f"then `contexer contract approve {escape(contract.id)}`.",
+            "Not approved",
+            "--yes never approves a weak draft, and these checks came from fixed rules, not from a model",
+            f"review {store.path_for(contract.id)}, then `contexer contract approve {contract.id}`.",
+            code=2,
         )
-        raise typer.Exit(code=2)
     console.print()
-    if not yes and not typer.confirm("Approve these checks as the definition of done?", default=False):
-        store.save(contract)
-        term.note(console, "warn", f"Not approved. Edit {escape(str(store.path_for(contract.id)))} and run again.")
-        raise typer.Exit(code=2)
+    store.save(contract)
+    if not yes and not is_interactive():
+        _fail(console, "Not approved", *_not_at_a_terminal(contract.id), code=2)
+    while not yes:
+        # No Intent agent in this path, so a sentence cannot redraft the checks: the keys are y, n and e.
+        kind, _ = _ask_approval(console, can_correct=False)
+        if kind == "approve":
+            break
+        if kind == "reject":
+            _fail(
+                console,
+                "Not approved",
+                "you answered no, so nothing was built",
+                f"edit {store.path_for(contract.id)}, then `contexer run --contract {contract.id}`.",
+                code=2,
+            )
+        edited = _edit_contract(console, store, contract.id)
+        if edited is not None:
+            contract = edited
+            print_checklist(console, contract)
+            console.print()
     approved = store.approve(contract.id, by=AUTOMATIC_APPROVAL if yes else None)
     console.print(f"{term.mark('pass')} Approved [bold]{escape(approved.id)}[/]")
     return approved
@@ -755,14 +1031,12 @@ def check_free_quota(
     )
     console.print()
     if quota.remaining <= 0:
-        term.note(console, "fail", "[bold red]No free requests left today[/]")
-        console.print(f"  {escape(detail)}\n  {escape(remedy)}")
-        raise typer.Exit(code=3)
+        _fail(console, "No free requests left today", detail, remedy, code=3)
     low = quota.remaining < discovery.LOW_FREE_REQUESTS
     term.note(console, "warn", "[bold yellow]Few free requests left[/]" if low else "[yellow]This run can use more free requests than are left[/]")
     console.print(f"  {escape(detail)}\n  If they run out, the run stops and keeps its best attempt. {escape(remedy)}")
     if low and not yes and not typer.confirm("Start anyway?", default=False):
-        raise typer.Exit(code=2)
+        _fail(console, "Not started", "you answered no with few free requests left", remedy, code=2)
 
 
 def choose_agent(project: AgentSettings, flag_name: str | None, flag_model: str | None) -> tuple[str, str | None]:

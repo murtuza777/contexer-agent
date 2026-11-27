@@ -187,16 +187,15 @@ def _with_measured(record: ModelCapabilities, endpoint: str) -> ModelCapabilitie
 
 def save_measurement(provider: str, base_url: str, model: str, *, native_tools: bool) -> None:
     """Keep what one real tool call showed, beside the settings ``contexer setup`` saves (never in a project)."""
-    from contexer.config.user import contexer_home
+    from contexer.config.user import home_dir
 
     measurements = _load_measurements()
     measurements[_measurement_key(provider, base_url.rstrip("/"), model)] = {
         "native_tools": native_tools,
         "on": date.today().isoformat(),
     }
-    home = contexer_home()
-    home.mkdir(parents=True, exist_ok=True)
-    (home / MEASUREMENTS_FILE).write_text(json.dumps(measurements, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # `contexer setup` saves this before it saves a key, so this call is often the one that creates the folder.
+    (home_dir() / MEASUREMENTS_FILE).write_text(json.dumps(measurements, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _load_measurements() -> dict[str, Any]:

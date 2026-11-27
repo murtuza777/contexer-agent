@@ -43,6 +43,9 @@ def crew(monkeypatch: pytest.MonkeyPatch) -> Any:
     """No model for Contexer's own agents unless a test installs one: `crew(AgentScript(...))`."""
     monkeypatch.delenv("CONTEXER_ENGINE", raising=False)
     monkeypatch.setattr("contexer.cli.run_cli.compiler_llm", lambda *_a, **_k: None)
+    # A person is at the terminal: what a test gives as input is what they type. Without one, a run asks nothing
+    # and approves nothing (tests/test_run_approval.py).
+    monkeypatch.setattr("contexer.cli.run_cli.is_interactive", lambda: True)
 
     def install(model: Any) -> Any:
         monkeypatch.setattr("contexer.cli.run_cli.crew_model", lambda *_a, **_k: model)

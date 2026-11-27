@@ -70,6 +70,39 @@ def test_a_credentials_file_that_was_readable_is_closed_before_the_key_is_writte
     assert seen == [0o600] and stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_whatever_creates_the_settings_folder_first_asks_for_owner_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`contexer setup` saves what it measured before it saves a key, so that call is the one that makes the folder."""
+    from contexer.llm.capabilities import save_measurement
+
+    asked: list[tuple[Path, int]] = []
+    real = Path.mkdir
+
+    def recording(self, mode=0o777, parents=False, exist_ok=False):
+        asked.append((Path(self), mode))
+        return real(self, mode=mode, parents=parents, exist_ok=exist_ok)
+
+    monkeypatch.setattr(Path, "mkdir", recording)
+    for name, save in (
+        ("measured-first", lambda: save_measurement("custom", "https://models.example.test/v1", "house-model", native_tools=True)),
+        ("settings-first", lambda: user.save_user_settings(user.UserSettings(provider="custom"))),
+        ("key-first", lambda: user.save_credential("OPENROUTER_API_KEY", "made-up-key-1")),
+    ):
+        home = tmp_path / name
+        monkeypatch.setenv("CONTEXER_HOME", str(home))
+        save()
+        assert [mode for path, mode in asked if path == home] == [0o700], name
+
+
+@POSIX_ONLY
+def test_the_settings_folder_is_owner_only_when_a_measurement_creates_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contexer.llm.capabilities import save_measurement
+
+    home = tmp_path / "fresh-home"
+    monkeypatch.setenv("CONTEXER_HOME", str(home))
+    save_measurement("custom", "https://models.example.test/v1", "house-model", native_tools=True)
+    assert stat.S_IMODE(home.stat().st_mode) == 0o700
+
+
 # -- skills on load ----------------------------------------------------------------------------------
 
 

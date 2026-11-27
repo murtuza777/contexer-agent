@@ -10,8 +10,9 @@ Who decides what:
 * ``intent``, ``plan``, ``triage`` and ``diagnose`` ask a model, when one
   is configured. Without one they do nothing, apply fixed rules, or leave
   the prompt as code wrote it.
-* ``guard_snapshot``, ``score`` and ``finalize`` ask nobody. Tampering, the
-  score, the revert to the best attempt and the final outcome are code.
+* ``baseline``, ``guard_snapshot``, ``score`` and ``finalize`` ask nobody.
+  Which earlier checks were already failing, tampering, the score, the revert
+  to the best attempt and the final outcome are code.
 """
 
 from __future__ import annotations
@@ -29,7 +30,14 @@ from contexer.appserver import AppStartError, open_app
 from contexer.config.project import dependency_lookup
 from contexer.contract import Contract
 from contexer.controller.models import Attempt, RunOutcome
-from contexer.controller.prompts import failure_report, implement_prompt, repair_prompt, restated_prompt, with_brief
+from contexer.controller.prompts import (
+    failure_report,
+    implement_prompt,
+    masked_for_agent,
+    repair_prompt,
+    restated_prompt,
+    with_brief,
+)
 from contexer.controller.shared import (
     DEPENDENCY_FILES,
     check_count,
@@ -50,7 +58,7 @@ from contexer.crew.transcript import Masker
 from contexer.crew.triage import DEFAULT_MAX_STEPS as DEFAULT_TRIAGE_STEPS
 from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, TriageDecision, triage
 from contexer.crew.untrusted import quoted_goal
-from contexer.evidence.rundir import PROMPT_FILE, write_whole
+from contexer.evidence.rundir import PROMPT_FILE, RunDir, write_whole
 from contexer.evidence.test_report import AgentUsage
 from contexer.gate.decision import decide
 from contexer.gate.models import GateDecision, RunResult
@@ -67,6 +75,8 @@ Node = Callable[[LoopState], Awaitable[dict[str, Any]]]
 _REVIEW_DIFF_CHARS = 200_000
 # A review may ask the coding agent for one more turn on work that passed, and no more.
 MAX_REVIEW_REPAIRS = 1
+# The folder in a run's folder with the replay of the earlier contracts before the first turn.
+BASELINE_DIR = "baseline"
 
 
 def make_nodes(ctx: RunContext) -> dict[str, Node]:
@@ -246,6 +256,50 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             updates["prompt"] = with_brief(state["prompt"], brief)
         return updates
 
+    # -- baseline: which earlier checks hold on the project as it was found -------------------
+
+    async def baseline(state: LoopState) -> dict[str, Any]:
+        if state.get("baseline") is not None or not ctx.others:
+            return {}  # taken once in a run; with no earlier contract there is nothing to replay
+        cannot_sign_in = await _sign_in_problem(ctx)
+        if cannot_sign_in:
+            return {"terminal": "needs_human", "reason": cannot_sign_in}
+        count = check_count(ctx.others)
+        ctx.event(
+            "phase-quiet",
+            f"Replaying {count} earlier check{'' if count == 1 else 's'} on the project as it is, before the first turn",
+        )
+        passed: list[str] = []
+        failing: list[str] = []
+        ran = False
+        if _start_app(ctx, []) is None and ctx.app is not None:
+            path = ctx.run.path / BASELINE_DIR
+            path.mkdir(parents=True, exist_ok=True)
+            folder = RunDir(run_id=f"{ctx.run.run_id}/{BASELINE_DIR}", path=path)
+            session = VerificationSession(ctx.project, folder, verifier=Verifier(llm_provider=None, runner=ctx.runner))
+            result = await session.verify(ctx.app, ctx.others, judged_policy=ctx.settings.judged_policy)
+            write_whole(path / "run-result.json", result.model_dump_json())  # what the baseline is read from, kept
+            ran = bool(result.contracts)  # none when the page did not load or the sign-in failed
+            for outcome in result.contracts:
+                for r in outcome.verification.criteria_results if outcome.verification else []:
+                    if r.proven:
+                        (passed if r.verdict == "verified" else failing).append(f"{outcome.contract.id}/{r.criterion_id}")
+        if not ran:
+            ctx.event(
+                "strategy",
+                "The earlier checks could not be replayed before the first turn (the app does not start or load yet), "
+                "so nothing says which of them were already failing. Every earlier check that fails counts against this change.",
+            )
+        elif failing:
+            one = len(failing) == 1
+            ctx.event(
+                "strategy",
+                f"{len(failing)} earlier check{' was' if one else 's were'} already failing before this change: "
+                f"{', '.join(failing)}. {'It is' if one else 'They are'} not counted against it, and not proven.",
+                stale=len(failing),
+            )
+        return {"baseline": {"ran": ran, "passed": passed, "failing": failing}, "elapsed": ctx.elapsed()}
+
     # -- coder_turn: the coding agent edits files --------------------------------------------
 
     async def coder_turn(state: LoopState) -> dict[str, Any]:
@@ -278,11 +332,13 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         _announce_checks(ctx)
         ctx.detail("attempt-start", n=n, doing=doing, fresh=bool(fresh and n > 1), agent=ctx.agent.describe())
         ctx.event("phase", f"Attempt {n}: {doing}{' (fresh session)' if fresh and n > 1 else ''} with {ctx.agent.describe()}")
-        # What the agent is asked, kept as evidence in the run folder (never in a snapshot or a hand-off).
-        write_whole(ctx.attempt_dir(n).path / PROMPT_FILE, Masker(ctx.secrets()).text(state["prompt"]))
+        # Every prompt to the coding agent passes here: the first instruction, a repair, a restated job. What is
+        # sent is masked, and the same text is kept as evidence in the run folder (never in a snapshot or a hand-off).
+        sent = masked_for_agent(state["prompt"], ctx.secrets())
+        write_whole(ctx.attempt_dir(n).path / PROMPT_FILE, sent)
         turn = await ctx.agent.run_turn(
             ctx.project,
-            state["prompt"],
+            sent,
             session_id=None if fresh else state.get("session_id"),
             timeout=ctx.settings.turn_timeout,
             budget_usd=remaining,
@@ -374,6 +430,17 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             ctx.event("phase", f"Attempt {n}: proving {check_count(contracts)} checks in Chromium", n=n, proving=check_count(contracts))
             session = VerificationSession(ctx.project, folder, verifier=Verifier(llm_provider=None, runner=ctx.runner))
             result = await session.verify(ctx.app, contracts, judged_policy=ctx.settings.judged_policy)
+            stale = _stale(ctx, state)
+            if stale and result.contracts:
+                # The same verdicts, decided again with what the baseline showed: a check that already
+                # failed before the first turn is listed, and does not count against this change.
+                result.decision = decide(
+                    result.contracts,
+                    require_approval=result.require_approval,
+                    judged_policy=ctx.settings.judged_policy,
+                    stale=stale,
+                )
+            result.decision.regressions = _regressions(state, result)
         else:
             session = VerificationSession(ctx.project, folder)
             decision = GateDecision(outcome="error", reasons=[f"App did not start: {error}"])
@@ -413,6 +480,8 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             unverified=result.decision.unverified,
             checks=_check_rows(result, contract.id),
             others_failing=_others_failing(result, contract.id),
+            stale=len(result.decision.stale),
+            regressions=[{"check": label, "attempt": broke} for label, broke in result.decision.regressions.items()],
         )
         updates: dict[str, Any] = {"elapsed": ctx.elapsed()}
 
@@ -662,6 +731,8 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 secrets=ctx.secrets(),
             )
             updates["agents"] = _used(state, "diagnoser", found.steps, found.tokens_in, found.tokens_out, _cost(ctx, found))
+            if found.status != "ok":
+                ctx.event("strategy", f"The Diagnoser did not finish ({found.error or found.status}); the repair prompt holds what the browser saw, without a cause.")
             section = brief_section(found.brief)
             if section and found.brief is not None:
                 prompt += "\n\n" + section
@@ -686,7 +757,12 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         # The attempt that must have passed: the last one, or the one that stands after a review's repair was undone.
         accepted = state.get("accepted")
         proven = accepted if accepted is not None and accepted == best else (best if best == final_n else None)
-        terminal, reason = settle(state.get("terminal") or "", state.get("reason") or "", _gate(ctx, proven))
+        terminal, reason = settle(state.get("terminal") or "", state.get("reason") or "", _gate(ctx, proven, _stale(ctx, state)))
+        # A run with an earlier check that was failing before it never reads as fully clean, whatever it ends as.
+        left = ctx.result(best) if best is not None else ctx.result(final_n)
+        already_failing = left.decision.stale_line() if left is not None else ""
+        if already_failing:
+            reason = f"{reason.replace('Every check proven', 'Every other check proven', 1)} {already_failing}".strip()
 
         # Leave the project in the best state that was reached, and never worse than it was found.
         if terminal == "tampered":
@@ -712,7 +788,9 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         outcome.terminal, outcome.reason = terminal, reason  # type: ignore[assignment]
         outcome.best_attempt = best
         outcome.approved_hash = state.get("approved_hash") or ""
-        outcome.final = ctx.result(best) if best is not None else ctx.result(final_n)
+        outcome.final = left
+        if left is not None:
+            outcome.stale, outcome.regressions = list(left.decision.stale), dict(left.decision.regressions)
         outcome.diff = ctx.shadow.diff(baseline, end)
         outcome.changed_files = ctx.shadow.changed_paths(baseline, end)
         outcome.duration_seconds = ctx.elapsed()
@@ -736,6 +814,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         "intent": intent,
         "approve": approve,
         "plan": plan,
+        "baseline": baseline,
         "coder_turn": coder_turn,
         "guard_snapshot": guard_snapshot,
         "ensure_app": ensure_app,
@@ -928,14 +1007,52 @@ def _check_rows(result: RunResult, contract_id: str) -> list[dict[str, Any]]:
 
 
 def _others_failing(result: RunResult, contract_id: str) -> int:
-    """How many checks of earlier approved contracts did not hold: what this change broke elsewhere."""
+    """How many checks of earlier approved contracts did not hold: what this change broke elsewhere.
+
+    A check that was already failing before the run is not among them; the verdict counts those apart.
+    """
+    stale = set(result.decision.stale)
     return sum(
         1
         for outcome in result.contracts
         if outcome.contract.id != contract_id and outcome.verification is not None
         for r in outcome.verification.criteria_results
-        if r.verdict != "verified"
+        if r.verdict != "verified" and f"{outcome.contract.id}/{r.criterion_id}" not in stale
     )
+
+
+def _stale(ctx: RunContext, state: LoopState) -> set[str]:
+    """The earlier checks that already failed before the first turn. Never a check of the contract being built."""
+    own = f"{ctx.contract.id}/" if ctx.contract is not None else ""
+    failing = (state.get("baseline") or {}).get("failing", [])
+    return {label for label in failing if not (own and label.startswith(own))}
+
+
+def _regressions(state: LoopState, result: RunResult) -> dict[str, int]:
+    """The earlier checks that passed before the first turn and fail in ``result`` -> the attempt that broke each."""
+    passed = set((state.get("baseline") or {}).get("passed", []))
+    broken = sorted({sig_label(s) for s in signatures(result)} & passed)
+    attempts = _attempts(state)
+    return {label: _broken_in(label, attempts) for label in broken} if attempts else {}
+
+
+def _broken_in(label: str, attempts: list[Attempt]) -> int:
+    """The attempt that broke a check which fails in the latest one, with the project as found as attempt 0.
+
+    Walks back through the attempts the files came from (the one before, or the one they were put back
+    to), as ``_tried`` does, to the first that began from files where the check passed. An attempt
+    where no check ran did not show it passing, so the walk goes on through it.
+    """
+    by_n = {a.n: a for a in attempts}
+    n = attempts[-1].n
+    while True:
+        before = by_n.get(n - 1)
+        if before is None:
+            return n  # it began from the project as found, where the check passed
+        base = by_n.get(before.reverted_to, before) if before.reverted_to is not None else before
+        if base.outcome != "error" and label not in {sig_label(s) for s in base.signatures}:
+            return n
+        n = base.n
 
 
 def _cost(ctx: RunContext, used: Any) -> float | None:
@@ -1030,11 +1147,14 @@ def _situation(ctx: RunContext, state: LoopState) -> Situation:
 def _failures(result: RunResult) -> list[Failure]:
     """The checks that were run and did not hold, in the shape the Diagnoser reads."""
     failures: list[Failure] = []
+    stale = set(result.decision.stale)  # already failing before the run: not this change's to repair
     for outcome in result.contracts:
         checks = {c.id: c for c in outcome.contract.criteria}
         for r in outcome.verification.criteria_results if outcome.verification else []:
             criterion = checks.get(r.criterion_id)
             if not r.proven or r.verdict == "verified" or r.check_result is None or criterion is None or criterion.check is None:
+                continue
+            if f"{outcome.contract.id}/{r.criterion_id}" in stale:
                 continue
             failures.append(Failure(title=criterion.description, check=criterion.check, result=r.check_result))
     return failures
@@ -1067,12 +1187,21 @@ def _tried(state: LoopState) -> list[Tried]:
     return tried
 
 
-def _gate(ctx: RunContext, n: int | None) -> GateDecision | None:
-    """The gate's decision on attempt ``n``, computed again from the verdicts that were recorded."""
+def _gate(ctx: RunContext, n: int | None, stale: set[str] | None = None) -> GateDecision | None:
+    """The gate's decision on attempt ``n``, computed again from the verdicts that were recorded.
+
+    ``stale`` is read from the baseline in the state, not from the result: the checks that were failing
+    before the first turn.
+    """
     result = ctx.result(n)
     if result is None:
         return None
-    again = decide(result.contracts, require_approval=result.require_approval, judged_policy=ctx.settings.judged_policy)
+    again = decide(
+        result.contracts,
+        require_approval=result.require_approval,
+        judged_policy=ctx.settings.judged_policy,
+        stale=stale or (),
+    )
     return again if result.decision.outcome == "pass" else result.decision
 
 
@@ -1105,6 +1234,7 @@ def _outcome(ctx: RunContext, state: LoopState, attempts: list[Attempt]) -> RunO
         review=[ReviewNote.model_validate(note) for note in state.get("review", [])],
         crew_cost_usd=_crew_cost(state),
         crew_cost_estimated=bool(ctx.budget is not None and ctx.budget.estimated),
+        baseline=state.get("baseline"),
     )
 
 
@@ -1192,6 +1322,8 @@ def _cut_short(ctx: RunContext, terminal: Any, reason: Callable[[str, str], str]
     outcome.reason = reason(put_back, kept)
     outcome.best_attempt = best
     outcome.final = ctx.result(best)
+    if outcome.final is not None:
+        outcome.stale, outcome.regressions = list(outcome.final.decision.stale), dict(outcome.final.decision.regressions)
     outcome.diff = ctx.shadow.diff(snapshots["0"], target)
     outcome.changed_files = ctx.shadow.changed_paths(snapshots["0"], target)
     outcome.duration_seconds = ctx.elapsed()

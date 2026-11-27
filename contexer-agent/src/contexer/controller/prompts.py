@@ -7,7 +7,10 @@ sees the same definition of done.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from contexer.contract import Contract
+from contexer.crew.transcript import Masker
 from contexer.crew.untrusted import quoted_goal, untrusted
 from contexer.gate.models import RunResult
 from contexer.verification.models import CriterionResult, VerificationResult, format_contract
@@ -97,6 +100,19 @@ def repair_prompt(
         # The app started but nothing could be checked, e.g. the sign-in flow broke.
         parts.append("No check could run:\n" + untrusted("browser", "\n".join(result.decision.reasons)))
     failing = _failing(result)
+    # What this change broke comes first: an earlier approved behaviour that passed before the first turn.
+    regressions = result.decision.regressions
+    broken = [(cid, r) for cid, r in failing if f"{cid}/{r.criterion_id}" in regressions]
+    if broken:
+        named = "\n".join(
+            f"- {cid}/{r.criterion_id}: broken in attempt {regressions[f'{cid}/{r.criterion_id}']}" for cid, r in broken
+        )
+        observed = "\n\n".join(_bundle(cid, r) for cid, r in broken)
+        parts.append(
+            f"{len(broken)} check(s) of previously approved behaviour passed before your changes and fail now. "
+            f"These are regressions. Repair them first, before the new work:\n{named}\n\n" + untrusted("browser", observed)
+        )
+        failing = [(cid, r) for cid, r in failing if f"{cid}/{r.criterion_id}" not in regressions]
     if failing:
         observed = "\n\n".join(_bundle(cid, r) for cid, r in failing)
         parts.append(f"{len(failing)} check(s) did not pass:\n\n" + untrusted("browser", observed))
@@ -139,15 +155,32 @@ def restated_prompt(contract: Contract, others: list[Contract], correction: str)
     )
 
 
+def masked_for_agent(prompt: str, secrets: Sequence[str]) -> str:
+    """A prompt as the coding agent is sent it, and as it is kept: with every secret the run knows replaced.
+
+    The coding agent is another program, and what it reads goes to its own provider. A repair prompt quotes
+    the page, so it can hold the ``[auth]`` password or a key the app shows. Text with no secret in it comes
+    back unchanged.
+
+    Three things are recognised: the values in ``secrets`` (the passwords and codes ``[auth]`` types), the
+    values of the key and token variables Contexer knows by name, and text shaped like an OpenAI, OpenRouter
+    or Google key. A secret outside those, such as a session cookie or another service's token that a page
+    prints, is not recognised and is sent as it is. A password that is also an ordinary word is masked
+    wherever that word stands, in the rules and the checks too.
+    """
+    return Masker(secrets).text(prompt)
+
+
 def _results(verification: VerificationResult | None) -> list[CriterionResult]:
     return verification.criteria_results if verification is not None else []
 
 
 def _failing(result: RunResult) -> list[tuple[str, CriterionResult]]:
     out: list[tuple[str, CriterionResult]] = []
+    stale = set(result.decision.stale)  # already failing before the run: not this change's to repair
     for outcome in result.contracts:
         for r in _results(outcome.verification):
-            if r.proven and r.verdict != "verified":
+            if r.proven and r.verdict != "verified" and f"{outcome.contract.id}/{r.criterion_id}" not in stale:
                 out.append((outcome.contract.id, r))
     return out
 

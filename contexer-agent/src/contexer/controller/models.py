@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -94,6 +94,13 @@ class RunOutcome(BaseModel):
     crew_cost_estimated: bool = False
     # The hash of the checks as they were last approved in this run. The hand-off commits no contract that differs.
     approved_hash: str = ""
+    # The earlier contracts replayed before the first turn: whether that ran, and the checks ("contract/check")
+    # that passed and failed then. None: there was no earlier contract, so nothing was replayed.
+    baseline: dict[str, Any] | None = None
+    # In the state the run left: earlier checks that were already failing before it (they did not count and are
+    # not proven), and earlier checks it broke -> the attempt that broke each.
+    stale: list[str] = Field(default_factory=list)
+    regressions: dict[str, int] = Field(default_factory=dict)
 
     @property
     def exit_code(self) -> int:

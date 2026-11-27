@@ -38,7 +38,7 @@ async def test_each_attempts_prompt_is_kept_masked_and_shown_in_the_report(tmp_p
     second = (run_dir / "attempt-2" / PROMPT_FILE).read_text(encoding="utf-8")
     assert first == agent.prompts[0]  # word for word what was sent
     assert "complete-decrements" in second and MADE_UP_TOKEN not in second
-    assert second == agent.prompts[1].replace(MADE_UP_TOKEN, MASK)
+    assert second == agent.prompts[1] and MASK in second  # the agent is sent the masked text too
 
     report = (run_dir / "report.html").read_text(encoding="utf-8")
     assert report.count("What the coding agent was asked") == 2

@@ -469,6 +469,25 @@ stateDiagram-v2
     Succeeded --> [*]
 ```
 
+Before the first turn, when there are other approved contracts
+(`graph/nodes.py: baseline`): their checks are replayed once on the project as
+it was found, in `runs/<run>/baseline/`. The run keeps which passed and which
+failed. A check that passed there and fails after an attempt is a
+**regression**: it is named first in the repair prompt, with the attempt that
+broke it (`_broken_in`), and in the report, the run view and the pull
+request. A check that already failed there is **stale**: it does not fail the
+gate (`gate/decision.py: decide(stale=...)`), costs nothing in the score, has
+no signature and is not sent to the coding agent, Triage or the Diagnoser. It
+is listed as not proven on every verdict, in `run.json`, the report and the
+pull request, and the run's last line says how many there are. If the app
+does not start or load for that replay there is no baseline: every earlier
+check that fails counts against the change, as before. No model takes part.
+`contexer verify`, `contexer replay`, the MCP server and the stop hook have no
+baseline, so a failing approved check fails there. Limits: a check that was
+stale at the baseline and is broken again later in the run stays stale; and
+files the app writes during the replay are in the first attempt's changed
+files.
+
 Per attempt *n*:
 
 1. **Agent turn**: implement (attempt 1) or repair, with the remaining budget
@@ -551,11 +570,13 @@ prompts; `tests/test_controller.py` pins what those produce.
   input_usd_per_mtok` and `output_usd_per_mtok` when the project sets
   them (for every model), else at the prices in the called model's own
   record, cached input at its cached price. With neither, cost is unknown
-  and is said as "unknown", never as $0.00. `contexer run` and `contexer
-  test` refuse a dollar limit they could not keep before anything is
-  spent (`budget.unenforceable`): a model with no known price, or a coding
-  agent that reports no cost (Codex, OpenCode) under `max_usd`. `contexer
-  test` reads the same `[agents] max_usd` and rates. Cached input: the
+  and is said as "unknown", never as $0.00. `contexer run`, `contexer
+  test` and `contexer issue build` refuse a dollar limit they could not
+  keep before anything is spent (`budget.unenforceable`): a model with no
+  known price, or a coding agent that reports no cost (Codex, OpenCode)
+  under `max_usd`. `contexer test` and `contexer issue build` read the
+  same `[agents] max_usd` and rates (an issue build has no `--max-usd`
+  flag, and says the refusal on the issue). Cached input: the
   Anthropic model marks the tools and the system prompt for caching, and
   OpenRouter is sent one `session_id` per model object (`llm/chat.py`).
   A coding agent can overshoot within one turn: Claude Code
@@ -585,8 +606,9 @@ intent → approve → coder_turn → guard_snapshot → ensure_app → test →
                         └────────────── diagnose ◄──────────────────────┘
 ```
 
-Before the first turn, `approve` leads to `plan` and `plan` to `coder_turn`.
-Checks approved again after work began go from `approve` straight to
+Before the first turn, `approve` leads to `plan` and `plan` to `coder_turn`;
+when there are other approved contracts and no baseline yet, `plan` leads to
+`baseline` first. Checks approved again after work began go from `approve` straight to
 `coder_turn`.
 
 | Node | Does | Asks a model |
@@ -594,6 +616,7 @@ Checks approved again after work began go from `approve` straight to
 | `intent` | Starts the app and reads what the page shows, then drafts checks from the goal, or redrafts them for a correction; saves the intent and an unapproved contract | The Intent agent, when a model is configured |
 | `approve` | Waits for a person (`interrupt`) unless the contract is approved at the hash the state holds | No |
 | `plan` | Before the first turn only: reads the project and adds a brief after the first instruction. Does nothing with no model, a spent budget or `--no-plan` | The Planner, when a model is configured |
+| `baseline` | Once, before the first turn, when there are other approved contracts: replays their checks on the project as found and keeps which passed and which failed. A run resumed after it does not replay them again | No |
 | `coder_turn` | One turn of the coding agent; before it, the wall-clock and budget limits | No |
 | `guard_snapshot` | Restores the files that define done if the agent touched them (`tampered`), snapshots the work | No |
 | `ensure_app` | Starts or refreshes the app | No |
@@ -1044,8 +1067,15 @@ result; those are in the agent's transcript under the same agent and step.
 Every line is masked. `run.json` gets each agent's count of repaired calls
 from this file when the run ends.
 
-**Masking** (`crew/transcript.py: Masker`): one masker is used in four
+**Masking** (`crew/transcript.py: Masker`): one masker is used in five
 places.
+
+- Every prompt for the coding agent (the first instruction, a repair, a
+  restated job) is masked in `coder_turn` before it is handed over
+  (`controller/prompts.py: masked_for_agent`), and that same text is kept
+  as `attempt-<n>/prompt.md`. A prompt with no secret in it is sent as
+  code wrote it. A password that is also an ordinary word is replaced
+  wherever the word stands, in the rules and the checks too.
 
 - The task an agent is given and every tool result are masked before the
   model is sent them (`crew/base.py`), and so is every line of the transcript.
@@ -1243,9 +1273,9 @@ flowchart LR
   a pull request. Limits: only the three file names at the root are
   read; a line the file states is passed on whatever it says (the coding
   agent reads the same file itself); when GitHub cannot be asked, the run
-  says so and goes on without the comments; `contexer issue draft` does
-  not yet give the comments to the Intent agent (the Intent agent of a
-  run does, in its `intent` node); the Diagnoser, the Tester and Triage are not given these sources.
+  says so and goes on without the comments; `contexer issue draft` gives
+  its Intent agent the same comments, filtered and quoted the same way
+  (`cli/issue_cli.py: _discussion`); the Diagnoser, the Tester and Triage are not given these sources.
 - **A diff that is too long** (`checkpoint/shadow.py: cut_diff`). The
   Diagnoser's diff (12,000 characters), the Reviewer's (30,000) and
   `ShadowRepo.diff` itself (200,000) are cut by file, not at a character
@@ -1387,7 +1417,7 @@ provider's own variable (`OPENROUTER_MODEL`, `OPENAI_MODEL`,
 - `~/.contexer/` (or `CONTEXER_HOME`): `config.toml` (`[model]` provider,
   model, base URL; `[agent]` name, model) and `credentials.toml` (`[keys]`,
   created with mode 0600 on POSIX, its folder with 0700 when Contexer creates
-  it; on Windows the mode bits do nothing and the folder's access rules apply).
+  it, whichever file is saved first (`home_dir`); on Windows the mode bits do nothing and the folder's access rules apply).
 - Precedence: exported variables, then the project's `.env`, then what
   `contexer setup` saved, then `contexer.toml` for the settings it covers.
   `apply_user_settings` fills only unset variables and records what it set,
@@ -1660,6 +1690,43 @@ and a last `end` with `terminal`, `reason`, `exit_code`, `attempts`,
 `cost_usd`, `report`, `pull_request` and `draft`. It needs `--yes`, since
 it cannot stop to ask.
 
+`contexer run --plain` (`term.plain_console`) prints the lines that stay
+for a CI log, a pipe or a screen reader: no colour, nothing redrawn, a
+mark at the start of a line as a word (`ok:`, `not ok:`, `open:`,
+`warning:`), `·` as a comma, a failed check and what the browser saw on
+one line, and no line wrapped. It is a rewrite of the text on its way
+out, so it also changes those characters inside a check's own words. It
+is an option of `run` only, and Typer's own usage errors (an option that
+does not exist) keep their box.
+
+**Approval** (`cli/run_cli.py: _asker`, `_approve`). The checks are a
+numbered list and the keys are shown: `y` approves, `n` does not, `e`
+opens the contract's file in `$VISUAL` or `$EDITOR`, and a sentence is a
+correction. Only `y` approves: an empty line is a no, one word that is
+not a key is asked about again, and where stdin or stdout is not a
+terminal nothing is approved (`--yes` is the only approval without a
+person, recorded as `--yes (not reviewed by a person)`). The editor is
+started as a program with the file as its last argument, never through a
+shell. What comes back is read as a contract: one that does not parse,
+has another id or has no executable check is put back as it was; a valid
+one is shown and asked about again, and is put back as drafted when the
+answer is no. Where no model is configured for Contexer's own agents the
+contract is approved before the run and a sentence cannot redraft it, so
+the keys there are `y`, `n` and `e`.
+
+**Ctrl+C** (`cli/run_cli.py: _CtrlC`). The first press cancels the run's
+task and says so; the engine then stops in order ("Stopping" in the run loop). From then
+on a press prints one line and changes nothing, so the project cannot be
+left half restored and the run lock is released. At a question to the
+person Ctrl+C leaves the question. The handler is in place from the
+moment the lock is held until it is released. A stop that waits for the
+current step to finish does not exist: the first press stops the agent
+at once.
+
+**Errors** (`term.error`). Every error `contexer run` prints is three
+lines: what happened and why, `Next:` with the next step, and `Exit code
+N.` With `--json` it goes to stderr.
+
 `contexer doctor` checks Python, Chromium (launching it), git, Node, saved
 settings, the drafting model, coding agents, OpenRouter's free requests, the
 GitHub token, how the project starts, its contracts and its sign-in secrets,
@@ -1687,7 +1754,7 @@ and prints the fix under each problem.
 | `[agent] max_repair_rounds` | 2 | Repair rounds after the first attempt |
 | `[agent] budget_usd` | none | Stop when the agent has spent this much |
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
-| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins. Read by `run` and `test`. Refused at the start when part of the spend cannot be known |
+| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins. Read by `run`, `test` and `issue build`. Refused at the start when part of the spend cannot be known |
 | `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens for every model, used when the provider reports no cost. Without them a call is priced from its model's own record, when that states a price |
 | `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer`. Read by `run` and `test`. `provider` needs `model`; a model that cannot be built stops the command |
 | `[review] dependency_lookup` | `true` | Whether the review asks npm or PyPI about each package a change adds. `false`: no request, no note. A misspelt key in `[review]` is an error |
