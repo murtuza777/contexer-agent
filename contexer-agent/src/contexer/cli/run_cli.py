@@ -7,10 +7,11 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, NoReturn
@@ -639,6 +640,76 @@ def _asker(
     return ask
 
 
+class _CtrlC:
+    """What Ctrl+C does while a run is under way.
+
+    The first press stops the run in order: the engine stops the app and the agent, keeps the unfinished
+    work as a snapshot and puts the project back (graph/engine.py). Python's own handling raises
+    KeyboardInterrupt at a second press wherever the program is, and that can be in the middle of putting
+    the files back. So from the first press on, a press is answered with a line and changes nothing: the
+    stop that is under way ends with the project whole and the run lock released.
+
+    At a question to the person Ctrl+C leaves the question, as it does anywhere, and the run stops in order.
+    """
+
+    def __init__(self, console: Console, activity: Any) -> None:
+        self.console = console
+        self.activity = activity
+        self.asking = False
+        self.stopping = False
+        self._task: asyncio.Task[Any] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._installed = False
+        self._before: Any = None
+
+    def install(self) -> None:
+        try:
+            self._before = signal.signal(signal.SIGINT, self._pressed)
+            self._installed = True
+        except ValueError:  # not the main thread: Ctrl+C does not arrive here
+            pass
+
+    def remove(self) -> None:
+        if self._installed:
+            signal.signal(signal.SIGINT, self._before if self._before is not None else signal.default_int_handler)
+            self._installed = False
+
+    async def watch(self, run: Coroutine[Any, Any, RunOutcome]) -> RunOutcome:
+        """Run ``run`` as the task the first press cancels."""
+        self._loop, self._task = asyncio.get_running_loop(), asyncio.current_task()
+        return await run
+
+    def at_a_question(self, ask: Callable[[dict[str, Any]], dict[str, Any]]) -> Callable[[dict[str, Any]], dict[str, Any]]:
+        def asked(request: dict[str, Any]) -> dict[str, Any]:
+            self.asking = True
+            try:
+                return ask(request)
+            finally:
+                self.asking = False
+
+        return asked
+
+    def _pressed(self, _signum: int, _frame: Any) -> None:
+        if self.asking:
+            self.stopping = True
+            raise KeyboardInterrupt
+        if self._task is None or self._loop is None:  # the run has not begun: nothing to put back
+            raise KeyboardInterrupt
+        if self._task.done():  # the run is over; what is left releases the project
+            return
+        if self.stopping:
+            term.note(
+                self.console,
+                "warn",
+                "Still putting the project back. Ctrl+C does not cut that short, so the project is never left half restored.",
+            )
+            return
+        self.stopping = True
+        self.activity.stop()
+        term.note(self.console, "warn", "Stopping: the agent is stopped, its unfinished work is kept, and the project is put back.")
+        self._loop.call_soon_threadsafe(self._task.cancel)
+
+
 def execute_graph(
     console: Console,
     project: Path,
@@ -701,6 +772,7 @@ def execute_graph(
         elif event.kind != "end":  # the last line is written when the hand-off is known too
             emit_json(event.as_json())
 
+    stop = _CtrlC(console, activity)
     if json_output:
         emit_json(
             {
@@ -722,21 +794,22 @@ def execute_graph(
         on_event=on_progress,
         on_detail=on_detail,
         model=model,
-        ask=_asker(console, activity, yes, store),
+        ask=stop.at_a_question(_asker(console, activity, yes, store)),
         # Triage may stop to ask only when a person is at the terminal; an approval is always asked for.
         can_ask=not yes and is_interactive(),
         budget=budget,
         models=models,
     )
     held = _take_lock(console, activity, agent, project, resume or "")
+    stop.install()
     try:
         if resume:
-            outcome = asyncio.run(controller.resume(resume, correction=correction))
+            outcome = asyncio.run(stop.watch(controller.resume(resume, correction=correction)))
         elif contract is not None:
-            outcome = asyncio.run(controller.run(contract, others))
+            outcome = asyncio.run(stop.watch(controller.run(contract, others)))
         else:
             outcome = asyncio.run(
-                controller.run_goal(goal or "", others=others, contract_id=contract_id, origin=origin)
+                stop.watch(controller.run_goal(goal or "", others=others, contract_id=contract_id, origin=origin))
             )
     except SnapshotError as exc:
         _snapshot_failed(console, activity, exc)
@@ -754,6 +827,7 @@ def execute_graph(
         activity.stop()
         agent.close()
         held.close()
+        stop.remove()  # last: a press while the lock is released must not skip releasing it
     return outcome
 
 
