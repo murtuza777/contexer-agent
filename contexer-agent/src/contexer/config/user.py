@@ -43,8 +43,12 @@ def contexer_home() -> Path:
     return Path(os.environ.get("CONTEXER_HOME") or Path.home() / ".contexer")
 
 
-def _home_dir() -> Path:
-    """The settings folder, made for its owner only when it does not exist yet (the mode does nothing on Windows)."""
+def home_dir() -> Path:
+    """The settings folder, created if it is missing. Everything that writes into it gets it from here.
+
+    A folder this call creates is for its owner only (mode 0700). One that already exists keeps the mode it
+    has. On Windows the mode is ignored: the folder gets the permissions of the user profile it is in.
+    """
     home = contexer_home()
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
     return home
@@ -74,7 +78,7 @@ def save_user_settings(settings: UserSettings) -> Path:
     lines += _toml_pairs({"provider": settings.provider, "model": settings.model, "base_url": settings.base_url})
     lines += ["", "[agent]"]
     lines += _toml_pairs({"name": settings.agent, "model": settings.agent_model})
-    path = _home_dir() / CONFIG_FILE
+    path = home_dir() / CONFIG_FILE
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -88,7 +92,7 @@ def save_credential(env_name: str, value: str) -> Path:
     """Store one API key under the environment variable name its provider uses."""
     keys = load_credentials()
     keys[env_name] = value
-    path = _home_dir() / CREDENTIALS_FILE
+    path = home_dir() / CREDENTIALS_FILE
     body = ["# API keys saved by `contexer setup`. Never commit this file.", "", "[keys]", *_toml_pairs(keys)]
     # Created owner-only by the same call that creates it: writing first and changing the mode after left a
     # moment in which the file held a key and others could read it. A file that is already there keeps its

@@ -219,3 +219,25 @@ def test_the_event_command_plans_and_dispatches(github, tmp_path: Path, monkeypa
     _post_draft(fake)
     result = CliRunner().invoke(app, ["issue", "event", "--dir", str(root)])
     assert result.exit_code == 2  # mallory's approval is refused through the same path
+
+
+def test_a_dollar_budget_an_issue_build_could_not_keep_is_refused_before_anything_is_spent(github, tmp_path: Path, monkeypatch) -> None:
+    fake, root = github
+    (root / "contexer.toml").write_text("[agents]\nmax_usd = 2\n", encoding="utf-8")
+    git(root, "add", "-A")
+    git(root, "commit", "--quiet", "-m", "a run budget")
+    monkeypatch.setattr("contexer.agents.ScriptedAgent.reports_cost", False)  # as codex and opencode are
+    _post_draft(fake)
+    turns = tmp_path / "turns.json"
+    turns.write_text(json.dumps([{"app.js": GOOD_JS}]), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["issue", "build", "7", "--by", "alice", "--dir", str(root), "--agent", "scripted", "--model", str(turns)]
+    )
+
+    assert result.exit_code == 2, result.output
+    said = fake.comments[-1]["body"]
+    assert "$2.00" in said and "cannot be enforced" in said and "reports no cost" in said
+    assert fake.pulls == []
+    assert (root / "app.js").read_text(encoding="utf-8") == COUNT_BUG_JS  # no turn was run
+    assert not (root / ".contexer" / "contracts" / "todo-basics.json").exists()  # and nothing was approved

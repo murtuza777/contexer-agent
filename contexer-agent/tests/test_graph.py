@@ -334,9 +334,14 @@ async def test_the_diagnoser_is_shown_the_leads_that_were_already_tried(project:
 async def test_a_diagnoser_that_fails_does_not_stop_the_repair(project: Path) -> None:
     model = AgentScript(diagnoser=[RuntimeError("provider down")])
     agent = RecordingAgent([{"app.js": COUNT_BUG_JS}, {"app.js": GOOD_JS}])
-    outcome = await _graph(project, agent, model=model).run(contract(project))
+    events: list[tuple[str, str]] = []
+    outcome = await _graph(project, agent, model=model, on_event=lambda kind, message: events.append((kind, message))).run(contract(project))
     assert outcome.terminal == "succeeded"
     assert "complete-decrements" in agent.prompts[1] and "Likely cause" not in agent.prompts[1]
+    # The run says so, in a line the run view prints, as it does for the Planner.
+    said = [message for kind, message in events if kind == "strategy" and "Diagnoser" in message]
+    assert len(said) == 1 and said[0].startswith("The Diagnoser did not finish (") and "provider down" in said[0]
+    assert "what the browser saw" in said[0]
 
 
 async def test_a_spent_budget_stops_the_coding_turns_too(project: Path) -> None:

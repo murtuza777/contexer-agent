@@ -16,6 +16,7 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, NoReturn
@@ -39,11 +40,13 @@ from contexer.cli.run_cli import (
     crew_models,
     execute_graph,
     one_engine,
+    run_budget,
 )
 from contexer.config.project import ProjectConfigError, load_project_config, load_project_env
 from contexer.contract import Contract, ContractStore
 from contexer.controller import RunOutcome, RunSettings
-from contexer.crew.budget import DEFAULT_MAX_TOKENS, Budget
+from contexer.crew.budget import unenforceable
+from contexer.crew.context_sources import ContextSource, issue_source
 from contexer.crew.intent import IntentResult, Question, run_intent
 from contexer.evidence import RunDir
 from contexer.gate import RunResult
@@ -70,6 +73,7 @@ from contexer.github.issues import (
     draft_comment,
     find_draft,
     issue_answers,
+    issue_discussion,
     issue_goal,
     status_comment,
 )
@@ -144,9 +148,10 @@ def draft(
         if model is not None:
             # The Intent agent writes what it understood, the checks, and its questions.
             answers = _answers(client, number)
+            discussion = _discussion(console, client, number, origin)
             with console.status("[dim]Drafting the checks from the issue, then trying them on the app as it is...[/dim]"):
                 contract, preview, result = asyncio.run(
-                    _draft_with_intent(project, store, issue_goal(issue), origin, contract_id, url, model, answers)
+                    _draft_with_intent(project, store, issue_goal(issue), origin, contract_id, url, model, answers, discussion)
                 )
             note = ""
             if result.status != "ok":
@@ -230,6 +235,13 @@ def build(
             models = crew_models(project, config, default_provider=config.compiler.provider, agents=RUN_AGENTS) if crew is not None else {}
         except (IssueFlowError, HandoffError, ValueError) as exc:
             _stop(console, client, number, str(exc), 3, hand_over)
+        # Before anything is spent or approved, as `contexer run` does: a dollar limit that would count
+        # unknown spend as 0 is refused, and the issue is told why.
+        crew_budget = run_budget(config)
+        called = [models.get(name) or crew for name in RUN_AGENTS] if crew is not None else []
+        cannot_keep = unenforceable(crew_budget, models=called, coding_agent="" if agent.reports_cost else agent.name)
+        if cannot_keep:
+            _stop(console, client, number, cannot_keep, 2, hand_over)
         check_free_quota(console, None, agent, yes=True)
 
         store = ContractStore(project)
@@ -256,7 +268,7 @@ def build(
             settings,
             model=crew,
             models=models,
-            budget=Budget(max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=config.limits.cost_usd),
+            budget=crew_budget,
             yes=True,  # nobody is at a terminal in a workflow: Triage does not stop to ask
             contract=contract,
             on_progress=live.event,
@@ -498,6 +510,23 @@ def _answers(client: GitHubClient, number: int) -> list[Answer]:
     return kept
 
 
+def _discussion(console: Console, client: GitHubClient, number: int, origin: str) -> list[ContextSource]:
+    """The issue's comments for the Intent agent, as a run gives them to it: people with write access only, quoted."""
+
+    def may_write(login: str) -> bool:
+        try:
+            return client.permission(login) in WRITE_ROLES
+        except GitHubError:
+            return False
+
+    try:
+        source = issue_source(origin, issue_discussion(client.comments(number), may_write))
+    except GitHubError:
+        console.print(f"[dim]The comments on issue #{number} could not be read; the checks are drafted without them.[/]")
+        return []
+    return [source] if source is not None else []
+
+
 async def _draft_with_intent(
     project: Path,
     store: ContractStore,
@@ -507,6 +536,7 @@ async def _draft_with_intent(
     url: str | None,
     model: Any,
     answers: list[Answer],
+    sources: Sequence[ContextSource] = (),
 ) -> tuple[Contract, RunResult | None, IntentResult]:
     """Draft an issue's checks with the Intent agent, on the app as it is when it runs."""
     run_dir = RunDir.create(project)
@@ -525,6 +555,7 @@ async def _draft_with_intent(
             repo_summary=repo_summary,
             run_dir=run_dir.path,
             origin=origin,
+            sources=sources,
             secrets=sign_in_secrets(session.auth),
         )
         contract = Contract(

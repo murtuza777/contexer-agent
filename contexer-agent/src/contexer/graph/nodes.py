@@ -29,7 +29,14 @@ from contexer.agents.base import AgentTurn
 from contexer.appserver import AppStartError, open_app
 from contexer.contract import Contract
 from contexer.controller.models import Attempt, RunOutcome
-from contexer.controller.prompts import failure_report, implement_prompt, repair_prompt, restated_prompt, with_brief
+from contexer.controller.prompts import (
+    failure_report,
+    implement_prompt,
+    masked_for_agent,
+    repair_prompt,
+    restated_prompt,
+    with_brief,
+)
 from contexer.controller.shared import (
     DEPENDENCY_FILES,
     check_count,
@@ -324,11 +331,13 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
         _announce_checks(ctx)
         ctx.detail("attempt-start", n=n, doing=doing, fresh=bool(fresh and n > 1), agent=ctx.agent.describe())
         ctx.event("phase", f"Attempt {n}: {doing}{' (fresh session)' if fresh and n > 1 else ''} with {ctx.agent.describe()}")
-        # What the agent is asked, kept as evidence in the run folder (never in a snapshot or a hand-off).
-        write_whole(ctx.attempt_dir(n).path / PROMPT_FILE, Masker(ctx.secrets()).text(state["prompt"]))
+        # Every prompt to the coding agent passes here: the first instruction, a repair, a restated job. What is
+        # sent is masked, and the same text is kept as evidence in the run folder (never in a snapshot or a hand-off).
+        sent = masked_for_agent(state["prompt"], ctx.secrets())
+        write_whole(ctx.attempt_dir(n).path / PROMPT_FILE, sent)
         turn = await ctx.agent.run_turn(
             ctx.project,
-            state["prompt"],
+            sent,
             session_id=None if fresh else state.get("session_id"),
             timeout=ctx.settings.turn_timeout,
             budget_usd=remaining,
@@ -718,6 +727,8 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 secrets=ctx.secrets(),
             )
             updates["agents"] = _used(state, "diagnoser", found.steps, found.tokens_in, found.tokens_out, _cost(ctx, found))
+            if found.status != "ok":
+                ctx.event("strategy", f"The Diagnoser did not finish ({found.error or found.status}); the repair prompt holds what the browser saw, without a cause.")
             section = brief_section(found.brief)
             if section and found.brief is not None:
                 prompt += "\n\n" + section

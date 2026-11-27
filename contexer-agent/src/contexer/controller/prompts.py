@@ -7,7 +7,10 @@ sees the same definition of done.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from contexer.contract import Contract
+from contexer.crew.transcript import Masker
 from contexer.crew.untrusted import quoted_goal, untrusted
 from contexer.gate.models import RunResult
 from contexer.verification.models import CriterionResult, VerificationResult, format_contract
@@ -150,6 +153,22 @@ def restated_prompt(contract: Contract, others: list[Contract], correction: str)
             "correction and the checks above require.",
         ]
     )
+
+
+def masked_for_agent(prompt: str, secrets: Sequence[str]) -> str:
+    """A prompt as the coding agent is sent it, and as it is kept: with every secret the run knows replaced.
+
+    The coding agent is another program, and what it reads goes to its own provider. A repair prompt quotes
+    the page, so it can hold the ``[auth]`` password or a key the app shows. Text with no secret in it comes
+    back unchanged.
+
+    Three things are recognised: the values in ``secrets`` (the passwords and codes ``[auth]`` types), the
+    values of the key and token variables Contexer knows by name, and text shaped like an OpenAI, OpenRouter
+    or Google key. A secret outside those, such as a session cookie or another service's token that a page
+    prints, is not recognised and is sent as it is. A password that is also an ordinary word is masked
+    wherever that word stands, in the rules and the checks too.
+    """
+    return Masker(secrets).text(prompt)
 
 
 def _results(verification: VerificationResult | None) -> list[CriterionResult]:

@@ -570,11 +570,13 @@ prompts; `tests/test_controller.py` pins what those produce.
   input_usd_per_mtok` and `output_usd_per_mtok` when the project sets
   them (for every model), else at the prices in the called model's own
   record, cached input at its cached price. With neither, cost is unknown
-  and is said as "unknown", never as $0.00. `contexer run` and `contexer
-  test` refuse a dollar limit they could not keep before anything is
-  spent (`budget.unenforceable`): a model with no known price, or a coding
-  agent that reports no cost (Codex, OpenCode) under `max_usd`. `contexer
-  test` reads the same `[agents] max_usd` and rates. Cached input: the
+  and is said as "unknown", never as $0.00. `contexer run`, `contexer
+  test` and `contexer issue build` refuse a dollar limit they could not
+  keep before anything is spent (`budget.unenforceable`): a model with no
+  known price, or a coding agent that reports no cost (Codex, OpenCode)
+  under `max_usd`. `contexer test` and `contexer issue build` read the
+  same `[agents] max_usd` and rates (an issue build has no `--max-usd`
+  flag, and says the refusal on the issue). Cached input: the
   Anthropic model marks the tools and the system prompt for caching, and
   OpenRouter is sent one `session_id` per model object (`llm/chat.py`).
   A coding agent can overshoot within one turn: Claude Code
@@ -1030,8 +1032,15 @@ result; those are in the agent's transcript under the same agent and step.
 Every line is masked. `run.json` gets each agent's count of repaired calls
 from this file when the run ends.
 
-**Masking** (`crew/transcript.py: Masker`): one masker is used in four
+**Masking** (`crew/transcript.py: Masker`): one masker is used in five
 places.
+
+- Every prompt for the coding agent (the first instruction, a repair, a
+  restated job) is masked in `coder_turn` before it is handed over
+  (`controller/prompts.py: masked_for_agent`), and that same text is kept
+  as `attempt-<n>/prompt.md`. A prompt with no secret in it is sent as
+  code wrote it. A password that is also an ordinary word is replaced
+  wherever the word stands, in the rules and the checks too.
 
 - The task an agent is given and every tool result are masked before the
   model is sent them (`crew/base.py`), and so is every line of the transcript.
@@ -1229,9 +1238,9 @@ flowchart LR
   a pull request. Limits: only the three file names at the root are
   read; a line the file states is passed on whatever it says (the coding
   agent reads the same file itself); when GitHub cannot be asked, the run
-  says so and goes on without the comments; `contexer issue draft` does
-  not yet give the comments to the Intent agent (the Intent agent of a
-  run does, in its `intent` node); the Diagnoser, the Tester and Triage are not given these sources.
+  says so and goes on without the comments; `contexer issue draft` gives
+  its Intent agent the same comments, filtered and quoted the same way
+  (`cli/issue_cli.py: _discussion`); the Diagnoser, the Tester and Triage are not given these sources.
 - **A diff that is too long** (`checkpoint/shadow.py: cut_diff`). The
   Diagnoser's diff (12,000 characters), the Reviewer's (30,000) and
   `ShadowRepo.diff` itself (200,000) are cut by file, not at a character
@@ -1373,7 +1382,7 @@ provider's own variable (`OPENROUTER_MODEL`, `OPENAI_MODEL`,
 - `~/.contexer/` (or `CONTEXER_HOME`): `config.toml` (`[model]` provider,
   model, base URL; `[agent]` name, model) and `credentials.toml` (`[keys]`,
   created with mode 0600 on POSIX, its folder with 0700 when Contexer creates
-  it; on Windows the mode bits do nothing and the folder's access rules apply).
+  it, whichever file is saved first (`home_dir`); on Windows the mode bits do nothing and the folder's access rules apply).
 - Precedence: exported variables, then the project's `.env`, then what
   `contexer setup` saved, then `contexer.toml` for the settings it covers.
   `apply_user_settings` fills only unset variables and records what it set,
@@ -1673,7 +1682,7 @@ and prints the fix under each problem.
 | `[agent] max_repair_rounds` | 2 | Repair rounds after the first attempt |
 | `[agent] budget_usd` | none | Stop when the agent has spent this much |
 | `[agent] turn_timeout` | 900 | Seconds per agent turn |
-| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins. Read by `run` and `test`. Refused at the start when part of the spend cannot be known |
+| `[agents] max_usd` | none | One budget in USD for the coding agent and Contexer's agents together; `--max-usd` wins. Read by `run`, `test` and `issue build`. Refused at the start when part of the spend cannot be known |
 | `[agents] input_usd_per_mtok`, `output_usd_per_mtok` | none | Prices per million tokens for every model, used when the provider reports no cost. Without them a call is priced from its model's own record, when that states a price |
 | `[agents.<name>] model`, `provider`, `max_steps` | the default model, the agent's own cap | Per agent: `intent`, `planner`, `tester`, `challenger`, `triage`, `diagnoser`, `reviewer`. Read by `run` and `test`. `provider` needs `model`; a model that cannot be built stops the command |
 | `[limits] tokens` | 1,500,000 | Tokens (in and out) Contexer's own agents may use in one run |
