@@ -21,10 +21,10 @@ pytestmark = pytest.mark.anyio
 CASES = Path(__file__).resolve().parents[1] / "bench" / "reviewer"
 
 
-def test_there_are_ten_planted_and_ten_clean_cases_and_each_is_a_real_diff() -> None:
+def test_there_are_twelve_planted_and_twelve_clean_cases_and_each_is_a_real_diff() -> None:
     cases = discover_cases(CASES)
     planted = [c for c in cases if c.planted is not None]
-    assert len(planted) == 10 and len(cases) - len(planted) == 10
+    assert len(planted) == 12 and len(cases) - len(planted) == 12
     for case in cases:
         diff = case_diff(case)
         assert diff.strip(), case.name
@@ -37,7 +37,7 @@ async def test_the_scan_alone_flags_what_it_can_see_and_is_quiet_on_clean_diffs(
     report = await run_reviewer_bench(CASES, None, on_case=lambda run: seen.append(run.name))
 
     cases = {c.name: c for c in discover_cases(CASES)}
-    assert len(seen) == 20 and report.agent == "scan"
+    assert len(seen) == 24 and report.agent == "scan"
     for run in report.runs:
         case = cases[run.name]
         if case.planted is not None:
@@ -45,9 +45,9 @@ async def test_the_scan_alone_flags_what_it_can_see_and_is_quiet_on_clean_diffs(
             assert run.flagged_by == ("scan" if run.flagged else "")
         else:
             assert run.false_high == 0, (run.name, run.notes)
-    assert (report.planted, report.clean, report.false_high_notes, report.clean_with_high) == (10, 10, 0, 0)
+    assert (report.planted, report.clean, report.false_high_notes, report.clean_with_high) == (12, 12, 0, 0)
     assert report.flagged == sum(1 for c in cases.values() if c.planted is not None and c.planted.scan)
-    assert report.flagged < 10  # wrong logic is not something a pattern finds; that is the model's part
+    assert report.flagged < 12  # wrong logic is not something a pattern finds; that is the model's part
 
 
 async def test_a_models_note_counts_only_on_the_planted_file_and_a_high_note_on_clean_code_is_a_false_alarm(tmp_path: Path) -> None:
@@ -111,8 +111,8 @@ def test_the_command_repeats_the_reviewer_suite(tmp_path: Path) -> None:
     )  # fmt: skip
     assert result.exit_code == 0, result.output
     data = json.loads(out.read_text(encoding="utf-8"))
-    assert (data["planted"], data["flagged"], data["clean"], data["repeats"]) == (20, 8, 20, 2)
-    assert "planted issues flagged 8/20, 40% (95% interval 22% to 61%)" in " ".join(result.output.split())
+    assert (data["planted"], data["flagged"], data["clean"], data["repeats"]) == (24, 12, 24, 2)
+    assert "planted issues flagged 12/24, 50% (95% interval 31% to 69%)" in " ".join(result.output.split())
 
 
 async def test_an_unknown_case_is_an_error() -> None:
@@ -129,6 +129,6 @@ def test_the_command_runs_the_reviewer_suite_with_the_scan_and_writes_the_report
     )
     assert result.exit_code == 0, result.output
     data = json.loads(out.read_text(encoding="utf-8"))
-    assert data["planted"] == 10 and data["clean"] == 10 and data["false_high_notes"] == 0
+    assert data["planted"] == 12 and data["clean"] == 12 and data["false_high_notes"] == 0
     assert out.with_suffix(".md").is_file()
-    assert "| 10 | 4 |" in (tmp_path / "reviewer-results" / "scan.md").read_text(encoding="utf-8")
+    assert "| 12 | 6 |" in (tmp_path / "reviewer-results" / "scan.md").read_text(encoding="utf-8")

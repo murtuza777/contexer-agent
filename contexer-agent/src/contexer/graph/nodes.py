@@ -27,6 +27,7 @@ from langgraph.types import interrupt
 
 from contexer.agents.base import AgentTurn
 from contexer.appserver import AppStartError, open_app
+from contexer.config.project import dependency_lookup
 from contexer.contract import Contract
 from contexer.controller.models import Attempt, RunOutcome
 from contexer.controller.prompts import (
@@ -561,6 +562,9 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
             intent=quoted_goal(contract.goal, contract.origin),
             checks=[c.description for c in contract.criteria],
             sources=ctx.sources(state) if ctx.model_for("reviewer") is not None else (),
+            # Where the work was said to be: the files named here are the ones the change was expected to touch.
+            plan="\n".join([state.get("brief", ""), *(" ".join(lead.values()) for lead in state.get("leads", {}).values())]),
+            dependency_lookup=dependency_lookup(ctx.project),
             run_dir=ctx.run.path,
             budget=ctx.budget,
             max_steps=_steps(ctx, "reviewer", DEFAULT_REVIEW_STEPS),

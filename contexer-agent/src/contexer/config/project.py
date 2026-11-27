@@ -195,6 +195,23 @@ class CompilerSettings(BaseModel):
         return _provider_id(value)
 
 
+class ReviewSettings(BaseModel):
+    """What the review of a passing run may do beyond reading the diff.
+
+    ```toml
+    [review]
+    dependency_lookup = false   # do not ask npm or PyPI about the packages a change adds
+    ```
+
+    The lookup sends each added package's name to a public registry. A name that is misspelt here is
+    an error, not a setting that is quietly left on.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    dependency_lookup: bool = True
+
+
 class ProjectConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -205,6 +222,7 @@ class ProjectConfig(BaseModel):
     agent: AgentSettings = Field(default_factory=AgentSettings)
     agents: AgentsSettings = Field(default_factory=AgentsSettings)
     limits: LimitSettings = Field(default_factory=LimitSettings)
+    review: ReviewSettings = Field(default_factory=ReviewSettings)
 
 
 class ProjectConfigError(Exception):
@@ -319,3 +337,11 @@ def load_project_config(project_dir: str | Path) -> ProjectConfig:
         return ProjectConfig.model_validate(data)
     except (OSError, tomllib.TOMLDecodeError, ValidationError) as exc:
         raise ProjectConfigError(f"Invalid {path}: {exc}") from exc
+
+
+def dependency_lookup(project_dir: str | Path) -> bool:
+    """Whether the review may ask a package registry about added packages. Off when the file cannot be read: nothing is sent on a guess."""
+    try:
+        return load_project_config(project_dir).review.dependency_lookup
+    except ProjectConfigError:
+        return False

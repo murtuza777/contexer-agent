@@ -6,8 +6,11 @@ walks. The review looks at the diff for those, from three sources that are
 kept apart:
 
 * ``prescan``: code reads the diff for a short list of patterns (a secret, a
-  focused or skipped test, a deleted test file, removed assertions, leftover
-  debug code). No model.
+  focused or skipped test, a deleted test file, removed assertions, a removed
+  confirmation or validation, leftover debug code). No model.
+  ``dependency_notes`` adds what a package registry says about each package
+  the change adds to a manifest, and ``scope_notes`` the changed files that
+  the goal and the plan never named.
 * ``run_commands``: code runs the project's own ``test``, ``lint`` and
   ``typecheck`` scripts, with a time limit, and notes the ones that fail.
 * the Reviewer agent: a model reads the diff and the code around it with
@@ -39,6 +42,7 @@ from contexer.checkpoint.shadow import cut_diff
 from contexer.crew.base import AgentSpec, run_agent
 from contexer.crew.budget import Budget
 from contexer.crew.context_sources import ContextSource, context_section, stated_line
+from contexer.crew.dependencies import Lookup, dependency_findings, registry_lookup
 from contexer.crew.diagnoser import project_tools
 from contexer.crew.untrusted import untrusted
 from contexer.procutil import spawn_tree, without_agent_session
@@ -150,6 +154,20 @@ _FOCUSED = re.compile(r"\b(?:it|test|describe|context)\.only\s*\(|\b(?:fit|fdesc
 _SKIPPED = re.compile(r"\b(?:it|test|describe|context)\.skip\s*\(|\b(?:xit|xdescribe|xtest)\s*\(|@pytest\.mark\.skip|@unittest\.skip")
 _ASSERTION = re.compile(r"\bexpect\s*\(|\bassert\b|\bassert[A-Z]\w*\s*\(|\.should\b")
 _CONFIRM = re.compile(r"\bconfirm\s*\(")
+# What a pattern can know of a validation: a field that must be filled or has a length or a pattern, a call
+# to something named like a validator (not `invalidate...`, which empties a cache), a ValidationError raised.
+_VALIDATION = re.compile(
+    r"\brequired\b|\b(?i:min|max)(?i:length)\b|\bpattern\s*=|\b(?!\w*[Ii]nvalid)\w*[Vv]alid\w*\s*\(|\braise\s+\w*ValidationError\b"
+)
+# Where a removed `required` is code or markup, and not a sentence in a document.
+_CODE_PATH = re.compile(r"\.(?:[cm]?[jt]sx?|vue|svelte|astro|html?|ejs|hbs|erb|py|rb|php|go|java|cs)$")
+_LOCK_FILES = frozenset(
+    {"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "poetry.lock", "uv.lock", "Pipfile.lock", "Cargo.lock", "go.sum"}
+)
+_MAX_SHOWN_LINES = 3
+_MAX_SHOWN_CHARS = 100
+_MAX_SHOWN_FILES = 8
+_MAX_PLAN_TOKENS = 2_000
 _DEBUG = re.compile(r"\bconsole\.(log|debug|trace)\s*\(|^\s*debugger\s*;?\s*$|\bbreakpoint\(\)|\bpdb\.set_trace\(\)")
 
 
@@ -161,37 +179,42 @@ class _FileDiff:
     def __init__(self, path: str) -> None:
         self.path = path
         self.deleted = False
+        self.created = False
         self.added: list[tuple[int, str]] = []  # (line number in the new file, text)
-        self.removed: list[str] = []
+        self.removed: list[tuple[int, str]] = []  # (line number in the old file, text)
 
 
 def _parse(diff: str) -> list[_FileDiff]:
     files: list[_FileDiff] = []
     current: _FileDiff | None = None
     old_path = ""
-    new_line = 0
+    old_line = new_line = 0
+    old_side = False
     for raw in diff.splitlines():
         if raw.startswith("diff --git "):
-            current, old_path = None, ""
+            current, old_path, old_side = None, "", False
         elif raw.startswith("--- "):
             old_path = _path(raw[4:])
-            current = None
+            current, old_side = None, True
         elif raw.startswith("+++ "):
             new_path = _path(raw[4:])
             current = _FileDiff(new_path or old_path)
             current.deleted = not new_path
+            current.created = old_side and not old_path
             files.append(current)
         elif raw.startswith("@@"):
-            match = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)", raw)
-            new_line = int(match.group(1)) if match else 0
+            match = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)", raw)
+            old_line, new_line = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
         elif current is None:
             continue
         elif raw.startswith("+"):
             current.added.append((new_line, raw[1:]))
             new_line += 1
         elif raw.startswith("-"):
-            current.removed.append(raw[1:])
+            current.removed.append((old_line, raw[1:]))
+            old_line += 1
         elif not raw.startswith("\\"):
+            old_line += 1
             new_line += 1
     return files
 
@@ -226,13 +249,14 @@ def secret_kind(line: str) -> str:
 def prescan(diff: str) -> list[ReviewNote]:
     """What code can see in the diff without a model. Every note is ``backed``: it is a fact about the diff."""
     notes: list[ReviewNote] = []
+    files = _parse(diff)
 
     def add(file: str, line: int, severity: Severity, category: Category, explanation: str) -> None:
         notes.append(
             ReviewNote(file=file, line=line, severity=severity, category=category, explanation=explanation, source="scan", backed=True)
         )
 
-    for file in _parse(diff):
+    for file in files:
         tests = is_test_path(file.path)
         if file.deleted:
             if tests:
@@ -259,23 +283,156 @@ def prescan(diff: str) -> list[ReviewNote]:
             elif not tests and _DEBUG.search(text):
                 add(file.path, line, "low", "debug", f"Leftover debug code: `{text.strip()[:80]}`.")
         if not tests:
-            asked_before = sum(1 for text in file.removed if _CONFIRM.search(text))
+            asked_before = [(line, text) for line, text in file.removed if _CONFIRM.search(text)]
             asks_now = sum(1 for _line, text in file.added if _CONFIRM.search(text))
-            if asked_before > asks_now:
+            if len(asked_before) > asks_now:
                 add(
                     file.path, 0, "medium", "logic",
-                    "A confirmation the app asked before an action was removed. If a check could not get past it, the "
+                    f"{_counted(len(asked_before), 'confirmation')} the app asked before an action {_were(len(asked_before))} "
+                    f"removed and {asks_now} added: {_shown(asked_before)}. If a check could not get past it, the "
                     'check needs {"action": "accept_dialog"} before the step that opens it; put the confirmation back.',
                 )  # fmt: skip
         if tests:
-            removed = sum(1 for text in file.removed if _ASSERTION.search(text))
+            removed = [(line, text) for line, text in file.removed if _ASSERTION.search(text)]
             added = sum(1 for _line, text in file.added if _ASSERTION.search(text))
-            if removed > added:
+            if len(removed) > added:
                 add(
                     file.path, 0, "medium", "tests",
-                    f"{removed} assertion(s) were removed from this test file and {added} added. A test that asserts less proves less.",
+                    f"{_counted(len(removed), 'assertion')} {_were(len(removed))} removed from this test file and {added} added: "
+                    f"{_shown(removed)}. A test that asserts less proves less.",
                 )  # fmt: skip
+    notes += _validation_notes(files)
     return notes
+
+
+def _validation_notes(files: Sequence[_FileDiff]) -> list[ReviewNote]:
+    """A validation the change took out of the code: a ``required``, a length limit, a call to something named like a validator.
+
+    Counted per file, and only when the whole change validates less often than before: a validation
+    that moved to another file was not removed. A pattern does not know whether the goal asked for it
+    to go, so the note is medium, never high: it can cost one repair turn and cannot hold a pull request.
+    """
+    code = [f for f in files if not f.deleted and _CODE_PATH.search(f.path) and not is_test_path(f.path)]
+    before = {f.path: [(line, text) for line, text in f.removed if _VALIDATION.search(text)] for f in code}
+    now = {f.path: sum(1 for _line, text in f.added if _VALIDATION.search(text)) for f in code}
+    if sum(len(lines) for lines in before.values()) <= sum(now.values()):
+        return []
+    return [
+        ReviewNote(
+            file=path,
+            severity="medium",
+            category="logic",
+            explanation=(
+                f"{_counted(len(lines), 'validation')} {_were(len(lines))} removed and {now[path]} added: {_shown(lines)}. "
+                "A check that passes only without the validation proves the wrong thing. Put it back, unless the goal asks for it to go."
+            ),
+            source="scan",
+            backed=True,
+        )
+        for path, lines in before.items()
+        if len(lines) > now[path]
+    ]
+
+
+def _counted(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _were(count: int) -> str:
+    return "was" if count == 1 else "were"
+
+
+def _shown(lines: Sequence[tuple[int, str]]) -> str:
+    """The first removed lines with their numbers in the file as it was. A line that holds a secret is numbered, not quoted."""
+    parts = [f"line {number}" if secret_kind(text) else f"line {number} `{text.strip()[:_MAX_SHOWN_CHARS]}`" for number, text in lines[:_MAX_SHOWN_LINES]]
+    more = len(lines) - _MAX_SHOWN_LINES
+    return ", ".join(parts) + (f" and {more} more" if more > 0 else "")
+
+
+def scope_notes(diff: str, project_dir: Path, goal: str, checks: Sequence[str], plan: str) -> list[ReviewNote]:
+    """One low note listing the changed files that nothing named, or none.
+
+    ``plan`` is what was written about where the work is: the Planner's brief and the Diagnoser's leads.
+    A file is named when its path, or its name, appears in the goal, the checks or the plan. Scope is
+    only known when the plan names a file that is in the project; without one, every file would be
+    listed and the note would say nothing. A file the change created could not have been named (the
+    Planner lists existing files), and a lock file follows its manifest: neither is listed.
+
+    The plan is written by a model, so this is advice at low severity: it starts no repair and holds
+    no pull request.
+    """
+    files = [f for f in _parse(diff) if f.path]
+    if not _names_a_file(plan, project_dir, {f.path for f in files}):
+        return []
+    text = "\n".join([goal, *checks, plan])
+    outside = [
+        f
+        for f in files
+        if not f.created
+        and f.path.rsplit("/", 1)[-1] not in _LOCK_FILES
+        and not f.path.startswith(".contexer/")
+        and not _named(f.path, text)
+    ]
+    if not outside:
+        return []
+    shown = [f"`{f.path}` ({'deleted' if f.deleted else f'+{len(f.added)} -{len(f.removed)}'})" for f in outside[:_MAX_SHOWN_FILES]]
+    more = len(outside) - _MAX_SHOWN_FILES
+    return [
+        ReviewNote(
+            severity="low",
+            category="other",
+            explanation=(
+                f"{_counted(len(outside), 'file')} changed that the goal, the checks, the plan and the Diagnoser's leads never named: "
+                f"{', '.join(shown)}{f' and {more} more' if more > 0 else ''}. They may belong to the change; read them before merging."
+            ),
+            source="scan",
+            backed=True,
+        )
+    ]
+
+
+def _named(path: str, text: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    return path in text or re.search(rf"(?<![\w.-]){re.escape(name)}(?![\w-])", text) is not None
+
+
+def _names_a_file(plan: str, project_dir: Path, changed: set[str]) -> bool:
+    """True when ``plan`` names a file the change touches, or one that is there inside the project."""
+    root = Path(project_dir).resolve()
+    for token in re.findall(r"[\w@+./\\-]+", plan)[:_MAX_PLAN_TOKENS]:
+        token = token.replace("\\", "/").strip("./")
+        if "." not in token and "/" not in token:
+            continue
+        if token in changed:
+            return True
+        try:
+            target = (root / token).resolve()
+            if target.is_relative_to(root) and target.is_file():
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def dependency_notes(diff: str, project_dir: Path, lookup: Lookup = registry_lookup) -> list[ReviewNote]:
+    """What a registry says about the packages the change adds to a manifest. Asked by code, so ``backed``.
+
+    A package that does not exist, or is days old, is a supply-chain matter: ``security``. A lookup that
+    could not be made is a low note that says so, and decides nothing.
+    """
+    changes = [(f.path, f.added, [text for _line, text in f.removed]) for f in _parse(diff) if f.path and not f.deleted]
+    return [
+        ReviewNote(
+            file=found.file,
+            line=found.line,
+            severity=found.severity,
+            category="other" if found.kind == "unchecked" else "security",
+            explanation=found.explanation,
+            source="scan",
+            backed=True,
+        )
+        for found in dependency_findings(changes, project_dir, lookup)
+    ]
 
 
 # -- the project's own commands ----------------------------------------------------------------------
@@ -404,6 +561,9 @@ async def review(
     intent: str = "",
     checks: Sequence[str] = (),
     sources: Sequence[ContextSource] = (),
+    plan: str = "",
+    lookup: Lookup | None = registry_lookup,
+    dependency_lookup: bool = True,
     run_project_commands: bool = True,
     command_timeout: float = DEFAULT_COMMAND_TIMEOUT,
     run_dir: Path | None = None,
@@ -415,11 +575,17 @@ async def review(
 
     ``sources`` is what else was written about the task (``crew/context_sources.py``): with the
     project's instruction files among them, the Reviewer may note a convention the change breaks.
+    ``plan`` is the Planner's brief and the Diagnoser's leads as text: the files they name are the ones
+    the change was expected to touch (``scope_notes``).
+    ``lookup`` asks a package registry about a name (``crew/dependencies.py``); None looks nothing up.
+    ``dependency_lookup`` is the project's ``[review] dependency_lookup``: False makes no request and no note.
     """
     result = ReviewResult()
     if not diff.strip():
         return result
-    result.notes = prescan(diff)
+    result.notes = prescan(diff) + scope_notes(diff, project_dir, intent, checks, plan)
+    if lookup is not None and dependency_lookup:
+        result.notes += dependency_notes(diff, project_dir, lookup)
     if run_project_commands:
         result.commands = run_commands(project_dir, project_commands(project_dir), command_timeout)
         result.notes += _command_notes(result.commands)

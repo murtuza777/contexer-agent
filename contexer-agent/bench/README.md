@@ -106,12 +106,16 @@ Results are in [repair-results/](repair-results/).
 of a diff (`crew/reviewer.py`). `reviewer/<case>/` holds `before/`,
 `after/` and `case.json`:
 
-- **10 planted cases**, one issue each: a secret in the source, a focused
+- **12 planted cases**, one issue each: a secret in the source, a focused
   test, a deleted test, leftover debug code, a test rewritten to match a
   bug, an off-by-one, user text put into the page as HTML, a removed admin
-  check, a value hard-coded for the check, a query built from input.
-- **10 clean cases**: refactors, a feature with its tests, a key read from
-  the environment, a placeholder in a README, an error that is logged.
+  check, a value hard-coded for the check, a query built from input, and
+  two that pass for the wrong reason: a removed confirmation and a removed
+  validation.
+- **12 clean cases**: refactors, a feature with its tests, a key read from
+  the environment, a placeholder in a README, an error that is logged, a
+  validation moved to another file, assertions rewritten without losing
+  any.
 
 A planted issue is **flagged** when a note points at its file with a
 fitting category. Whether the note's words are right is not judged, so the
@@ -123,7 +127,7 @@ a draft.
 reviewer` adds the Reviewer agent on the model you configured. A run of the
 whole suite writes `reviewer-results/<agent>.md`.
 
-Twenty small diffs written by the person who wrote the scan are a smoke
+Twenty-four small diffs written by the person who wrote the scan are a smoke
 test, not a measure of how the review does on real pull requests.
 
 ## Repeats and intervals
