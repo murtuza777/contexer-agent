@@ -3,6 +3,51 @@
 Local runs were on Windows 11 with Playwright Chromium. CI re-runs the
 hand-written benchmark on Linux on every push.
 
+No macOS number is claimed here. On 2026-11-26 the one run the benchmark has
+had on a macOS runner missed a seeded bug, `shop/load-crash`: the app throws
+150 ms after load and the runner counted errors after a fixed 250 ms wait. A
+fix is in progress; until a macOS run is green, read every number below as
+Windows and Linux only.
+
+## How sure the numbers are
+
+Every count below is one draw from a few dozen runs. Since 2026-11-26 the
+command prints each rate with its 95% Wilson interval, and `--compare
+REPORT.json` says whether a rate differs from an earlier report or the two
+cannot be told apart ([method](README.md#repeats-and-intervals)). The runs
+below predate that and were not repeated; these are the intervals of the
+counts they published:
+
+| Result below | Count | 95% interval |
+| --- | --- | --- |
+| Hand-written contracts, seeded bugs caught | 40 / 40 | 91% to 100% |
+| Hand-written contracts, clean runs with a false failure | 0 / 44 | 0% to 8% |
+| Hand-written contracts, false-failing checks | 0 / 278 | 0% to 1% |
+| Tester on `gpt-5.4`, seeded bugs found | 25 / 40 | 47% to 76% |
+| Tester on `gpt-5.4`, clean runs with a false alarm | 0 / 22 | 0% to 15% |
+| Tester, held-out `bookings`, seeded bugs found | 3 / 6 | 19% to 81% |
+| Tester, held-out `bookings`, clean runs with a false alarm, first row | 2 / 4 | 15% to 85% |
+| Tester, held-out `bookings`, clean runs with a false alarm, last row | 0 / 4 | 0% to 49% |
+| Contracts compiled by a pinned free model, seeded bugs caught | 33 / 40 | 68% to 91% |
+
+What that changes in how to read them:
+
+- "No false failure in 44 clean runs" does not rule out a false-failure rate
+  of up to 8%. More clean runs narrow it; one more app does not.
+- "No false alarm in 22 runs" for the Tester does not rule out 15%.
+- The two tester runs of the same 35 bugs, 24 found and then 21, cannot be
+  told apart (the difference is between -29 and +13 points).
+- On `bookings`, 2 false alarms in 4 runs against 0 in 4 cannot be told apart
+  either (-85 to +10 points). What supports the fix there is that both false
+  alarms were the same mistake and a rule in code now excludes it, not the
+  counts.
+- The compiled contracts' 33 of 40 is lower than the hand-written 40 of 40
+  (-32 to -5 points).
+
+The intervals treat every run as an independent trial of one rate. Bugs
+differ in difficulty, so they are a guide to the noise and not an exact
+error bar.
+
 ## Hand-written contracts (measures the runner)
 
 `contexer bench --repeats 2`, 2026-10-26 (874 s):

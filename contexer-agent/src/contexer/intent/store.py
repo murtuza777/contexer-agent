@@ -16,6 +16,7 @@ An ``index.md`` lists the features. Like contracts, intent files say what
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -189,8 +190,20 @@ class IntentStore:
         self.root.mkdir(parents=True, exist_ok=True)
         path = self.path_for(spec.id)
         path.write_text(spec.to_markdown(), encoding="utf-8", newline="\n")
+        self._mark_latest(path)
         self._write_index()
         return path
+
+    def _mark_latest(self, path: Path) -> None:
+        """Give ``path`` a file time later than every other intent's, so ``latest`` is the one saved last.
+
+        Two saves can land in one tick of the file system's clock (seen on a Windows runner), and a
+        clock can step back; either way the time alone would name the wrong feature.
+        """
+        others = [p.stat().st_mtime_ns for p in self._files() if p != path]
+        newest = max(others, default=0)
+        if path.stat().st_mtime_ns <= newest:
+            os.utime(path, ns=(newest + 1_000_000, newest + 1_000_000))
 
     def append_correction(self, intent_id: str, text: str, on: str | None = None) -> IntentSpec:
         spec = self.load(intent_id).with_correction(text, on)
