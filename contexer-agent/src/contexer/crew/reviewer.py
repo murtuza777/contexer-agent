@@ -35,6 +35,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from contexer.checkpoint.shadow import cut_diff
 from contexer.crew.base import AgentSpec, run_agent
 from contexer.crew.budget import Budget
 from contexer.crew.context_sources import ContextSource, context_section, stated_line
@@ -473,7 +474,7 @@ def _task(diff: str, intent: str, checks: Sequence[str], found: ReviewResult, so
             if command.status == "failed" and command.output_tail:
                 parts.append(untrusted("command-output", command.output_tail))
         parts.append("")
-    cut = diff.strip()[:_MAX_DIFF_CHARS]
+    cut = cut_diff(diff.strip(), _MAX_DIFF_CHARS)  # nothing failed here: the smallest files first, each whole
     more = "\n(The diff is longer than this; use the tools to read the rest.)" if len(diff.strip()) > _MAX_DIFF_CHARS else ""
     parts += ["## The diff", untrusted("diff", cut) + more, "", "Review the change and hand in your notes."]
     return "\n".join(parts)

@@ -61,7 +61,6 @@ from contexer.verification.models import AcceptanceCriterion
 from contexer.verification.verifier import Verifier
 
 Node = Callable[[LoopState], Awaitable[dict[str, Any]]]
-_DIFF_CHARS = 20_000
 _REVIEW_DIFF_CHARS = 200_000
 # A review may ask the coding agent for one more turn on work that passed, and no more.
 MAX_REVIEW_REPAIRS = 1
@@ -638,7 +637,7 @@ def make_nodes(ctx: RunContext) -> dict[str, Node]:
                 diagnoser_model,
                 ctx.project,
                 intent=quoted_goal(contract.goal, contract.origin),
-                diff=ctx.shadow.diff(state["snapshots"]["0"], state["current"], max_chars=_DIFF_CHARS),
+                diff=ctx.shadow.diff(state["snapshots"]["0"], state["current"]),  # the Diagnoser cuts it, by what failed
                 server_log=shown.server_log_tail,
                 tried=_tried(state),
                 run_dir=ctx.run.path,
