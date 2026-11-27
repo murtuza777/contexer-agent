@@ -25,10 +25,12 @@ from contexer.browser.tools import sign_in_secrets
 from contexer.cli import run_cli
 from contexer.cli.gate_cli import compiler_llm, preview_draft
 from contexer.cli.run_cli import (
+    RUN_AGENTS,
     _draft,
     _render,
     check_free_quota,
     choose_agent,
+    crew_models,
     execute_graph,
     one_engine,
 )
@@ -78,12 +80,18 @@ def draft(
     load_project_env(project)
     with _client(console, project) as client:
         issue = _issue(console, client, number)
+        one_engine(None)
+        model = run_cli.crew_model(project)
+        if model is not None:
+            try:  # [agents.intent] in contexer.toml names the model that drafts, as it does for `contexer run`
+                config = load_project_config(project)
+                model = crew_models(project, config, default_provider=config.compiler.provider, agents=("intent",)).get("intent", model)
+            except (ProjectConfigError, ValueError) as exc:
+                _stop(console, client, number, str(exc), 3)
         posted = client.comment(number, status_comment("Contexer is drafting the checks for this issue…", [], _run_link()))
         store = ContractStore(project)
         origin = ISSUE_ORIGIN.format(number=number)
         contract_id = store.unique_id(f"issue {number} {issue.get('title', '')}")
-        one_engine(None)
-        model = run_cli.crew_model(project)
         if model is not None:
             # The Intent agent writes what it understood, the checks, and its questions.
             answers = _answers(client, number)
@@ -153,6 +161,9 @@ def build(
                 )
             plan = plan_handoff(project)
             agent = create_agent(*choose_agent(config.agent, agent_name, model))
+            # Before anything is spent, as `contexer run` does: [agents.<name>] names a model per agent.
+            crew = run_cli.crew_model(project)
+            models = crew_models(project, config, default_provider=config.compiler.provider, agents=RUN_AGENTS) if crew is not None else {}
         except (IssueFlowError, HandoffError, ValueError) as exc:
             _stop(console, client, number, str(exc), 3)
         check_free_quota(console, None, agent, yes=True)
@@ -170,6 +181,7 @@ def build(
             budget_usd=budget if budget is not None else config.agent.budget_usd,
             turn_timeout=config.agent.turn_timeout,
             judged_policy=config.gate.judged,
+            agent_steps={name: cap for name in RUN_AGENTS if (cap := config.agents.for_agent(name).max_steps)},
         )
         outcome = execute_graph(
             console,
@@ -177,7 +189,8 @@ def build(
             agent,
             store,
             settings,
-            model=run_cli.crew_model(project),
+            model=crew,
+            models=models,
             budget=Budget(max_tokens=config.limits.tokens or DEFAULT_MAX_TOKENS, max_cost_usd=config.limits.cost_usd),
             yes=True,  # nobody is at a terminal in a workflow: Triage does not stop to ask
             contract=contract,

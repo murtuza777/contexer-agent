@@ -37,14 +37,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 {node_setup}      - uses: murtuza777/contexer-agent@main
         with:
           working-directory: {working_directory}
 """
 
 NODE_SETUP = """\
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
       - run: npm ci
@@ -95,7 +95,7 @@ jobs:
       OPENROUTER_API_KEY: ${{{{ secrets.OPENROUTER_API_KEY }}}}
     steps:
       # No stored credentials: the coding agent edits files; only Contexer pushes.
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: murtuza777/contexer-agent/issue@main

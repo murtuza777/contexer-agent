@@ -41,7 +41,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v7.0.0
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: ${{ inputs.python-version }}
 
@@ -55,16 +55,19 @@ runs:
       id: plan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: contexer issue event --plan --label "${{ inputs.label }}"
+      env:
+        # Inputs reach the scripts as variables: written into one, a quote in an input would end the string.
+        CONTEXER_LABEL: ${{ inputs.label }}
+      run: contexer issue event --plan --label "$CONTEXER_LABEL"
 
     - if: steps.plan.outputs.command != 'ignore'
-      uses: actions/setup-node@v7.0.0
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: ${{ inputs.node-version }}
 
     - if: steps.plan.outputs.command != 'ignore'
       name: Cache Chromium
-      uses: actions/cache@v6.1.0
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.cache/ms-playwright
         key: contexer-chromium-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
@@ -82,13 +85,15 @@ runs:
     - if: steps.plan.outputs.command == 'build'
       name: Install the coding agent
       shell: bash
+      env:
+        CONTEXER_AGENT: ${{ inputs.agent }}
       run: |
-        case "${{ inputs.agent }}" in
+        case "$CONTEXER_AGENT" in
           opencode) npm install --global --silent opencode-ai ;;
           claude-code|claude) npm install --global --silent @anthropic-ai/claude-code ;;
           codex) npm install --global --silent @openai/codex ;;
           scripted) ;;
-          *) echo "Unknown agent '${{ inputs.agent }}' (use opencode, claude-code or codex)"; exit 1 ;;
+          *) echo "Unknown agent '$CONTEXER_AGENT' (use opencode, claude-code or codex)"; exit 1 ;;
         esac
 
     - if: steps.plan.outputs.command != 'ignore'
@@ -97,14 +102,17 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        CONTEXER_LABEL: ${{ inputs.label }}
+        CONTEXER_AGENT: ${{ inputs.agent }}
+        CONTEXER_MODEL: ${{ inputs.model }}
       run: |
-        args=(issue event --label "${{ inputs.label }}" --agent "${{ inputs.agent }}")
-        if [ -n "${{ inputs.model }}" ]; then args+=(--model "${{ inputs.model }}"); fi
+        args=(issue event --label "$CONTEXER_LABEL" --agent "$CONTEXER_AGENT")
+        if [ -n "$CONTEXER_MODEL" ]; then args+=(--model "$CONTEXER_MODEL"); fi
         contexer "${args[@]}"
 
     - if: always() && steps.plan.outputs.command != 'ignore'
       name: Upload evidence report
-      uses: actions/upload-artifact@v7.0.1
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: contexer-report-issue-${{ github.event.issue.number }}-${{ github.run_attempt }}
         path: ${{ inputs.working-directory }}/.contexer/runs/
