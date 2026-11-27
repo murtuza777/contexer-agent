@@ -1550,6 +1550,43 @@ and a last `end` with `terminal`, `reason`, `exit_code`, `attempts`,
 `cost_usd`, `report`, `pull_request` and `draft`. It needs `--yes`, since
 it cannot stop to ask.
 
+`contexer run --plain` (`term.plain_console`) prints the lines that stay
+for a CI log, a pipe or a screen reader: no colour, nothing redrawn, a
+mark at the start of a line as a word (`ok:`, `not ok:`, `open:`,
+`warning:`), `·` as a comma, a failed check and what the browser saw on
+one line, and no line wrapped. It is a rewrite of the text on its way
+out, so it also changes those characters inside a check's own words. It
+is an option of `run` only, and Typer's own usage errors (an option that
+does not exist) keep their box.
+
+**Approval** (`cli/run_cli.py: _asker`, `_approve`). The checks are a
+numbered list and the keys are shown: `y` approves, `n` does not, `e`
+opens the contract's file in `$VISUAL` or `$EDITOR`, and a sentence is a
+correction. Only `y` approves: an empty line is a no, one word that is
+not a key is asked about again, and where stdin or stdout is not a
+terminal nothing is approved (`--yes` is the only approval without a
+person, recorded as `--yes (not reviewed by a person)`). The editor is
+started as a program with the file as its last argument, never through a
+shell. What comes back is read as a contract: one that does not parse,
+has another id or has no executable check is put back as it was; a valid
+one is shown and asked about again, and is put back as drafted when the
+answer is no. Where no model is configured for Contexer's own agents the
+contract is approved before the run and a sentence cannot redraft it, so
+the keys there are `y`, `n` and `e`.
+
+**Ctrl+C** (`cli/run_cli.py: _CtrlC`). The first press cancels the run's
+task and says so; the engine then stops in order ("Stopping" in the run loop). From then
+on a press prints one line and changes nothing, so the project cannot be
+left half restored and the run lock is released. At a question to the
+person Ctrl+C leaves the question. The handler is in place from the
+moment the lock is held until it is released. A stop that waits for the
+current step to finish does not exist: the first press stops the agent
+at once.
+
+**Errors** (`term.error`). Every error `contexer run` prints is three
+lines: what happened and why, `Next:` with the next step, and `Exit code
+N.` With `--json` it goes to stderr.
+
 `contexer doctor` checks Python, Chromium (launching it), git, Node, saved
 settings, the drafting model, coding agents, OpenRouter's free requests, the
 GitHub token, how the project starts, its contracts and its sign-in secrets,

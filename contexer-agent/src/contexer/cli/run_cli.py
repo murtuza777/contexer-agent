@@ -71,7 +71,7 @@ def run(
     model: str | None = typer.Option(None, "--model", help="Model for the coding agent."),
     rounds: int | None = typer.Option(None, "--rounds", min=0, help="Maximum repair rounds (default 2)."),
     budget: float | None = typer.Option(None, "--budget", help="Stop when the agent has spent this many USD."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Approve the checklist without asking."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve the checklist without asking; the approval is recorded as not reviewed by a person."),
     no_replay: bool = typer.Option(False, "--no-replay", help="Skip re-checking other approved contracts."),
     open_report: bool = typer.Option(False, "--open", help="Open the HTML report when done."),
     json_output: bool = typer.Option(
