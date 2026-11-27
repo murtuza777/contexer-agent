@@ -202,9 +202,9 @@ def render_test_report(result: ExplorationResult) -> str:
   <dl class="meta">{meta_html}</dl>
 </header>""",
             notes_html,
-            _findings("Bugs", "refuted", "✗", result.bugs, "Nothing the tester reported as a bug reproduced."),
+            _findings("Bugs", "refuted", "✗", result.bugs, "Nothing the tester reported as a bug reproduced.", result.run_dir),
             prompt_html,
-            _findings("Working behaviours", "verified", "✓", result.works, ""),
+            _findings("Working behaviours", "verified", "✓", result.works, "", result.run_dir),
             (
                 '<section class="card reasons"><h2>Set aside</h2><p class="muted">These reproduced, but a second '
                 "look judged them to be the tester's doing, not the app's. Check the reason; if one is a real bug, "
@@ -252,13 +252,13 @@ def render_test_report(result: ExplorationResult) -> str:
 """
 
 
-def _findings(title: str, verdict: str, icon: str, items: list[ConfirmedFinding], empty: str) -> str:
+def _findings(title: str, verdict: str, icon: str, items: list[ConfirmedFinding], empty: str, run_dir: str = "") -> str:
     if not items:
         return f'<section class="card"><h2>{title}</h2><p class="muted">{_e(empty)}</p></section>' if empty else ""
     rows = []
     for item in items:
         lines = "\n".join(item.check)
-        image = _data_uri(item.screenshot)
+        image = _data_uri(item.screenshot, run_dir)
         figure = f'<figure><img src="{image}" alt="The page as the replay saw it" style="max-width:100%"></figure>' if image else ""
         description = f"<p>{_e(item.description)}</p>" if item.description else ""
         rows.append(

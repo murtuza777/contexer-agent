@@ -35,8 +35,8 @@ TERMINAL_STYLE = {
     "internal_error": "red",
 }
 
-_MARKS = {"pass": ("✓", "+"), "fail": ("✗", "x"), "open": ("?", "?"), "warn": ("!", "!"), "info": ("›", ">")}
-_MARK_STYLE = {"pass": "green", "fail": "red", "open": "yellow", "warn": "yellow", "info": "dim"}
+_MARKS = {"pass": ("✓", "+"), "fail": ("✗", "x"), "open": ("?", "?"), "warn": ("!", "!"), "info": ("›", ">"), "todo": ("·", "-")}
+_MARK_STYLE = {"pass": "green", "fail": "red", "open": "yellow", "warn": "yellow", "info": "dim", "todo": "dim"}
 
 
 def _encodable(char: str) -> bool:
@@ -51,6 +51,12 @@ def mark(kind: str) -> str:
     """A styled mark: pass, fail, open, warn or info."""
     fancy, plain = _MARKS[kind]
     return f"[{_MARK_STYLE[kind]}]{fancy if _encodable(fancy) else plain}[/]"
+
+
+def plain_mark(kind: str) -> tuple[str, str]:
+    """The mark's character and its style, for a line that is built as ``Text`` and not as markup."""
+    fancy, plain = _MARKS[kind]
+    return (fancy if _encodable(fancy) else plain), _MARK_STYLE[kind]
 
 
 def header(console: Console, command: str, subject: str = "") -> None:
