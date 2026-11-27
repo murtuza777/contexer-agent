@@ -34,7 +34,7 @@ from contexer.crew.transcript import Masker, Trace, repaired_calls
 from contexer.evidence.rundir import RUNS_DIR, RunDir, write_whole
 from contexer.graph.build import CHECKPOINT_FILE, build_graph, step_limit
 from contexer.graph.context import STOPPED_FILE, AskFn, DetailFn, EventFn, RunContext, RunEvent, guard_digest
-from contexer.graph.nodes import crashed_outcome, stopped_outcome
+from contexer.graph.endings import crashed_outcome, stopped_outcome
 from contexer.graph.state import UNSCORED, LoopState
 from contexer.intent.store import IntentStore
 from contexer.verification.runner import CheckRunner
