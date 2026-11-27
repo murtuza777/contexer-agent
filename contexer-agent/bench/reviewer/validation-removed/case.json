@@ -1,0 +1,11 @@
+{
+  "goal": "Signing up shows the welcome page",
+  "planted": {
+    "file": "src/signup.js",
+    "categories": [
+      "logic",
+      "security"
+    ],
+    "scan": true
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "goal": "Deleting an entry removes it from the list",
+  "planted": {
+    "file": "src/entries.js",
+    "categories": [
+      "logic"
+    ],
+    "scan": true
+  }
+}

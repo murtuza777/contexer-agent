@@ -630,7 +630,21 @@ Checks approved again after work began go from `approve` straight to
     where and never repeats the value), an environment file in the
     change, `.only` or `skip` added in a test file, a deleted test file,
     more assertions removed than added in a test file, and `console.log`,
-    `debugger` or `breakpoint()` added outside tests.
+    `debugger` or `breakpoint()` added outside tests. Outside tests it
+    also counts what was taken away: more `confirm(` calls removed than
+    added in a file, and more validations removed than added (a
+    `required`, a `minlength` or `maxlength`, a `pattern=`, a call to a
+    function named like a validator, a `ValidationError` raised) in a
+    code or markup file, unless the whole change adds as many as it
+    removes. Each of these notes gives the count and the first three
+    removed lines with their numbers in the old file.
+  - `scope_notes`, code only: one low note listing the files the change
+    edited or deleted whose path or name appears nowhere in the goal, the
+    checks, the Planner's brief or the Diagnoser's leads. It is made only
+    when the brief or a lead names a file that is in the project; a run
+    without a Planner has no such note. Files the change created and lock
+    files are not listed. The brief is written by a model, so the note
+    stays low: it starts no repair and holds no pull request.
   - `dependency_notes` (`crew/dependencies.py`), code only: each package
     the change adds to `package.json`, a `requirements*.txt` or
     `pyproject.toml` is looked up on npm or PyPI with one GET request
@@ -1699,8 +1713,8 @@ raises is recorded as `error` and the benchmark goes on. Results:
 
 **Reviewer suite** (`bench/reviewer.py`, `contexer bench --suite reviewer
 --agent scan|reviewer`): `bench/reviewer/<case>/` has `before/`, `after/`
-and `case.json`. Ten cases have one planted issue (its file, the
-categories a note may carry, whether a scan can see it); ten are clean
+and `case.json`. Twelve cases have one planted issue (its file, the
+categories a note may carry, whether a scan can see it); twelve are clean
 changes, some written to look suspicious. A planted issue is **flagged**
 when a note points at its file with a fitting category; the wording is not
 judged. A **false high** is a high-severity note on a clean diff. `scan`
