@@ -892,6 +892,9 @@ models built from the same catalog:
   URL or the full URL of one API (`.../openai/v1/responses`) both become
   `.../openai/v1`. OpenRouter keeps its
   attribution headers and, for the default model, its free fallback list.
+  Every OpenRouter request carries `provider.require_parameters: true`, so
+  it is routed only to a provider that takes every parameter sent (`tools`
+  among them).
   Building a model makes no network call, and LangChain is imported only then.
 - `llm/capabilities.py: ModelCapabilities` is the record per model: context
   window, native tool calling, parallel calls, strict schemas, vision, and
@@ -928,6 +931,14 @@ pydantic model) and limits: `max_steps` (30), `timeout` (600 s) and
 - The model gets the agent's tools plus `submit`, whose arguments are the
   output schema. Calling `submit` with a valid answer ends the run. An answer
   written as JSON text is accepted too.
+- Each tool is sent as a function description with strict arguments
+  (`wire_schema`, `llm/structured.py: strict_parameters`): at every depth no
+  extra properties, every field required, and a field that has a default
+  may be null. The tool's own schema keeps its defaults: a null for a field
+  that does not take null is read as "left out" (`_given`), and a field
+  left out altogether is still accepted. The `strict` flag of the function
+  is not sent, so no provider is asked to enforce the schema. The loop
+  does not need several calls in one reply; it runs however many arrive.
 - An answer that does not fit the schema goes back to the model with what was
   wrong, at most twice (`MAX_CORRECTIONS`).
 - Tool calls in one reply run in order. A tool that raises, an unknown tool

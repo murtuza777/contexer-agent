@@ -144,3 +144,49 @@ def _python_call(source: str) -> tuple[str, dict[str, Any]] | None:
     except (SyntaxError, ValueError):
         return None
     return (node.func.id, arguments) if len(arguments) == len(node.keywords) else None
+
+
+# -- a tool's arguments in the strict form ------------------------------------------------------------
+
+
+def strict_parameters(schema: dict[str, Any]) -> dict[str, Any]:
+    """``schema`` (a tool's arguments as JSON Schema, with no ``$ref``) in the strict form, as a new schema.
+
+    At every depth an object takes no extra property and requires every field, and a field that was
+    optional may be null instead of being left out. A map (an object whose ``additionalProperties`` is
+    itself a schema) has no fields to list and is left as it is.
+    """
+    out = dict(schema)
+    for key in ("anyOf", "oneOf", "allOf"):
+        if isinstance(out.get(key), list):
+            out[key] = [strict_parameters(option) if isinstance(option, dict) else option for option in out[key]]
+    if isinstance(out.get("items"), dict):
+        out["items"] = strict_parameters(out["items"])
+    properties = out.get("properties")
+    is_map = isinstance(out.get("additionalProperties"), dict)
+    if isinstance(properties, dict) or (out.get("type") == "object" and not is_map):
+        properties = properties if isinstance(properties, dict) else {}
+        required = out.get("required") or []
+        out["properties"] = {
+            name: strict_parameters(field) if name in required else _nullable(strict_parameters(field))
+            for name, field in properties.items()
+        }
+        out["required"] = list(properties)
+        out["additionalProperties"] = False
+    return out
+
+
+def _allows_null(schema: dict[str, Any]) -> bool:
+    kind = schema.get("type")
+    if kind == "null" or (isinstance(kind, list) and "null" in kind) or None in schema.get("enum", ()):
+        return True
+    return any(isinstance(option, dict) and _allows_null(option) for option in schema.get("anyOf") or [])
+
+
+def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
+    """``schema`` or null, the way pydantic writes an optional field: what describes the field stays on top."""
+    if _allows_null(schema):
+        return schema
+    about = {key: schema[key] for key in ("title", "description", "default") if key in schema}
+    inner = {key: value for key, value in schema.items() if key not in about}
+    return {"anyOf": [inner, {"type": "null"}], **about}

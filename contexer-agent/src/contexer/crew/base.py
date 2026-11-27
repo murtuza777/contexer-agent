@@ -27,6 +27,10 @@ A tool call is checked against the tool's schema before the tool runs. One
 that does not fit gets the problem and the required fields as its result, and
 the call that then runs is counted as repaired.
 
+Tools are sent with strict schemas (every field required, optional ones
+nullable, no extra properties; see ``wire_schema``). What comes back is still
+read tolerantly: a null for a field that does not take one means its default.
+
 When the conversation nears the model's context window, the content of old
 tool results (page snapshots, mostly) is replaced by a one-line note. See
 ``_drop_old_results`` for what is kept.
@@ -56,6 +60,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, ValidationError
 
 from contexer.crew.budget import Budget
@@ -64,7 +69,7 @@ from contexer.crew.untrusted import UNTRUSTED_RULE
 from contexer.llm.capabilities import capabilities_of
 from contexer.llm.catalog import PROVIDERS, is_azure
 from contexer.llm.chat import clean_error, describe_model, tool_calling_error
-from contexer.llm.structured import CALL_ARGUMENT_KEYS, parse_json_object, parse_printed_call
+from contexer.llm.structured import CALL_ARGUMENT_KEYS, parse_json_object, parse_printed_call, strict_parameters
 
 AgentStatus = Literal["ok", "step_limit", "timeout", "invalid_output", "model_error", "budget_exhausted"]
 
@@ -232,7 +237,7 @@ class _Run:
             description="Hand in your final answer. Call this exactly once, when the work is finished.",
             args_schema=spec.output_schema,
         )
-        self.bound = model.bind_tools([*self.tools.values(), submit])
+        self.bound = model.bind_tools([wire_schema(tool) for tool in (*self.tools.values(), submit)])
         self.messages: list[BaseMessage] = []
         # Until a limit or an answer says otherwise, a run that stops has run out of steps.
         self.result = AgentResult(status="step_limit")
@@ -407,7 +412,8 @@ class _Run:
             called = time.monotonic()
             name = call["name"]
             tool = self.tools.get(name)
-            problem = _bad_arguments(tool, call["args"]) if tool is not None else ""
+            args = _given(tool.args_schema, call["args"]) if tool is not None else call["args"]
+            problem = _bad_arguments(tool, args) if tool is not None else ""
             repaired = False
             if problem:
                 # Checked before the tool runs, so an error from inside a tool is never taken for this.
@@ -416,7 +422,7 @@ class _Run:
             else:
                 mending = name in self._refused
                 self._refused.discard(name)
-                content, status = await self._call_tool(name, call["args"])
+                content, status = await self._call_tool(name, args)
                 repaired = mending and status == "success"
                 self.result.repaired_calls += repaired
             # A page may show a password or a key; the model has no use for it.
@@ -564,7 +570,7 @@ class _Run:
                 raise ValueError(
                     f"no answer was handed in. Call the `{SUBMIT_TOOL}` tool with the answer as its arguments"
                 )
-            output = self.spec.output_schema.model_validate(candidate)
+            output = self.spec.output_schema.model_validate(_given(self.spec.output_schema, candidate))
         except (ValidationError, ValueError) as exc:
             problem = _validation_problem(exc)
             if self._mistake(problem):
@@ -761,6 +767,48 @@ def _bad_arguments(tool: BaseTool, args: Any) -> str:
         needs = f"requires: {', '.join(required)}" if required else "has no required argument"
         return f"{_validation_problem(exc)}. `{tool.name}` {needs}. Send the call again with arguments that fit."
     return ""
+
+
+def wire_schema(tool: BaseTool) -> dict[str, Any]:
+    """``tool`` as a model is sent it: an OpenAI-style function description whose arguments are strict.
+
+    Every field is required and an optional one may be null (``llm/structured.py: strict_parameters``).
+    The tool's own schema is not changed: it still has its defaults, and ``_given`` reads a null as
+    "left out". The ``strict`` flag itself is not set, so no provider is asked to enforce the schema.
+    """
+    sent = convert_to_openai_tool(tool)
+    function = sent["function"]
+    parameters = function.get("parameters") or {"type": "object", "properties": {}}
+    return {**sent, "function": {**function, "parameters": strict_parameters(parameters)}}
+
+
+def _given(schema: Any, data: Any) -> Any:
+    """``data`` without its nulls, when it fits ``schema`` only that way; otherwise ``data`` as it is.
+
+    A strict schema makes a model send null for a field it would have left out. Where the field takes
+    null, null is kept; where it does not (``wait: int = 0``), the field is dropped and its default applies.
+    """
+    if not (isinstance(schema, type) and issubclass(schema, BaseModel) and isinstance(data, dict)):
+        return data
+    try:
+        schema.model_validate(data)
+        return data
+    except ValidationError:
+        pass
+    bare = _without_nulls(data)
+    try:
+        schema.model_validate(bare)
+    except ValidationError:
+        return data
+    return bare
+
+
+def _without_nulls(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _without_nulls(item) for key, item in value.items() if item is not None}
+    if isinstance(value, list):
+        return [_without_nulls(item) for item in value]
+    return value
 
 
 def _tokens(messages: Sequence[BaseMessage]) -> int:

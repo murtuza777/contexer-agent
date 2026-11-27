@@ -789,3 +789,54 @@ async def test_the_tokens_the_provider_counted_decide_too(tmp_path: Path, monkey
     result = await run_agent(_spec(), model, [small], "Go.", run_dir=tmp_path)
 
     assert result.status == "ok" and result.dropped_results == 2
+
+
+# -- MOD-4: tools are sent with strict schemas, and a null means "not given" ---------------------
+
+
+class Report(BaseModel):
+    """An answer with a field that may be left out."""
+
+    summary: str
+    note: str = ""
+
+
+async def test_every_tool_and_the_answer_are_sent_with_a_strict_schema(tmp_path: Path) -> None:
+    open_page, _ = _pages()
+    model = ScriptedChatModel(submit(summary="ok"))
+    await run_agent(_spec(output_schema=Report), model, [open_page], "Go.", run_dir=tmp_path)
+
+    assert model.bound_tools == ["open_page", "submit"]
+    page, answer = (sent["function"]["parameters"] for sent in model.bound_schemas)
+    for parameters, fields in ((page, ["page", "wait"]), (answer, ["summary", "note"])):
+        assert parameters["required"] == fields  # the optional field too
+        assert parameters["additionalProperties"] is False
+    assert page["properties"]["page"]["type"] == "string"
+    assert {"type": "null"} in page["properties"]["wait"]["anyOf"]
+    assert {"type": "null"} in answer["properties"]["note"]["anyOf"]
+
+
+async def test_a_null_for_an_optional_argument_means_it_was_not_given(tmp_path: Path) -> None:
+    open_page, opened = _pages()
+    model = ScriptedChatModel(calls(("open_page", {"page": "home", "wait": None})), submit(summary="ok", note=None))
+    result = await run_agent(_spec(output_schema=Report), model, [open_page], "Go.", run_dir=tmp_path)
+
+    assert result.status == "ok"
+    assert opened == ["home"]
+    [observed] = _tool_messages(model, 1)
+    assert (observed.content, observed.status) == ("home: opened", "success")
+    assert result.output == Report(summary="ok", note="")
+    assert (result.corrections, result.repaired_calls) == (0, 0)
+
+
+async def test_a_null_for_a_required_argument_is_still_refused(tmp_path: Path) -> None:
+    open_page, opened = _pages()
+    model = ScriptedChatModel(
+        calls(("open_page", {"page": None, "wait": None})), submit(summary=None), submit(summary="ok")
+    )
+    result = await run_agent(_spec(output_schema=Report), model, [open_page], "Go.", run_dir=tmp_path)
+
+    assert opened == []
+    [refused] = _tool_messages(model, 1)
+    assert refused.status == "error" and "bad arguments for `open_page`" in refused.content
+    assert (result.status, result.corrections) == ("ok", 1)  # the answer without its summary was sent back

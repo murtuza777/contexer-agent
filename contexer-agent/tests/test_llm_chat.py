@@ -212,6 +212,19 @@ async def test_the_default_openrouter_model_keeps_its_free_fallback_and_openai_u
     assert body["max_completion_tokens"] == 300 and "max_tokens" not in body
 
 
+async def test_openrouter_is_asked_for_a_provider_that_takes_every_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = _config(monkeypatch)
+    for model in (None, "vendor/model"):  # the default model with its fallback list, and one the user picked
+        client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY))
+        await chat_model("openrouter", model, config=config, http_async_client=client).ainvoke("hello")
+        # Without it OpenRouter may route a request with tools to a provider that drops them.
+        assert json.loads(requests[0].content)["provider"] == {"require_parameters": True}
+
+    client, requests = recorded(httpx.Response(200, json=_FINAL_REPLY))
+    await chat_model("groq", "llama", config=config, http_async_client=client).ainvoke("hello")
+    assert "provider" not in json.loads(requests[0].content)  # OpenRouter's own field: nobody else is sent it
+
+
 # -- Azure AI Foundry ------------------------------------------------------------
 
 

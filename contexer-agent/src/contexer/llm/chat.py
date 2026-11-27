@@ -133,9 +133,12 @@ def chat_model_from(
         if config.openrouter_site_url:
             headers["HTTP-Referer"] = config.openrouter_site_url
         extras["default_headers"] = headers
+        # OpenRouter picks a provider per request. Without this it may pick one that drops `tools`.
+        body: dict[str, Any] = {"provider": {"require_parameters": True}}
         if choice.model == DEFAULT_OPENROUTER_MODEL:
             # Same fallback as the drafting client: free models come and go.
-            extras["extra_body"] = {"models": [choice.model, OPENROUTER_FREE_ROUTER]}
+            body["models"] = [choice.model, OPENROUTER_FREE_ROUTER]
+        extras["extra_body"] = body
     if http_async_client is not None:
         extras["http_async_client"] = http_async_client
     if max_tokens:
