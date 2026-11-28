@@ -4,7 +4,7 @@ This is the technical reference for how Contexer works, module by module: what
 each part does, the data it reads and writes, the decisions it makes, and the
 constants that govern them. It describes version 0.7.0 as it is in the code.
 Product reasoning is in [product-plan.md](product/product-plan.md), the build history
-in [roadmap.md](roadmap.md), and day-to-day use in [try-it.md](try-it.md).
+in [the technical plan for 0.1 to 0.4](archive/technical-plan-0.1-to-0.4.md), and day-to-day use in [try-it.md](try-it.md).
 
 Paths are relative to `contexer-agent/src/contexer/` unless they start with
 `contexer-agent/` or the repository root.
