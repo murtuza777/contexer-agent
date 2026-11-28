@@ -64,6 +64,8 @@ from contexer.contract.store import AUTOMATIC_APPROVAL
 from contexer.controller import RunOutcome, RunSettings
 from contexer.crew.budget import Budget, unenforceable
 from contexer.evidence import RunDir
+from contexer.evidence.otel import export_trace
+from contexer.evidence.rundir import TRACE_FILE
 from contexer.gate import RunResult
 from contexer.gate.session import VerificationSession
 from contexer.github.api import GitHubClient, GitHubError, github_token
@@ -301,6 +303,10 @@ def _finish(
             except HandoffError as exc:
                 handoff_error = str(exc)
     _render(console, outcome, handoff, handoff_error, pr)
+    # Only when OTEL_EXPORTER_OTLP_ENDPOINT is set in the environment; a failure is a sentence, never an exit code.
+    sent = export_trace(Path(outcome.run_dir, TRACE_FILE), run_id=outcome.run_id, terminal=outcome.terminal) if outcome.run_dir else ""
+    if sent:
+        console.print(f"[dim]{escape(sent)}[/dim]")
     if json_output:
         emit_json(
             {

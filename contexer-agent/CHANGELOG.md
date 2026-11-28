@@ -4,6 +4,11 @@
 
 ### Added
 
+- **A run's trace can go to an OpenTelemetry collector.** With `OTEL_EXPORTER_OTLP_ENDPOINT` set in your
+  environment, `contexer run` sends one trace at its end: a span per model call and tool call with the
+  names, token counts, times and costs `trace.jsonl` holds. No prompt, reply or page text is sent, a
+  project's `.env` cannot switch it on, and a collector that fails does not fail the run. OTLP over
+  HTTP as JSON; nothing new to install. Not yet tried against a real collector (`OBS-4`).
 - **A check can ask the app over HTTP.** A `request` step (`"GET /api/notes"`) is sent with the session
   the check has, and two new expectations read the answer: `status` and `body`. A browser check on one
   account cannot see that an API answers someone it should refuse; this can. The step takes a method

@@ -163,6 +163,7 @@ text. What the masker does not recognise passes through there too.
 | The package registry | When the app's dependencies are missing | Runs the project's package manager install before starting the dev server | `appserver/devserver.py`, `appserver/detect.py: _install_argv` |
 | Whatever the app loads | Every check and every Tester step | Chromium loads the app's own scripts, fonts, analytics and API calls. Navigation to another origin is refused; sub-requests are not filtered | `verification/runner.py`, `browser/tools.py` |
 | `registry.npmjs.org` and `pypi.org` | In the review of a passing run, when the change adds a package to `package.json`, a requirements file or `pyproject.toml`. Turn it off with `[review] dependency_lookup = false` in `contexer.toml`, or `--no-review` for one run. Not made when a registry of your own is set in the project (`.npmrc`, `pip.conf`, an index option in the requirements file, a uv or Poetry source), in `~/.npmrc`, in pip's configuration or in `npm_config_registry`, `PIP_INDEX_URL` or `PIP_EXTRA_INDEX_URL`. Not seen as a registry of your own: npm's global config, a `pip.conf` inside a virtual environment, `C:\ProgramData\pip\pip.ini`, Yarn and pnpm settings, a registry given only on a command line | One GET per added package with the package's name in the address and the headers `Accept: application/json` and `User-Agent: contexer`, and nothing else: no key, no file content. 5 seconds at most, no redirect followed, at most 20 in a review. About sixty much used names are not looked up, and a name the registry's naming rules would refuse is never sent | `crew/dependencies.py: registry_lookup`, `dependency_findings`, `config/project.py: ReviewSettings`, `dependency_lookup` |
+| An OpenTelemetry collector you name | Only if `OTEL_EXPORTER_OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`) is set in your environment, at the end of `contexer run`. A project's `.env` cannot set it | One POST of the run's model calls and tool calls: agent, provider and model names, token counts, times, costs, tool names and whether a call failed. No prompt, no reply, no tool argument or result, and no run event (an event can quote a page). The headers you put in `OTEL_EXPORTER_OTLP_HEADERS` are sent and never printed | `evidence/otel.py: export_trace`, `config/project.py: _ENV_NEVER_FROM_FILE` |
 | Langfuse | Only if `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set and the `tracing` extra is installed | Every agent's prompts and replies as the model received them, through a LangChain callback | `crew/transcript.py: tracing_callbacks` |
 
 There is no telemetry, crash reporting or update check in the package.
@@ -170,8 +171,8 @@ Checked by searching `src/contexer` for every HTTP client import and URL
 literal: the only modules that open a connection are `llm/`,
 `github/api.py`, `github/status.py`, `agents/opencode_agent.py` and
 `opencode/client.py` (the local OpenCode server), `appserver/devserver.py`
-(polling the app on localhost) and `crew/dependencies.py` (the package
-registries, above).
+(polling the app on localhost), `crew/dependencies.py` (the package
+registries, above) and `evidence/otel.py` (the collector you name, above).
 
 To decide whether you use a registry of your own, the review reads the lines
 that set a registry in `~/.npmrc` (or the file `NPM_CONFIG_USERCONFIG` names)
