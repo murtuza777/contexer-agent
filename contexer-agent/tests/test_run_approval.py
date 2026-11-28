@@ -17,7 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 from contexer.cli import app as cli
-from contexer.cli import run_cli
+from contexer.cli import run_approval, run_cli
 from contexer.contract import ContractStore
 from contexer.contract.store import AUTOMATIC_APPROVAL
 from tests.fakes import AgentScript, submit
@@ -227,7 +227,7 @@ def test_the_editor_is_started_as_a_program_with_arguments_never_through_a_shell
     project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal: None
 ) -> None:
     started: list[Any] = []
-    real_run = run_cli.subprocess.run
+    real_run = run_approval.subprocess.run
 
     def fake_run(argv: Any, *args: Any, **kwargs: Any) -> Any:
         if not isinstance(argv, list) or argv[0] != "my-editor":
@@ -237,7 +237,7 @@ def test_the_editor_is_started_as_a_program_with_arguments_never_through_a_shell
 
     monkeypatch.setenv("VISUAL", "my-editor --wait")
     monkeypatch.setenv("EDITOR", "another-editor")
-    monkeypatch.setattr(run_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(run_approval.subprocess, "run", fake_run)
     result = _goal_run(project, tmp_path, monkeypatch, input="e\nn\n")
     assert result.exit_code == 2, result.output
     [(argv, kwargs)] = started
