@@ -781,6 +781,14 @@ INT-2 → DX-1 → DX-3 → DOC-1 → REL-11. BRIEF-1 runs beside INT-1.
 - **Do.** When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, send the trace's
   spans there. An optional extra; nothing is sent otherwise.
 - **Accept.** A local Phoenix or Langfuse shows a run.
+- **Built 2026-11-28**, in `evidence/otel.py`, with no extra to install:
+  OTLP over HTTP as JSON through the HTTP client Contexer already has.
+  `contexer run` sends one trace at its end (a root span and one span per
+  model call and tool call) and says where it went. A project's `.env`
+  cannot set an `OTEL_` variable. Open: the Accept line (no collector was
+  run against it; the tests read the request it would send); `contexer
+  test` does not export; `grpc` and `http/protobuf` are not spoken and are
+  said so.
 
 ---
 

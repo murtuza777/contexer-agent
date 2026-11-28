@@ -231,7 +231,7 @@ class ProjectConfigError(Exception):
 
 # Names that steer Contexer's own tools (git, the GitHub client, the interpreters it starts, where its requests
 # go). A .env file never sets them: the coding agent can write that file, and a repository can carry one.
-_ENV_NEVER_FROM_FILE = ("GIT_", "LD_", "DYLD_", "PYTHON", "SSL_CERT_")
+_ENV_NEVER_FROM_FILE = ("GIT_", "LD_", "DYLD_", "PYTHON", "SSL_CERT_", "OTEL_")
 _ENV_NAMES_NEVER_FROM_FILE = {
     "PATH", "PATHEXT", "COMSPEC", "SHELL", "NODE_OPTIONS", "NODE_EXTRA_CA_CERTS", "GITHUB_API_URL", "GITHUB_SERVER_URL",
     "GH_HOST", "GH_ENTERPRISE_TOKEN", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "OPENCODE_SERVER_URL",
