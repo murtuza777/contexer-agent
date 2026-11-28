@@ -231,13 +231,23 @@ be an ARIA role. Aliases: `selector`→`css`; `testid`, `testId`, `data-testid`
 text contains the name; the first visible match is used (at most 20 scanned).
 
 **Steps**: `click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`,
-`wait`, `goto`. Target required for click, fill, select, check, uncheck,
-hover; value required for fill, select, press, wait, goto. `wait` is whole
-milliseconds up to 10,000.
+`wait`, `goto`, `request`. Target required for click, fill, select, check,
+uncheck, hover; value required for fill, select, press, wait, goto, request.
+`wait` is whole milliseconds up to 10,000.
+
+`request` asks the app one thing over HTTP: its value is a method (`GET`,
+`HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`), a space and a path of the app
+(`GET /api/notes`). It is sent by the browser context's own client, so it
+carries the session the check has: signed in when the check is, signed out
+with `"login": false`. The value takes a path and nothing else: no host, so
+it cannot leave the app under test, and no `${NAME}`. No body or header can
+be set. A redirect is reported as the status it is, and not followed.
 
 **Expectations**: `visible`, `hidden`, `checked`, `unchecked`, `count`
 (`min`/`max`), `text`, `value`, `attribute`, `css` (`property`), `url`,
-`title`, `no_errors`. Comparators, ANDed: `equals` (exact after whitespace
+`title`, `no_errors`, and for the answer to the last `request` step
+`status` and `body` (the first 100,000 characters; `equals`, `contains` or
+`matches` only). Comparators, ANDed: `equals` (exact after whitespace
 normalisation), `contains` (case-insensitive), `matches` (regex), `changed`
 (differs from the value read before the steps ran). `attribute "checked"` is
 rewritten to `checked`/`unchecked`.

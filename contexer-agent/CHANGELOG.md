@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **A check can ask the app over HTTP.** A `request` step (`"GET /api/notes"`) is sent with the session
+  the check has, and two new expectations read the answer: `status` and `body`. A browser check on one
+  account cannot see that an API answers someone it should refuse; this can. The step takes a method
+  and a path of the app and nothing else, so it cannot be sent to another site, and a redirect is
+  reported, not followed. For checks written by hand for now: Contexer's agents are not told about it
+  yet (first part of `AGT-4`).
+
 ### Changed
 
 - The front page of the repository is shorter and leads with the two ways to use Contexer: inside the
