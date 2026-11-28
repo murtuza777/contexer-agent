@@ -30,7 +30,7 @@ from contexer.controller.shared import score, sig_label, signatures
 from contexer.gate import ContractOutcome, decide
 from contexer.gate.models import RunResult
 from contexer.github.handoff import pull_request_body
-from contexer.graph import GraphController, nodes
+from contexer.graph import GraphController, facts, nodes
 from contexer.graph.context import RunEvent
 from contexer.graph.routing import EDGES, TARGETS
 from contexer.verification.checks import CheckResult
@@ -165,11 +165,11 @@ def test_the_attempt_that_broke_a_check_is_found_through_the_attempts_the_files_
 
     # Attempt 2 broke b too and was undone back to attempt 1, so attempt 3 began from attempt 1's files.
     attempts = [attempt(1, ["e/a"]), attempt(2, ["e/a", "e/b"], reverted_to=1), attempt(3, ["e/a", "e/b"])]
-    assert nodes._broken_in("e/a", attempts) == 1
-    assert nodes._broken_in("e/b", attempts) == 3
+    assert facts._broken_in("e/a", attempts) == 1
+    assert facts._broken_in("e/b", attempts) == 3
     # An attempt where nothing ran did not show the check passing: the break is counted from there.
     attempts = [attempt(1, [], outcome="error"), attempt(2, ["e/a"])]
-    assert nodes._broken_in("e/a", attempts) == 1
+    assert facts._broken_in("e/a", attempts) == 1
 
 
 # -- a stale check: it already failed on the project as found -----------------------------------------
@@ -196,7 +196,7 @@ async def test_a_check_that_was_already_failing_does_not_fail_the_run_and_is_sai
     assert "complete-decrements" not in repair
     assert repair.index(DELETE) < repair.index(f"{NEW}/add-shows-task")
     assert "complete-decrements" not in failure_report(first)
-    assert COUNT_TITLE not in [f.title for f in nodes._failures(first)]
+    assert COUNT_TITLE not in [f.title for f in facts._failures(first)]
 
     # Attempt 2 proves the new contract. The run succeeds, and never reads as fully clean.
     assert outcome.terminal == "succeeded", outcome.reason

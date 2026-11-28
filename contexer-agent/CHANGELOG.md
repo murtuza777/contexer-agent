@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- No behaviour change: `graph/nodes.py` and `cli/run_cli.py`, the two largest and most changed
+  files, each lost a part to a module of its own (`graph/facts.py`, `graph/endings.py`,
+  `cli/run_resources.py`). [docs/decisions](docs/decisions/README.md) records where code lives and
+  four other decisions that would be expensive to reverse.
+
 ### Fixed
 
 - `contexer issue build` refusing a dollar limit it cannot keep no longer tells you to use

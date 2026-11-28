@@ -8,11 +8,12 @@
 | [Developer guide](../README.md) | Setup, every command, `contexer.toml`, tests |
 | [Changelog](../CHANGELOG.md) | What changed in each release |
 
-## How it works today (0.5)
+## How it works today (0.7)
 
 | Document | Covers |
 | --- | --- |
 | [Architecture](architecture.md) | Every module, data format, algorithm, constant and security measure |
+| [Decisions](decisions/README.md) | The choices that would be expensive to reverse, each with its reasons: what counts as proof, what Contexer never does, where code lives |
 | [What Contexer sends, and what it does not do](data-and-limits.md) | Which command calls which model, what each prompt contains, other network destinations, what stays on disk, and the limits |
 | [Benchmark results](../bench/RESULTS.md) | Seeded-bug catch rate and false failures |
 

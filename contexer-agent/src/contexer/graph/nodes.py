@@ -18,7 +18,6 @@ Who decides what:
 from __future__ import annotations
 
 import re
-import traceback
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -29,7 +28,7 @@ from contexer.agents.base import AgentTurn
 from contexer.appserver import AppStartError, open_app
 from contexer.config.project import dependency_lookup
 from contexer.contract import Contract
-from contexer.controller.models import Attempt, RunOutcome
+from contexer.controller.models import Attempt
 from contexer.controller.prompts import (
     failure_report,
     implement_prompt,
@@ -48,27 +47,37 @@ from contexer.controller.shared import (
     write_run_evidence,
 )
 from contexer.crew.diagnoser import DEFAULT_MAX_STEPS as DEFAULT_DIAGNOSER_STEPS
-from contexer.crew.diagnoser import Failure, Tried, brief_section, diagnose
+from contexer.crew.diagnoser import brief_section, diagnose
 from contexer.crew.intent import DEFAULT_MAX_STEPS as DEFAULT_INTENT_STEPS
 from contexer.crew.intent import run_intent
 from contexer.crew.planner import DEFAULT_MAX_STEPS as DEFAULT_PLANNER_STEPS
 from contexer.crew.planner import plan_task, task_brief_section
-from contexer.crew.reviewer import DEFAULT_REVIEW_STEPS, ReviewNote, review, review_repair_prompt
-from contexer.crew.transcript import Masker
+from contexer.crew.reviewer import DEFAULT_REVIEW_STEPS, review, review_repair_prompt
 from contexer.crew.triage import DEFAULT_MAX_STEPS as DEFAULT_TRIAGE_STEPS
-from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, TriageDecision, triage
+from contexer.crew.triage import MOVE_LABELS, AttemptView, Situation, triage
 from contexer.crew.untrusted import quoted_goal
 from contexer.evidence.rundir import PROMPT_FILE, RunDir, write_whole
-from contexer.evidence.test_report import AgentUsage
 from contexer.gate.decision import decide
-from contexer.gate.models import GateDecision, RunResult
+from contexer.gate.models import GateDecision
 from contexer.gate.session import VerificationSession
-from contexer.graph.context import STOPPED_FILE, RunContext
+from contexer.graph.context import RunContext
+from contexer.graph.endings import _outcome
+from contexer.graph.facts import (
+    _attempts,
+    _check_rows,
+    _criteria,
+    _dump,
+    _failures,
+    _others_failing,
+    _regressions,
+    _saved_checks,
+    _stale,
+    _tried,
+    _used,
+)
 from contexer.graph.routing import settle
 from contexer.graph.state import CARRIED_SCORE, UNSCORED, LoopState
-from contexer.intent.store import IntentSpec, SavedCheck
-from contexer.llm.chat import clean_error
-from contexer.verification.models import AcceptanceCriterion
+from contexer.intent.store import IntentSpec
 from contexer.verification.verifier import Verifier
 
 Node = Callable[[LoopState], Awaitable[dict[str, Any]]]
@@ -972,13 +981,6 @@ def _contracts(ctx: RunContext) -> list[Contract]:
     return [_contract(ctx), *ctx.others]
 
 
-def _attempts(state: LoopState) -> list[Attempt]:
-    return [Attempt.model_validate(a) for a in state.get("attempts", [])]
-
-
-def _dump(attempts: list[Attempt]) -> list[dict[str, Any]]:
-    return [a.model_dump(mode="json") for a in attempts]
-
 
 def _announce_checks(ctx: RunContext) -> None:
     """Tell a view which checks decide this run, once for each version of the contract."""
@@ -994,65 +996,6 @@ def _announce_checks(ctx: RunContext) -> None:
         earlier_checks=check_count(ctx.others),
     )
 
-
-def _check_rows(result: RunResult, contract_id: str) -> list[dict[str, Any]]:
-    """This run's own checks with their verdicts and what the browser saw, in the contract's order."""
-    rows: list[dict[str, Any]] = []
-    for outcome in result.contracts:
-        if outcome.contract.id != contract_id or outcome.verification is None:
-            continue
-        for r in outcome.verification.criteria_results:
-            rows.append({"id": r.criterion_id, "verdict": r.verdict, "evidence": " ".join(r.evidence.split())[:300]})
-    return rows
-
-
-def _others_failing(result: RunResult, contract_id: str) -> int:
-    """How many checks of earlier approved contracts did not hold: what this change broke elsewhere.
-
-    A check that was already failing before the run is not among them; the verdict counts those apart.
-    """
-    stale = set(result.decision.stale)
-    return sum(
-        1
-        for outcome in result.contracts
-        if outcome.contract.id != contract_id and outcome.verification is not None
-        for r in outcome.verification.criteria_results
-        if r.verdict != "verified" and f"{outcome.contract.id}/{r.criterion_id}" not in stale
-    )
-
-
-def _stale(ctx: RunContext, state: LoopState) -> set[str]:
-    """The earlier checks that already failed before the first turn. Never a check of the contract being built."""
-    own = f"{ctx.contract.id}/" if ctx.contract is not None else ""
-    failing = (state.get("baseline") or {}).get("failing", [])
-    return {label for label in failing if not (own and label.startswith(own))}
-
-
-def _regressions(state: LoopState, result: RunResult) -> dict[str, int]:
-    """The earlier checks that passed before the first turn and fail in ``result`` -> the attempt that broke each."""
-    passed = set((state.get("baseline") or {}).get("passed", []))
-    broken = sorted({sig_label(s) for s in signatures(result)} & passed)
-    attempts = _attempts(state)
-    return {label: _broken_in(label, attempts) for label in broken} if attempts else {}
-
-
-def _broken_in(label: str, attempts: list[Attempt]) -> int:
-    """The attempt that broke a check which fails in the latest one, with the project as found as attempt 0.
-
-    Walks back through the attempts the files came from (the one before, or the one they were put back
-    to), as ``_tried`` does, to the first that began from files where the check passed. An attempt
-    where no check ran did not show it passing, so the walk goes on through it.
-    """
-    by_n = {a.n: a for a in attempts}
-    n = attempts[-1].n
-    while True:
-        before = by_n.get(n - 1)
-        if before is None:
-            return n  # it began from the project as found, where the check passed
-        base = by_n.get(before.reverted_to, before) if before.reverted_to is not None else before
-        if base.outcome != "error" and label not in {sig_label(s) for s in base.signatures}:
-            return n
-        n = base.n
 
 
 def _cost(ctx: RunContext, used: Any) -> float | None:
@@ -1075,41 +1018,6 @@ def _budget_left(ctx: RunContext, agent_budget: float | None, spent: float) -> f
         return left
     return total if left is None else min(left, total)
 
-
-def _used(state: LoopState, agent: str, steps: int, tokens_in: int, tokens_out: int, cost: float | None) -> list[dict[str, Any]]:
-    """The usage list with one agent's call added to its row."""
-    rows = [AgentUsage.model_validate(row) for row in state.get("agents", [])]
-    row = next((r for r in rows if r.agent == agent), None)
-    if row is None:
-        row = AgentUsage(agent=agent)
-        rows.append(row)
-    row.steps += steps
-    row.tokens_in += tokens_in
-    row.tokens_out += tokens_out
-    if cost is not None:
-        row.cost_usd = (row.cost_usd or 0.0) + cost
-    return [r.model_dump(mode="json") for r in rows]
-
-
-def _saved_checks(contract: Contract) -> list[SavedCheck]:
-    return [SavedCheck(id=c.id, description=c.description, check=c.check) for c in contract.criteria if c.check is not None]
-
-
-def _criteria(checks: list[SavedCheck], existing: Contract | None) -> list[AcceptanceCriterion]:
-    """The Intent agent's checks as criteria. A criterion that did not change is kept exactly as it was approved."""
-    old = {c.id: c for c in existing.criteria} if existing is not None else {}
-    criteria: list[AcceptanceCriterion] = []
-    for check in checks:
-        before = old.get(check.id)
-        if before is not None and before.check == check.check and before.description == check.description:
-            criteria.append(before)
-        else:
-            criteria.append(
-                AcceptanceCriterion(id=check.id, description=check.description, verification_method="interactive_test", check=check.check)
-            )
-    # Criteria a person judges have no check, so the Intent agent never saw them: they stay.
-    criteria += [c for c in old.values() if c.check is None]
-    return criteria
 
 
 def _situation(ctx: RunContext, state: LoopState) -> Situation:
@@ -1144,48 +1052,6 @@ def _situation(ctx: RunContext, state: LoopState) -> Situation:
     )
 
 
-def _failures(result: RunResult) -> list[Failure]:
-    """The checks that were run and did not hold, in the shape the Diagnoser reads."""
-    failures: list[Failure] = []
-    stale = set(result.decision.stale)  # already failing before the run: not this change's to repair
-    for outcome in result.contracts:
-        checks = {c.id: c for c in outcome.contract.criteria}
-        for r in outcome.verification.criteria_results if outcome.verification else []:
-            criterion = checks.get(r.criterion_id)
-            if not r.proven or r.verdict == "verified" or r.check_result is None or criterion is None or criterion.check is None:
-                continue
-            if f"{outcome.contract.id}/{r.criterion_id}" in stale:
-                continue
-            failures.append(Failure(title=criterion.description, check=criterion.check, result=r.check_result))
-    return failures
-
-
-def _tried(state: LoopState) -> list[Tried]:
-    """Each lead the Diagnoser already gave in this run, with what the attempt that worked from it did."""
-    attempts = {a.n: a for a in _attempts(state)}
-    tried: list[Tried] = []
-    for key, lead in sorted(state.get("leads", {}).items(), key=lambda item: int(item[0])):
-        before, after = attempts.get(int(key)), attempts.get(int(key) + 1)
-        if before is None or after is None:
-            continue
-        # The attempt began from the files of the one before it, or of the one those were put back to.
-        base = attempts.get(before.reverted_to, before) if before.reverted_to is not None else before
-        was, now = {sig_label(s) for s in base.signatures}, {sig_label(s) for s in after.signatures}
-        tried.append(
-            Tried(
-                attempt=after.n,
-                cause=lead.get("cause", ""),
-                instruction=lead.get("instruction", ""),
-                changed_files=after.changed_files,
-                fixed=sorted(was - now),
-                broke=sorted(now - was),
-                still_failing=sorted(was & now),
-                no_check_ran=after.outcome == "error",
-                undone_to=after.reverted_to,
-            )
-        )
-    return tried
-
 
 def _gate(ctx: RunContext, n: int | None, stale: set[str] | None = None) -> GateDecision | None:
     """The gate's decision on attempt ``n``, computed again from the verdicts that were recorded.
@@ -1214,119 +1080,3 @@ def _restart_if_dependencies_changed(ctx: RunContext, a: str, b: str) -> None:
             app.url = app.server.restart(install=True)
         except Exception as exc:  # the next attempt restarts it and reports the failure
             ctx.event("app", f"The app did not restart after the revert: {exc}")
-
-
-def _outcome(ctx: RunContext, state: LoopState, attempts: list[Attempt]) -> RunOutcome:
-    return RunOutcome(
-        run_id=ctx.run.run_id,
-        contract_id=state.get("contract_id") or "",
-        agent=ctx.agent.describe(),
-        terminal="failed_checks",
-        attempts=attempts,
-        cost_usd=state.get("cost_usd", 0.0),
-        started_at=state.get("started_at", ""),
-        run_dir=str(ctx.run.path),
-        engine="graph",
-        triage=[TriageDecision.model_validate(d) for d in state.get("decisions", [])],
-        agents=[AgentUsage.model_validate(row) for row in state.get("agents", [])],
-        intent_id=state.get("intent_id") or "",
-        corrections=list(state.get("corrections", [])),
-        review=[ReviewNote.model_validate(note) for note in state.get("review", [])],
-        crew_cost_usd=_crew_cost(state),
-        crew_cost_estimated=bool(ctx.budget is not None and ctx.budget.estimated),
-        baseline=state.get("baseline"),
-    )
-
-
-def _crew_cost(state: LoopState) -> float | None:
-    """The sum of what each of Contexer's agents cost, or None when no call has a known cost."""
-    costs = [row.get("cost_usd") for row in state.get("agents", [])]
-    known = [c for c in costs if c is not None]
-    return sum(known) if known else None
-
-
-# The traceback of a run that ended on an error in Contexer itself, in its run folder.
-CRASH_FILE = "crash.txt"
-ISSUES_URL = "https://github.com/murtuza777/contexer-agent/issues"
-
-
-def stopped_outcome(ctx: RunContext) -> RunOutcome:
-    """A run that was stopped: keep the unfinished work as a snapshot, put back a state that was proven or found."""
-    return _cut_short(
-        ctx,
-        "cancelled",
-        lambda put_back, kept: (
-            f"Stopped before the run ended; left {put_back}.{kept} "
-            f"`contexer run --resume {ctx.run.run_id}` continues it."
-        ),
-    )
-
-
-def crashed_outcome(ctx: RunContext, exc: Exception) -> RunOutcome:
-    """A run that ended on an error in Contexer itself. It still ends as a run: files put back, a report written."""
-    what = f"{type(exc).__name__}: {clean_error(exc)}"
-    trace = ctx.run.path / CRASH_FILE
-    try:
-        trace.write_text(Masker().text("".join(traceback.format_exception(exc))), encoding="utf-8")
-        where = f" The traceback is in {trace}."
-    except OSError:
-        where = ""
-    report = f"{where} Please report it: {ISSUES_URL}."
-    again = f"`contexer run --resume {ctx.run.run_id}` tries again from the last step that finished."
-    try:
-        return _cut_short(
-            ctx,
-            "internal_error",
-            lambda put_back, kept: (
-                f"Contexer itself failed ({what}). This is a fault in Contexer, not in the project. "
-                f"Left {put_back}.{kept}{report} {again}"
-            ),
-        )
-    except Exception as second:
-        # Putting the files back failed too. Say so, and still leave a run.json.
-        state: LoopState = ctx.mirror  # type: ignore[assignment]
-        outcome = _outcome(ctx, state, _attempts(state))
-        outcome.terminal = "internal_error"
-        outcome.reason = (
-            f"Contexer itself failed ({what}). This is a fault in Contexer, not in the project. The files could not "
-            f"be put back ({type(second).__name__}: {clean_error(second)}); they are as the run left them.{report}"
-        )
-        outcome.duration_seconds = ctx.elapsed()
-        try:
-            write_run_evidence(ctx.project, outcome, ctx.run)
-        except Exception:
-            pass
-        ctx.outcome = outcome
-        return outcome
-
-
-def _cut_short(ctx: RunContext, terminal: Any, reason: Callable[[str, str], str]) -> RunOutcome:
-    """End a run that did not reach its own end: unfinished work kept as a snapshot, a known state put back."""
-    state: LoopState = ctx.mirror  # type: ignore[assignment]
-    snapshots = state.get("snapshots", {})
-    attempts = _attempts(state)
-    # An attempt that was snapshotted but never scored is unfinished work, not a result.
-    scored = [a for a in attempts if a.outcome != "error" or a.result_dir]
-    best = state.get("best")
-    unfinished = ctx.shadow.snapshot(f"{ctx.run.run_id}/stopped", "stopped before the run ended")
-    target = snapshots[str(best)] if best is not None and str(best) in snapshots else snapshots["0"]
-    put_back = "the best attempt reached" if best is not None else "the project as it was"
-    kept = ""
-    # Where the unfinished work is, for a resume that needs it back (context.py: STOPPED_FILE).
-    write_whole(ctx.run.path / STOPPED_FILE, unfinished)
-    if ctx.shadow.changed_paths(target, unfinished):
-        ctx.shadow.restore(target)
-        kept = f" The unfinished work is kept: `contexer restore {ctx.run.run_id} --stopped` brings it back."
-    outcome = _outcome(ctx, state, scored)
-    outcome.terminal = terminal
-    outcome.reason = reason(put_back, kept)
-    outcome.best_attempt = best
-    outcome.final = ctx.result(best)
-    if outcome.final is not None:
-        outcome.stale, outcome.regressions = list(outcome.final.decision.stale), dict(outcome.final.decision.regressions)
-    outcome.diff = ctx.shadow.diff(snapshots["0"], target)
-    outcome.changed_files = ctx.shadow.changed_paths(snapshots["0"], target)
-    outcome.duration_seconds = ctx.elapsed()
-    write_run_evidence(ctx.project, outcome, ctx.run)
-    ctx.outcome = outcome
-    return outcome
