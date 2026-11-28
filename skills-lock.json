@@ -1,23 +1,37 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "autonomous-loops": {
       "source": "affaan-m/ecc",
       "sourceType": "github",
       "skillPath": "skills/autonomous-loops/SKILL.md",
-      "computedHash": "e00040c9d35182538078928a80b5c2b2480d35ccf4405b4fb51aa290d57f80f3"
+      "computedHash": ""
+    },
+    "documentation-and-adrs": {
+      "source": "addyosmani/agent-skills",
+      "commit": "e997ac5b9a74eab332d5e9793bb38a38c8cfdd74",
+      "sourceType": "github",
+      "skillPath": "skills/documentation-and-adrs/SKILL.md",
+      "computedHash": "deb39d7c8157563bc14a48f0d22003c82f4d8370b69c96efde476fe12318d188"
+    },
+    "improve-codebase-architecture": {
+      "source": "mattpocock/skills",
+      "commit": "bbadaa631c37af594e5a05c9cefacd9956136b18",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
+      "computedHash": "f0820b18426a7d9a6c823a890988ba0ac70bf0fd596d30d7ef07c88558728c23"
     },
     "langgraph-persistence": {
       "source": "langchain-ai/langchain-skills",
       "sourceType": "github",
       "skillPath": "config/skills/langgraph-persistence/SKILL.md",
-      "computedHash": "7538756e423b3da5ce25b6c7f99070792214a9c7a51510e9579a40a190e88ccd"
+      "computedHash": "4b53651a29a0ba20f1cd752d8daf59be2993af1cae330936da1ad4f949081a3a"
     },
     "tdd": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/tdd/SKILL.md",
-      "computedHash": "c1ed8cd854c64d4d226097255d3fa662dae4a758a1462fadd63cc10e413d88d7"
+      "computedHash": "c0d414480cb33db7b8d833f12aec402714f7a8b21b4e6b1d6598b3e7204bc033"
     }
   }
 }
