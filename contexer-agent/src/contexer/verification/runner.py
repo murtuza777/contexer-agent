@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import time
+import weakref
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -16,6 +17,7 @@ from urllib.parse import urljoin, urlsplit
 from contexer.observer.playwright import capture_ui_snapshot, record_console_error
 from contexer.verification.checks import (
     DIALOG_ACTIONS,
+    RESPONSE_KINDS,
     TEST_SECRET_PREFIX,
     UNANSWERED_DIALOG,
     Check,
@@ -28,6 +30,7 @@ from contexer.verification.checks import (
     allow_secret_names,
     expand_secrets,
     redact,
+    request_parts,
     secret_allowed,
 )
 
@@ -39,6 +42,9 @@ logger = logging.getLogger(__name__)
 
 _MISSING = "<no matching element>"
 _COMPARATOR_KINDS = {"text", "value", "attribute", "css", "url", "title"}
+# How much of a response's body a `body` expectation is compared with.
+MAX_RESPONSE_CHARS = 100_000
+_NO_REQUEST = "<no request was made>"
 _VISIBILITY_SCAN_LIMIT = 20
 
 TraceMode = Literal["off", "on", "on-failure"]
@@ -110,6 +116,8 @@ class CheckRunner:
         self.expect_timeout = expect_timeout
         self.settle_ms = settle_ms
         self.trace = trace
+        # What the last `request` step of the check on each page was answered with: status and body.
+        self._responses: weakref.WeakKeyDictionary[Any, tuple[int, str]] = weakref.WeakKeyDictionary()
 
     async def run(
         self,
@@ -477,6 +485,22 @@ class CheckRunner:
                 raise ValueError(f"goto would open another site ({_site(address)}); a check stays on the app under test")
             await page.goto(address, wait_until="load", timeout=self.navigation_timeout * 1000)
             return
+        if step.action == "request":
+            method, path = request_parts(step.value or "")
+            address = _plain_address(base_url, path)
+            if _site(address) != _site(base_url):
+                raise ValueError(f"request would go to another site ({_site(address)}); a check stays on the app under test")
+            # The context's own client: it sends the cookies the check's session has, and stores what it is sent.
+            # A redirect is reported, not followed: the check is about what this address answers.
+            response = await page.context.request.fetch(
+                address, method=method, timeout=self.navigation_timeout * 1000, max_redirects=0, fail_on_status_code=False
+            )
+            try:
+                body = (await response.text())[:MAX_RESPONSE_CHARS]
+            except Exception:  # not text
+                body = ""
+            self._responses[page] = (response.status, body)
+            return
         if step.target is None:  # validation guarantees this is a target-less "press"
             await page.keyboard.press(value)
             return
@@ -529,6 +553,12 @@ class CheckRunner:
                     return visible, "visible" if visible else (_MISSING if count == 0 else "present but not visible")
                 return not visible, "hidden" if not visible else "visible"
 
+            if exp.kind in RESPONSE_KINDS:
+                answered = self._responses.get(page)
+                if answered is None:
+                    return False, _NO_REQUEST
+                value = str(answered[0]) if exp.kind == "status" else answered[1]
+                return exp.compare(value), _show(value, None, exp)
             if exp.target is not None and await _locate(page, exp.target).count() == 0:
                 return exp.compare(None, before), _MISSING
             value = await self._read(page, exp)

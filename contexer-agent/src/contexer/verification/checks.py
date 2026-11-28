@@ -115,14 +115,31 @@ class Locator(BaseModel):
 
 
 StepAction = Literal[
-    "click", "fill", "press", "select", "check", "uncheck", "hover", "wait", "goto", "accept_dialog", "dismiss_dialog"
+    "click", "fill", "press", "select", "check", "uncheck", "hover", "wait", "goto", "accept_dialog", "dismiss_dialog",
+    "request",
 ]  # fmt: skip
 # Steps that answer the browser dialog (confirm, alert, prompt) the NEXT step opens. They act on nothing themselves.
 DIALOG_ACTIONS = {"accept_dialog": "accept", "dismiss_dialog": "dismiss"}
 UNANSWERED_DIALOG = "dismissed: no step of the check answered it"
 
 _TARGET_REQUIRED = {"click", "fill", "select", "check", "uncheck", "hover"}
-_VALUE_REQUIRED = {"fill", "select", "press", "wait", "goto"}
+_VALUE_REQUIRED = {"fill", "select", "press", "wait", "goto", "request"}
+# A `request` step asks the app one thing over HTTP, with the session the check has: "GET /api/notes".
+# A path of the app and nothing else: no host, so it cannot be sent anywhere but the app under test, and
+# no ${NAME}, so a secret is never put in an address.
+REQUEST_METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
+_REQUEST = re.compile(r"^(?P<method>[A-Za-z]+) (?P<path>/(?!/)[^\s\\${}]*)$")
+
+
+def request_parts(value: str) -> tuple[str, str]:
+    """The method and the path of a ``request`` step's value, or ValueError."""
+    match = _REQUEST.match(value.strip())
+    if match is None or match["method"].upper() not in REQUEST_METHODS:
+        raise ValueError(
+            f"'request' value must be a method ({', '.join(REQUEST_METHODS)}), a space and a path of the app "
+            'starting with one "/", for example "GET /api/notes"'
+        )
+    return match["method"].upper(), match["path"]
 
 
 class Step(BaseModel):
@@ -144,6 +161,9 @@ class Step(BaseModel):
             assert self.value is not None
             if not self.value.strip().isdigit() or int(self.value) > MAX_WAIT_MS:
                 raise ValueError(f"'wait' value must be milliseconds between 0 and {MAX_WAIT_MS}")
+        if self.action == "request":
+            assert self.value is not None
+            self.value = " ".join(request_parts(self.value))
         return self
 
     def describe(self) -> str:
@@ -158,6 +178,8 @@ class Step(BaseModel):
             return f"wait {self.value}ms"
         if self.action == "goto":
             return f"go to {self.value}"
+        if self.action == "request":
+            return f"request {self.value}"
         if self.action in DIALOG_ACTIONS:
             return f"{DIALOG_ACTIONS[self.action]} the dialog the next step opens"
         return f"{self.action} {target}"
@@ -165,12 +187,14 @@ class Step(BaseModel):
 
 ExpectKind = Literal[
     "visible", "hidden", "checked", "unchecked", "count", "text", "value", "attribute", "css", "url", "title",
-    "no_errors",
+    "no_errors", "status", "body",
 ]
 
 _NEEDS_TARGET = {"visible", "hidden", "checked", "unchecked", "count", "text", "value", "attribute", "css"}
 _TRUTHY = {"", "true", "checked", "on", "1", "yes"}
-_NEEDS_COMPARATOR = {"text", "value", "attribute", "css", "url", "title"}
+_NEEDS_COMPARATOR = {"text", "value", "attribute", "css", "url", "title", "status", "body"}
+# What the last `request` step was answered with. There is no "before" to compare it with.
+RESPONSE_KINDS = {"status", "body"}
 
 
 class Expectation(BaseModel):
@@ -224,6 +248,8 @@ class Expectation(BaseModel):
             raise ValueError("'css' expectation needs a property")
         if self.kind in _NEEDS_COMPARATOR and not self.has_comparator:
             raise ValueError(f"'{self.kind}' expectation needs equals, contains, matches, or changed")
+        if self.kind in RESPONSE_KINDS and (self.changed is not None or self.target is not None):
+            raise ValueError(f"'{self.kind}' is about the response to a request step: it takes equals, contains or matches only")
         if self.kind == "count":
             if self.min is None and self.max is None:
                 raise ValueError("'count' expectation needs min or max")
@@ -285,6 +311,8 @@ class Expectation(BaseModel):
             "css": f'css "{self.css_property}" of {target}',
             "url": "page URL",
             "title": "page title",
+            "status": "status of the response",
+            "body": "body of the response",
         }[self.kind]
         return f"{subject} {self._describe_comparators()}"
 

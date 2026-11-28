@@ -412,3 +412,104 @@ async def test_the_apps_timers_behave_as_before(tmp_path: Path) -> None:
         )
 
     assert result.passed, result.failure_report()
+
+
+# -- AGT-4: one HTTP request to the app, with the check's session -------------------------------------
+
+
+@pytest.fixture
+def api_app():
+    """An app with one API route that answers 200 with data to the session `sid=alice`, and 401 to anyone else."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - the name the standard library calls
+            if self.path == "/api/notes":
+                signed_in = "sid=alice" in (self.headers.get("Cookie") or "")
+                body = b'{"notes": ["buy milk"], "owner": "alice"}' if signed_in else b'{"error": "sign in first"}'
+                self.send_response(200 if signed_in else 401)
+                self.send_header("Content-Type", "application/json")
+            elif self.path == "/old":
+                body = b""
+                self.send_response(302)
+                self.send_header("Location", "/api/notes")
+            else:
+                body = b"<!doctype html><html><body><h1>Notes</h1></body></html>" if self.path == "/" else b"not here"
+                self.send_response(200 if self.path == "/" else 404)
+                self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _alice(url: str) -> dict:
+    return {"cookies": [{"name": "sid", "value": "alice", "url": url}], "origins": []}
+
+
+@pytest.mark.anyio
+async def test_a_request_step_is_answered_with_the_checks_own_session(api_app: str, runner: CheckRunner) -> None:
+    signed_in = check({
+        "steps": [{"action": "request", "value": "GET /api/notes"}],
+        "expect": [{"kind": "status", "equals": "200"}, {"kind": "body", "contains": "buy milk"}],
+    })
+    visitor = check({
+        "login": False,
+        "steps": [{"action": "request", "value": "GET /api/notes"}],
+        "expect": [{"kind": "status", "equals": "401"}, {"kind": "body", "contains": "sign in first"}],
+    })
+    results = await runner.run(api_app, [("reads-own-notes", signed_in), ("visitor-is-refused", visitor)], storage_state=_alice(api_app))
+
+    assert [r.passed for r in results] == [True, True], [r.failure_report() for r in results]
+
+
+@pytest.mark.anyio
+async def test_a_request_that_gets_another_status_fails_and_says_which(api_app: str, runner: CheckRunner) -> None:
+    [result] = await runner.run(
+        api_app,
+        [("open-to-anyone", check({"login": False, "steps": [{"action": "request", "value": "GET /api/notes"}], "expect": [{"kind": "status", "equals": "200"}]}))],
+        storage_state=_alice(api_app),
+    )
+
+    assert not result.passed
+    assert "status of the response" in result.outcomes[0].description and "401" in result.outcomes[0].actual
+
+
+@pytest.mark.anyio
+async def test_a_redirect_is_reported_and_not_followed(api_app: str, runner: CheckRunner) -> None:
+    [result] = await runner.run(
+        api_app, [("moved", check({"steps": [{"action": "request", "value": "GET /old"}], "expect": [{"kind": "status", "equals": "302"}]}))]
+    )
+
+    assert result.passed, result.failure_report()  # what the app answered, not what the next address answers
+
+
+@pytest.mark.anyio
+async def test_a_status_with_no_request_before_it_fails(api_app: str, runner: CheckRunner) -> None:
+    [result] = await runner.run(api_app, [("nothing-asked", check({"expect": [{"kind": "status", "equals": "200"}]}))])
+
+    assert not result.passed and "no request" in result.outcomes[0].actual
+
+
+def test_a_request_names_a_method_and_a_path_of_the_app_and_nothing_else() -> None:
+    from pydantic import ValidationError
+
+    assert check({"steps": [{"action": "request", "value": "delete /api/notes/3"}], "expect": [{"kind": "status", "equals": "204"}]}).steps[0].describe() == "request DELETE /api/notes/3"
+    for value in ["/api/notes", "FETCH /api/notes", "GET api/notes", "GET //other.example/x", "GET https://other.example/x", "GET /a b", "GET /api/${TOKEN}"]:
+        with pytest.raises(ValidationError):
+            check({"steps": [{"action": "request", "value": value}], "expect": [{"kind": "status", "equals": "200"}]})
+    with pytest.raises(ValidationError):  # the response has no "before": there is nothing for it to change from
+        check({"steps": [{"action": "request", "value": "GET /"}], "expect": [{"kind": "status", "changed": True}]})
+    with pytest.raises(ValidationError):
+        check({"steps": [{"action": "request", "value": "GET /"}], "expect": [{"kind": "body"}]})

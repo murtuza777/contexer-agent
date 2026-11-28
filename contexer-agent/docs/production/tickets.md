@@ -1234,6 +1234,14 @@ an agent a person is already using calls Contexer (not built).
   `crew/access.py`.
 - **Evaluate.** A fixture app with one endpoint that checks ownership and
   one that does not.
+- **First part built 2026-11-28:** the check kind. A `request` step
+  (`verification/checks.py: request_parts`, `verification/runner.py:
+  CheckRunner._perform`) and the `status` and `body` expectations, sent
+  with the check's own session, a path of the app only, no redirect
+  followed. Open: a request cannot carry a body or a header; Contexer's
+  agents are not told the step exists, so only a hand-written check uses
+  it; a second account in `[auth]`; the prober that replays one account's
+  recorded reads as the other; the fixture app and its evaluation.
 
 ---
 
