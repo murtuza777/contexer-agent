@@ -5,6 +5,8 @@
 | Document | Covers |
 | --- | --- |
 | [Try it yourself](try-it.md) | Install, set up and use Contexer on your app, step by step |
+| [Using Contexer](usage.md) | Install notes, your own key, pull requests, apps behind a login, the merge gate in CI, the issue workflow |
+| [Status](status.md) | What works today, the live runs, what was measured, what is not proven, what is next |
 | [Developer guide](../README.md) | Setup, every command, `contexer.toml`, tests |
 | [Changelog](../CHANGELOG.md) | What changed in each release |
 
@@ -53,7 +55,7 @@ date with the code.
 | [Market research](product/market-research.md) | Who has the problem and what they pay for (October 2026) |
 | [Technical landscape](product/technical-landscape.md) | The projects Contexer builds on, and its competitors (October 2026) |
 | [Product plan](product/product-plan.md) | The plan versions 0.1 to 0.4 followed |
-| [Technical plan](roadmap.md) | Milestones and formats for 0.1 to 0.4 |
+| [Technical plan](archive/technical-plan-0.1-to-0.4.md) | Milestones and formats for 0.1 to 0.4 |
 | [Earlier multi-agent plans](archive/multi-agent/design.md) | Archived; superseded by the agentic harness: [design](archive/multi-agent/design.md), [PRD](archive/multi-agent/prd.md), [BRD](archive/multi-agent/brd.md), [build plan](archive/multi-agent/build-plan.md), [LangGraph study](archive/multi-agent/langgraph-port.md) |
 
 ## Around the product

@@ -22,7 +22,7 @@ the tests.
 ```bash
 python -m ruff check src tests
 python -m pyright src
-python -m pytest -q -p no:cacheprovider --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
+python -m pytest -q -p no:cacheprovider -n auto --deselect tests/test_opencode_integration.py::test_live_opencode_e2e
 contexer bench --repeats 2
 ```
 
@@ -33,13 +33,17 @@ request.
 
 ## How work is tracked
 
-- The plan is in [docs/agentic](contexer-agent/docs/agentic/architecture.md),
-  one file per phase.
-- Every ticket in those files is a GitHub issue, grouped by a milestone per
-  phase. A ticket states its goal, scope, acceptance checks and how it is
-  verified.
-- Pick an issue, comment that you are taking it, and keep the pull request to
-  that one ticket.
+- The plan is the [roadmap](contexer-agent/docs/production/roadmap.md) and
+  its [tickets](contexer-agent/docs/production/tickets.md). A ticket states
+  its problem, what to do, the files, what it must pass and how it is
+  tested; a built one carries a dated note of what was built and what is
+  still open.
+- Pick a ticket or an issue, say that you are taking it, and keep the pull
+  request to that one thing.
+- A choice that would be expensive to reverse gets a record in
+  [docs/decisions](contexer-agent/docs/decisions/README.md). Read
+  [where code lives](contexer-agent/docs/decisions/0004-where-code-lives.md)
+  before adding a module.
 - Found a bug or have an idea that is not a ticket? Open an issue with the
   matching template first.
 
@@ -82,7 +86,7 @@ Types in use: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`. Add
 - Branch from `main`: `feat/<ticket>-short-name`, for example
   `feat/t1.1-browser-tools`.
 - Link the issue (`Closes #12`).
-- Tests for new behaviour; the full suite green.
+- Tests for new behaviour, written first and seen failing; the full suite green.
 - Update the docs the change touches, and `CHANGELOG.md` under "Unreleased".
 - Fill in the pull request template, including how you verified the change.
 

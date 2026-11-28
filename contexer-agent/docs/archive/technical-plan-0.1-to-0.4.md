@@ -1,10 +1,10 @@
 # Contexer technical plan
 
-> **Historical.** This records how versions 0.1 to 0.4 were planned and built. The interactive shell (REPL, `/loop`, `/verify`), `workflow/loop.py` and the `store/` module it mentions no longer exist or were never built. What exists today is in [architecture.md](architecture.md); what comes next is in [agentic/architecture.md](agentic/architecture.md).
+> **Historical.** This records how versions 0.1 to 0.4 were planned and built. The interactive shell (REPL, `/loop`, `/verify`), `workflow/loop.py` and the `store/` module it mentions no longer exist or were never built. What exists today is in [architecture.md](../architecture.md); what comes next is in [agentic/architecture.md](../agentic/architecture.md).
 
-This is the build plan for [product-plan.md](product/product-plan.md) v2. It covers
+This is the build plan for [product-plan.md](../product/product-plan.md) v2. It covers
 module layout, data formats, the CLI, the order of work, and how each piece is
-tested. [technical-landscape.md](product/technical-landscape.md) holds the research
+tested. [technical-landscape.md](../product/technical-landscape.md) holds the research
 behind each library choice.
 
 Status legend: **done**, **building**, **next**, **later**.

@@ -12,7 +12,7 @@ reports:
 - [Technical landscape](technical-landscape.md): which repos, protocols and
   designs to build on, borrow from or avoid, and who the competitors are.
 
-Engineering detail per milestone stays in [roadmap.md](../roadmap.md), which must
+Engineering detail per milestone stays in [the technical plan](../archive/technical-plan-0.1-to-0.4.md), which must
 be updated to match this plan once it is approved.
 
 ---

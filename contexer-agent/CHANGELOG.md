@@ -4,6 +4,10 @@
 
 ### Changed
 
+- The front page of the repository is shorter and leads with the two ways to use Contexer: inside the
+  coding agent you already work in, or driving one. The how-to sections moved to
+  [docs/usage.md](docs/usage.md) and the status with its live runs to [docs/status.md](docs/status.md),
+  text for text.
 - No behaviour change: `graph/nodes.py` and `cli/run_cli.py`, the two largest and most changed
   files, each lost a part to a module of its own (`graph/facts.py`, `graph/endings.py`,
   `cli/run_resources.py`). [docs/decisions](docs/decisions/README.md) records where code lives and
